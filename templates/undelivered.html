@@ -285,7 +285,7 @@
     </tfoot>
     <tbody>
         {% for order in order_details %}
-        {% if order.status not in ['Booked', 'Un-Booked'] %}
+        {% if order.status not in ['DELIVERED', 'Un-Booked','CONSIGNMENT BOOKED'] %}
 
             <tr>
                 <td>{{ order.order_id }}</td>
