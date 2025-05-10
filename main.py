@@ -1233,9 +1233,7 @@ shopify.ShopifyResource.set_user(api_key)
 shopify.ShopifyResource.set_password(password)
 statuses=['shipped', 'pending', 'ready_to_ship']
 daraz_orders = get_daraz_orders(statuses)
-print(daraz_orders[0])
 order_details = asyncio.run(getShopifyOrders())
-print(order_details[0])
 
 if __name__ == "__main__":
     shop_url = os.getenv('SHOP_URL')
