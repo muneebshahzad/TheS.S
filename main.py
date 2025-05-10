@@ -257,7 +257,11 @@ async def process_order(session, order):
                             image_src = product.image.src
         else:
             image_src = "https://static.thenounproject.com/png/1578832-200.png"
-
+            
+        if not image_src : 
+            image_src = "https://static.thenounproject.com/png/1578832-200.png"
+            
+        
         for info in tracking_info_list:
             order_info['line_items'].append({
                 'fulfillment_status': line_item.fulfillment_status,
