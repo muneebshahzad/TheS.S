@@ -286,7 +286,10 @@
     <tbody>
         {% for order in order_details %}
             <tr>
-                <td>{{ order.order_id }}</td>
+                <td>
+
+  <a href="{{order.order_link}}"><p>{{ order.order_id }}</p></a>
+</td>
                 <td>
                     {{ order.line_items[0].name }}<br>
                     {{ order.line_items[0].address }}<br>
@@ -369,6 +372,7 @@
         {% endfor %}
     </tbody>
 </table>
+                                 <button class="btn btn-primary btn-sm" onclick="applyDeliveredToAll()">Apply 'Delivered' to All Delivered Orders</button>
                             </div>
                         </div>
                     </div>
@@ -448,6 +452,7 @@
 
         // Initialize the DataTable with desired settings
         $('#dataTable').DataTable({
+            "order": [[0, "desc"]],
             "columnDefs": [
                 { "searchable": false, "targets": [-1, 4] }  // Make the last column and the 5th column non-searchable
             ]
@@ -464,7 +469,17 @@
                 }
             });
         });
-    </script>
+
+ function applyDeliveredToAll() {
+    const orders = {{ order_details|tojson }};
+
+    orders.forEach(order => {
+        if (order.status === 'DELIVERED') {
+            applyTag(order.order_id, 'Delivered');
+        }
+    });
+}
+</script>
 
 </body>
 
