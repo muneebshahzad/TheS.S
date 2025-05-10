@@ -310,7 +310,7 @@
     cell.style.textAlign = "center"; // Center align text
 
         // Apply color based on conditions
-        if (orderStatus.includes("return")) {
+        if (orderStatus.includes("return") or orderStatus.includes("UNDELIVERED")) {
         cell.style.backgroundColor = "#ff471a"; // Red for any return-related status
         cell.style.color = "white";
     }
