@@ -242,6 +242,7 @@ async def process_order(session, order):
             continue
 
         if line_item.product_id is not None:
+            image_src = "https://static.thenounproject.com/png/1578832-200.png"
             product = shopify.Product.find(line_item.product_id)
             if product and product.variants:
                 for variant in product.variants:
@@ -255,11 +256,6 @@ async def process_order(session, order):
                         else:
                             variant_name = ""
                             image_src = product.image.src
-        else:
-            image_src = "https://static.thenounproject.com/png/1578832-200.png"
-            
-        if not image_src : 
-            image_src = "https://static.thenounproject.com/png/1578832-200.png"
             
         
         for info in tracking_info_list:
