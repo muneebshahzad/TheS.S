@@ -69,15 +69,15 @@
     </div>
 </form>
         </div>
-        {% if data.status!=0 %}
+        {% if data[0] %}
         <!-- Tracking Information -->
         <div class="tracking-information">
-            <h2>Tracking Information for {{ data.packet_list[0].track_number }}</h2>
+            <h2>Tracking Information for {{ data[0].ConsignmentNo }}</h2>
             <div class="card mb-4">
                 <div class="card-body">
-                    <p><strong>Booking Date:</strong> {{ data.packet_list[0].booking_date }}</p>
-                    <p><strong>Current Status:</strong> {{ data.packet_list[0].booked_packet_status }}</p>
-                    <p><strong>Product:</strong> {{ data.packet_list[0].special_instructions }}</p>
+                    <p><strong>Booking Date:</strong> {{ data[0].TransactionDate }}</p>
+                    <p><strong>Current Status:</strong> {{ data[-1].ProcessDescForPortal }}</p>
+                    <p><strong>Customer:</strong> {{ data[0].ConsigneeName}} - {{data[0].ConsigneeCity }}</p>
                 </div>
             </div>
 
@@ -85,13 +85,13 @@
             <h2>Tracking Details</h2>
             <ul class="timeline">
 
-                {% for detail in data.packet_list[0]['Tracking Detail']|reverse %}
+                {% for detail in data|reverse %}
                 <li class="timeline-item">
                     <div class="timeline-content">
 
-                        <p>{{ detail.Status }}  - {{ detail.Activity_Date }} {{ detail.Activity_Time }}<br></p>
-                        {% if detail.Reason and detail.Reason != 'N/A' %}
-                        <p><strong>Reason:</strong> "{{ detail.Reason }}"</p>
+                        <p>{{ detail.ProcessDescForPortal }}  - {{ detail.TransactionDate }} <br></p>
+                        {% if detail.ReasonDesc and detail.ReasonDesc!='OK' %}
+                        <p><strong>Reason:</strong> "{{ detail.ReasonDesc }}"</p>
                         {% endif %}
                     </div>
                 </li>
@@ -99,7 +99,7 @@
             </ul>
         </div>
         {% endif %}
-        {% if data.status==0 %}
+        {% if data.Message %}
         <div class="container mt-5">
         <div class="alert alert-danger">
             <h4 class="alert-heading">Error</h4>
