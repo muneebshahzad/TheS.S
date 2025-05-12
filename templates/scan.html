@@ -310,10 +310,9 @@
     }
 
     // Updated generateReport function to apply Shopify tags and, for Dispatch Report, generate the loadsheet
-    // Updated generateReport function to apply Shopify tags and, for Dispatch Report, generate the loadsheet
     function generateReport(orders, reportType) {
       if (orders.length === 0) {
-        alert(No orders added for ${reportType}.);
+        alert(`No orders added for ${reportType}.`);
         return;
       }
       // Choose the correct tag based on report type
@@ -342,7 +341,7 @@
 
       Promise.all(tagPromises)
         .then(results => {
-          console.log(${reportType} tags applied:, orders, results);
+          console.log(`${reportType} tags applied:`, orders, results);
           // If Dispatch Report, generate the loadsheet
           if (reportType === "Dispatch Report") {
             // Extract cn_numbers from all dispatch orders. We assume each line item has a 'tracking_number'
@@ -357,19 +356,35 @@
             // Remove duplicate tracking numbers
             cnNumbers = [...new Set(cnNumbers)];
 
-            
+            fetch("/generate_loadsheet", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                cn_numbers: cnNumbers
+              })
+            })
+            .then(response => response.json())
+            .then(loadsheetResponse => {
+              console.log("Loadsheet generated: ", loadsheetResponse);
+              alert(`${reportType} generated successfully, tags applied and loadsheet created.`);
+            })
+            .catch(error => {
+              console.error("Error generating loadsheet:", error);
+              alert("Error generating loadsheet.");
+            });
+          } else {
+            // For Return Report just show a success message.
+            alert(`${reportType} generated successfully and tags applied.`);
+          }
+        })
         .catch(error => {
           console.error("Error applying tags:", error);
           alert("Error applying tags. Check console for details.");
         });
     }
-  else {
-            // For Return Report just show a success message.
-            alert(${reportType} generated successfully and tags applied.);
-          }
   });
-
-  
 </script>
 
 
