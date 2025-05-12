@@ -283,7 +283,7 @@
     </tfoot>
     <tbody>
 {% for order in order_details %}
-    {% if order.status not in ['Booked', 'Un-Booked', 'Delivered'] and not ('Cancelled' in ' '.join(order.tags)) %}
+    {% if order.status not in ['CONSIGNMENT BOOKED', 'Un-Booked', 'DELIVERED'] and not ('Cancelled' in ' '.join(order.tags)) %}
 
             <tr>
                 <td>{{ order.order_id }}</td>
