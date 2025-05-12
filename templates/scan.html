@@ -356,7 +356,7 @@
             // Remove duplicate tracking numbers
             cnNumbers = [...new Set(cnNumbers)];
 
-            fetch("/generate_loadsheet", {
+            fetch("/#", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json"
@@ -365,10 +365,9 @@
                 cn_numbers: cnNumbers
               })
             })
-            .then(response => response.json())
-            .then(loadsheetResponse => {
-              console.log("Loadsheet generated: ", loadsheetResponse);
-              alert(`${reportType} generated successfully, tags applied and loadsheet created.`);
+            
+            .then( {
+              alert(`${reportType} generated successfully, tags applied`);
             })
             .catch(error => {
               console.error("Error generating loadsheet:", error);
