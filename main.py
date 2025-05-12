@@ -645,11 +645,11 @@ def shopify_order_updated():
 
         # Parse the JSON payload sent by Shopify
         order_data = request.get_json(silent=True)
-
+        print(order_data)
         if not order_data:
             print("Empty payload received. Ignoring.")
             return jsonify({'message': 'Empty payload received. Ignored.'}), 200
-
+        
         # Ignore orders that are not open
         if order_data.get("status") != "open":
             print(f"Ignoring order with status: {order_data.get('status')}")
@@ -684,7 +684,6 @@ def shopify_order_updated():
         if not updated:
             order_details.append(updated_order_info)
 
-        print("Updated order_details:", order_details)
 
         return jsonify({
             'success': True,
