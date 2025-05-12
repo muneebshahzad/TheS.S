@@ -209,7 +209,7 @@ async def process_order(session, order):
         "phone": phone
     }
     order_info = {
-        'order_link': "https://admin.shopify.com/store/tick-bags-best-bean-bags-in-pakistan/orders/" + str(order.id),
+        'order_link': "https://admin.shopify.com/store/psgv0a-qk/orders/" + str(order.id),
         'order_id': order.name,
         'tracking_id': 'N/A',
         'created_at': formatted_datetime,
