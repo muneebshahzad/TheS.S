@@ -283,7 +283,7 @@
     </tfoot>
     <tbody>
 {% for order in order_details %}
-    {% if order.status not in ['CONSIGNMENT BOOKED', 'Un-Booked', 'DELIVERED'] and not ('Cancelled' in ' '.join(order.tags)) %}
+    {% if order.status not in ['Booked', 'Un-Booked', 'Delivered'] and not ('Cancelled' in ' '.join(order.tags)) %}
 
             <tr>
                 <td>{{ order.order_id }}</td>
@@ -310,7 +310,7 @@
     cell.style.textAlign = "center"; // Center align text
 
         // Apply color based on conditions
-        if (orderStatus.includes("return") or orderStatus.includes("UNDELIVERED")) {
+        if (orderStatus.includes("return")) {
         cell.style.backgroundColor = "#ff471a"; // Red for any return-related status
         cell.style.color = "white";
     }
