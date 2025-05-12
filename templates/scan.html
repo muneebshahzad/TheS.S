@@ -311,58 +311,46 @@
 
     // Updated generateReport function to apply Shopify tags and, for Dispatch Report, generate the loadsheet
     function generateReport(orders, reportType) {
-      if (orders.length === 0) {
-        alert(`No orders added for ${reportType}.`);
-        return;
-      }
-      // Choose the correct tag based on report type
-      let tag;
-      if (reportType === "Dispatch Report") {
-        tag = "Dispatched";
-      } else if (reportType === "Return Report") {
-        tag = "Return Received";
-      } else {
-        alert("Unknown report type.");
-        return;
-      }
-      // For each order, call the /apply_tag endpoint
-      let tagPromises = orders.map(order => {
-        return fetch("/apply_tag", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            order_id: order.id,  // adjust if needed (e.g. order.order_id)
-            tag: tag
-          })
-        }).then(response => response.json());
-      });
+  if (orders.length === 0) {
+    alert(`No orders added for ${reportType}.`);
+    return;
+  }
 
-      Promise.all(tagPromises)
-        .then(results => {
-          console.log(`${reportType} tags applied:`, orders, results);
-          // If Dispatch Report, generate the loadsheet
-          if (reportType === "Dispatch Report") {
-            // Extract cn_numbers from all dispatch orders. We assume each line item has a 'tracking_number'
-            let cnNumbers = [];
-            orders.forEach(order => {
-              order.line_items.forEach(item => {
-                if (item.tracking_number) {
-                  cnNumbers.push(item.tracking_number);
-                }
-              });
-            });
-            // Remove duplicate tracking numbers
-            cnNumbers = [...new Set(cnNumbers)];
+  // Choose the correct tag based on report type
+  let tag;
+  if (reportType === "Dispatch Report") {
+    tag = "Dispatched";
+  } else if (reportType === "Return Report") {
+    tag = "Return Received";
+  } else {
+    alert("Unknown report type.");
+    return;
+  }
 
-            
-        .catch(error => {
-          console.error("Error applying tags:", error);
-          alert("Error applying tags. Check console for details.");
-        });
-    }
+  // For each order, call the /apply_tag endpoint
+  let tagPromises = orders.map(order => {
+    return fetch("/apply_tag", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        order_id: order.id,
+        tag: tag
+      })
+    }).then(response => response.json());
   });
+
+  Promise.all(tagPromises)
+    .then(results => {
+      console.log(`${reportType} tags applied:`, orders, results);
+      alert(`${reportType} generated successfully and tags applied.`);
+    })
+    .catch(error => {
+      console.error("Error applying tags:", error);
+      alert("Error applying tags. Check console for details.");
+    });
+}
 </script>
 
 
