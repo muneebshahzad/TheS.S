@@ -7,7 +7,7 @@
     </style>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            const correctPassword = 'security';
+            const correctPassword = '.';
             const accessDuration = 10 * 60 * 1000; // 10 minutes in milliseconds
 
             function checkPassword() {
@@ -58,7 +58,7 @@
             <li class="nav-item">
                 <a class="nav-link" href="/">
                     <i class="fas fa-fw fa-tachometer-alt"></i>
-                    <span>Dashboard</span></a>
+                    <span>Track</span></a>
             </li>
 
             <!-- Divider -->
@@ -71,18 +71,7 @@
 
               <!-- Nav Item - Pages Collapse Menu -->
         <ul class="navbar-nav">
-    <li class="nav-item">
-        <a class="nav-link" href="#">
-            <i class="fas fa-fw fa-chart-area"></i>
-            <span>Report</span>
-        </a>
-    </li>
-    <li class="nav-item">
-        <a class="nav-link" href="/track">
-            <i class="fas fa-fw fa-table"></i>
-            <span>Tracking</span>
-        </a>
-    </li>
+    
     <li class="nav-item">
         <a class="nav-link" href="/pending">
             <i class="fas fa-fw fa-table"></i>
@@ -101,20 +90,7 @@
             <span>Refresh Data</span>
         </a>
     </li>
-    <li class="nav-item">
-        <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapsePages" aria-expanded="false" aria-controls="collapsePages">
-            <i class="fas fa-fw fa-folder"></i>
-            <span>Accounts</span>
-        </a>
-        <div id="collapsePages" class="collapse" aria-labelledby="headingPages" data-parent="#accordionSidebar" style="">
-            <div class="bg-white py-2 collapse-inner rounded">
-                <h6 class="collapse-header">Accounts:</h6>
-                <a class="collapse-item" href="https://dashboard.tickbags.com/">Summary</a>
-                <a class="collapse-item" href="/addTransaction">Add Transaction</a>
-                <a class="collapse-item" href="/finance_report">Transactions List</a>
-            </div>
-        </div>
-    </li>
+    
 </ul>
 
             <!-- Divider -->
