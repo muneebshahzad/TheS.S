@@ -646,10 +646,14 @@ def shopify_order_updated():
         # Parse the JSON payload sent by Shopify
         order_data = request.get_json(silent=True)
 
-        # If Shopify sent an empty payload, just acknowledge and ignore it
         if not order_data:
             print("Empty payload received. Ignoring.")
             return jsonify({'message': 'Empty payload received. Ignored.'}), 200
+
+        # Ignore orders that are not open
+        if order_data.get("status") != "open":
+            print(f"Ignoring order with status: {order_data.get('status')}")
+            return jsonify({'message': f"Ignored order with status: {order_data.get('status')}"}), 200
 
         order_id = order_data.get('id')
         if not order_id:
@@ -662,7 +666,7 @@ def shopify_order_updated():
         if not order:
             return jsonify({'error': f'Order {order_id} not found'}), 404
 
-        # Process the order update asynchronously.
+        # Process the order update asynchronously
         async def update_order():
             async with aiohttp.ClientSession() as session:
                 updated_order_info = await process_order(session, order)
@@ -691,6 +695,7 @@ def shopify_order_updated():
     except Exception as e:
         print(f"Webhook processing error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
 
 from flask import request, render_template, redirect, url_for
 
