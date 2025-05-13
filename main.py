@@ -229,7 +229,7 @@ async def process_order(session, order):
 
     results = await asyncio.gather(*tasks)
     variant_name = ""
-    image_src = "https://thesleekspace.com/cdn/shop/files/Gold_Modern_Furniture_Logo_3f58af94-e791-421f-bba3-840848e0aea7.png?v=1742882585&width=110"
+    image_src = "https://cdn.shopify.com/s/files/1/0936/0949/2789/files/7.png?v=1741033934"
     for tracking_info_list, line_item in zip(results, order.line_items):
         if tracking_info_list is None:
             continue
@@ -249,7 +249,7 @@ async def process_order(session, order):
                             variant_name = ""
                             image_src = product.image.src
         else:
-            image_src = "https://thesleekspace.com/cdn/shop/files/Gold_Modern_Furniture_Logo_3f58af94-e791-421f-bba3-840848e0aea7.png?v=1742882585&width=110"
+            image_src = "https://cdn.shopify.com/s/files/1/0936/0949/2789/files/7.png?v=1741033934"
 
         for info in tracking_info_list:
             order_info['line_items'].append({
