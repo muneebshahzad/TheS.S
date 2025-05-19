@@ -204,7 +204,7 @@
         {% for order in all_orders %}
             <tr>
                 <td>{{ order.order_via }}</td>
-                <td>{{ order.order_id }}</td>
+                <td><a href="{{order.order_link}}"><p>{{ order.order_id }}</p></a></td>
                 <td>{{ order.date }}</td>
                 <td>
                     <table class="table table-sm">
