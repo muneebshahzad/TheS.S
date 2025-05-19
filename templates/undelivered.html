@@ -286,7 +286,7 @@
     {% if order.status not in ['CONSIGNMENT BOOKED', 'Un-Booked', 'DELIVERED'] and not ('Cancelled' in ' '.join(order.tags)) %}
 
             <tr>
-                <a href="{{order.order_link}}"><p>{{ order.order_id }}</p></a>
+                <td><a href="{{order.order_link}}"><p>{{ order.order_id }}</p></a></td>
                  <td id="daysPending_{{ order.id }}"></td>
                 <script>
     document.addEventListener("DOMContentLoaded", function () {
