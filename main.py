@@ -66,7 +66,14 @@ def format_date(date_str):
 
 
 async def fetch_tracking_data(session, tracking_number):
-    url = f"https://cod.callcourier.com.pk/api/CallCourier/GetTackingHistory?cn={tracking_number}"
+    if tracking_number.startswith("LE"):
+        # Leopard API
+        api_key = os.getenv('LEOPARD_API_KEY')
+        api_password = os.getenv('LEOPARD_PASSWORD')
+        url = f"https://merchantapi.leopardscourier.com/api/trackBookedPacket/?api_key={api_key}&api_password={api_password}&track_numbers={tracking_number}"
+    else:
+        # CallCourier API
+        url = f"https://cod.callcourier.com.pk/api/CallCourier/GetTackingHistory?cn={tracking_number}"
 
     async with session.get(url) as response:
         return await response.json()
@@ -124,24 +131,70 @@ async def process_line_item(session, line_item, fulfillments):
         for fulfillment in fulfillments:
             if fulfillment.status == "cancelled":
                 continue
+
             for item in fulfillment.line_items:
                 if item.id == line_item.id:
                     tracking_number = fulfillment.tracking_number
                     data = await fetch_tracking_data(session, tracking_number)
 
-                    if data:
-                        packet = data[0]  # Only handling the first entry for now
-                        name = packet.get('ConsigneeName', '')
-                        address = packet.get('ConsigneeAddress', '')
-                        phone = packet.get('ContactNo', '')
-                        city = packet.get('ConsigneeCity', '')
+                    # Leopard Courier
+                    if tracking_number.startswith("LE"):
+                        if data['status'] == 1 and not data['error']:
+                            packet_list = data['packet_list']
+                            if packet_list:
+                                packet = packet_list[0]
+                                name = packet.get('consignment_name_eng', 'N/A')
+                                address = packet.get('consignment_address', 'N/A')
+                                phone = packet.get('consignment_phone', 'N/A')
+                                city = packet.get('destination_city_name', 'N/A')
 
-                        final_status = data[-1].get('ProcessDescForPortal', 'DELIVERED')
+                                tracking_details = packet.get('Tracking Detail', [])
+                                final_status = packet.get('booked_packet_status', 'Booked')
+
+                                if tracking_details:
+                                    last_tracking = tracking_details[-1]
+                                    final_status = last_tracking.get('Status', final_status)
+                                    reason = last_tracking.get('Reason')
+
+                                    if reason and reason != 'N/A':
+                                        final_status += f" - {reason}"
+
+                                    keywords = ["Return", "hold", "UNTRACEABLE"]
+                                    for detail in tracking_details:
+                                        status = detail['Status']
+                                        reason = detail.get('Reason', '')
+
+                                        if any(kw in status for kw in keywords) or any(kw in reason for kw in keywords):
+                                            final_status = f"Being Return {reason}" if reason and reason != "N/A" else "Being Return"
+                                            if "Returned to shipper" in final_status:
+                                                final_status = "RETURNED TO SHIPPER"
+                                            break
+
+                                # ✅ Convert status if it's one of the booking-related phrases
+                                if final_status in ["Pickup Request not Send", "Pickup Request Sent"]:
+                                    final_status = "CONSIGNMENT BOOKED"
+
+                            else:
+                                final_status = "Booked"
+                        else:
+                            final_status = "N/A"
+
+
+                    # CallCourier
                     else:
+                        if data:
+                            packet = data[0]
+                            name = packet.get('ConsigneeName', 'N/A')
+                            address = packet.get('ConsigneeAddress', 'N/A')
+                            phone = packet.get('ContactNo', 'N/A')
+                            city = packet.get('ConsigneeCity', 'N/A')
 
-                        final_status = "N/A"
+                            final_status = data[-1].get('ProcessDescForPortal', 'DELIVERED')
 
-                    # Track quantity for each tracking number
+
+                        else:
+                            final_status = "N/A"
+
                     tracking_info.append({
                         'tracking_number': tracking_number,
                         'status': final_status,
@@ -149,12 +202,18 @@ async def process_line_item(session, line_item, fulfillments):
                         'name': name,
                         'address': address,
                         'city': city,
-                        "phone": phone,
+                        'phone': phone,
                     })
 
-    return tracking_info if tracking_info else [
-        {"tracking_number": "N/A", "status": "Un-Booked", "name": 'N/A', "address": 'N/A', "phone": 'N/A', "city": 'N/A',
-         "quantity": line_item.quantity}]
+    return tracking_info if tracking_info else [{
+        "tracking_number": "N/A",
+        "status": "Un-Booked",
+        "name": name,
+        "address": address,
+        "phone": phone,
+        "city": city,
+        "quantity": line_item.quantity
+    }]
 
 
 
@@ -218,7 +277,7 @@ async def process_order(session, order):
         'financial_status': (order.financial_status).title(),
         'fulfillment_status': status,
         'customer_details': customer_details,
-        'tags' : [tag for tag in order.tags.split(", ") if tag != "Leopards Courier"],
+        'tags' : [tag for tag in order.tags.split(", ")],
         'id': order.id
     }
     print(order.tags)
