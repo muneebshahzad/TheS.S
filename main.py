@@ -135,65 +135,78 @@ async def process_line_item(session, line_item, fulfillments):
             for item in fulfillment.line_items:
                 if item.id == line_item.id:
                     tracking_number = fulfillment.tracking_number
-                    data = await fetch_tracking_data(session, tracking_number)
+                    try:
+                        data = await fetch_tracking_data(session, tracking_number)
+                    except Exception as e:
+                        print(f"Error fetching tracking data for {tracking_number}: {e}")
+                        data = None
 
-                    # Leopard Courier
-                    if tracking_number.startswith("LE"):
-                        if data['status'] == 1 and not data['error']:
-                            packet_list = data['packet_list']
-                            if packet_list:
-                                packet = packet_list[0]
-                                name = packet.get('consignment_name_eng', 'N/A')
-                                address = packet.get('consignment_address', 'N/A')
-                                phone = packet.get('consignment_phone', 'N/A')
-                                city = packet.get('destination_city_name', 'N/A')
+                    final_status = "N/A"
 
-                                tracking_details = packet.get('Tracking Detail', [])
-                                final_status = packet.get('booked_packet_status', 'Booked')
+                    try:
+                        if tracking_number and tracking_number.startswith("LE"):
+                            # Leopard Courier block
+                            if data and data.get('status') == 1 and not data.get('error'):
+                                packet_list = data.get('packet_list') or []
+                                if packet_list:
+                                    packet = packet_list[0]
 
-                                if tracking_details:
-                                    last_tracking = tracking_details[-1]
-                                    final_status = last_tracking.get('Status', final_status)
-                                    reason = last_tracking.get('Reason')
+                                    # Safely get values with defaults
+                                    name = packet.get('consignment_name_eng') or 'N/A'
+                                    address = packet.get('consignment_address') or 'N/A'
+                                    phone = packet.get('consignment_phone') or 'N/A'
+                                    city = packet.get('destination_city_name') or 'N/A'
 
-                                    if reason and reason != 'N/A':
-                                        final_status += f" - {reason}"
+                                    tracking_details = packet.get('Tracking Detail') or []
+                                    final_status = packet.get('booked_packet_status') or 'Booked'
 
-                                    keywords = ["Return", "hold", "UNTRACEABLE"]
-                                    for detail in tracking_details:
-                                        status = detail['Status']
-                                        reason = detail.get('Reason', '')
+                                    if tracking_details:
+                                        last_tracking = tracking_details[-1]
+                                        final_status = last_tracking.get('Status') or final_status
+                                        reason = last_tracking.get('Reason') or ''
 
-                                        if any(kw in status for kw in keywords) or any(kw in reason for kw in keywords):
-                                            final_status = f"Being Return {reason}" if reason and reason != "N/A" else "Being Return"
-                                            if "Returned to shipper" in final_status:
-                                                final_status = "RETURNED TO SHIPPER"
-                                            break
+                                        if reason and reason != 'N/A':
+                                            final_status += f" - {reason}"
 
-                                # ✅ Convert status if it's one of the booking-related phrases
-                                if final_status in ["Pickup Request not Send", "Pickup Request Sent"]:
-                                    final_status = "CONSIGNMENT BOOKED"
+                                        keywords = ["Return", "hold", "UNTRACEABLE"]
+                                        for detail in tracking_details:
+                                            status = detail.get('Status') or ''
+                                            reason = detail.get('Reason') or ''
 
+                                            if any(kw in status for kw in keywords) or any(kw in reason for kw in keywords):
+                                                if reason and reason != "N/A":
+                                                    final_status = f"Being Return {reason}"
+                                                else:
+                                                    final_status = "Being Return"
+                                                if "Returned to shipper" in final_status:
+                                                    final_status = "RETURNED TO SHIPPER"
+                                                break
+
+                                    # Convert booking-related statuses
+                                    if final_status in ["Pickup Request not Send", "Pickup Request Sent"]:
+                                        final_status = "CONSIGNMENT BOOKED"
+                                else:
+                                    final_status = "Booked"
                             else:
-                                final_status = "Booked"
-                        else:
-                            final_status = "N/A"
-
-
-                    # CallCourier
-                    else:
-                        if data:
-                            packet = data[0]
-                            name = packet.get('ConsigneeName', 'N/A')
-                            address = packet.get('ConsigneeAddress', 'N/A')
-                            phone = packet.get('ContactNo', 'N/A')
-                            city = packet.get('ConsigneeCity', 'N/A')
-
-                            final_status = data[-1].get('ProcessDescForPortal', 'DELIVERED')
-
+                                final_status = "N/A"
 
                         else:
-                            final_status = "N/A"
+                            # CallCourier block
+                            if data and isinstance(data, list) and len(data) > 0:
+                                packet = data[0]
+
+                                name = packet.get('ConsigneeName') or 'N/A'
+                                address = packet.get('ConsigneeAddress') or 'N/A'
+                                phone = packet.get('ContactNo') or 'N/A'
+                                city = packet.get('ConsigneeCity') or 'N/A'
+
+                                final_status = data[-1].get('ProcessDescForPortal') or 'DELIVERED'
+                            else:
+                                final_status = "N/A"
+
+                    except Exception as e:
+                        print(f"Error processing tracking number {tracking_number}: {e}")
+                        final_status = "Tracking Error"
 
                     tracking_info.append({
                         'tracking_number': tracking_number,
@@ -205,15 +218,19 @@ async def process_line_item(session, line_item, fulfillments):
                         'phone': phone,
                     })
 
-    return tracking_info if tracking_info else [{
-        "tracking_number": "N/A",
-        "status": "Un-Booked",
-        "name": name,
-        "address": address,
-        "phone": phone,
-        "city": city,
-        "quantity": line_item.quantity
-    }]
+    if tracking_info:
+        return tracking_info
+    else:
+        return [{
+            "tracking_number": "N/A",
+            "status": "Un-Booked",
+            "name": name,
+            "address": address,
+            "phone": phone,
+            "city": city,
+            "quantity": line_item.quantity
+        }]
+
 
 
 
