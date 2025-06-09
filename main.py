@@ -653,7 +653,7 @@ def pending_orders():
                 'date': shopify_order['created_at'],
                 'items_list': shopify_items_list,
                 'total_price': shopify_order['total_price'],
-                'order_link : shopify_order['order_link']
+                'order_link' : shopify_order['order_link']
             }
             all_orders.append(shopify_order_data)
 
