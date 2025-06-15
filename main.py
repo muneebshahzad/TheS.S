@@ -421,7 +421,7 @@ async def getShopifyOrders():
     total_start_time = time.time()
 
     try:
-        orders = shopify.Order.find(limit=250, order="created_at DESC", created_at_min=start_date)
+        orders = shopify.Order.find(limit=100, order="created_at DESC", created_at_min=start_date)
     except Exception as e:
         print(f"Error fetching orders: {e}")
         return []
@@ -659,18 +659,27 @@ def pending_orders():
 
             # Count quantities for each item in the Shopify order
             for item in shopify_items_list:
-                product_title = item['item_title']
-                quantity = item['quantity']
-                item_image = item['item_image']
+                if item['status'] in ['CONSIGNMENT BOOKED', 'Un-Booked']:
+                    product_title = item['item_title']
+                    quantity = item['quantity']
+                    item_image = item['item_image']
+                    status = item['status']
 
-                if product_title in pending_items_dict:
-                    pending_items_dict[product_title]['quantity'] += quantity
-                else:
-                    pending_items_dict[product_title] = {
-                        'item_image': item_image,
-                        'item_title': product_title,
-                        'quantity': quantity
-                    }
+                    key = item['item_title']
+                    if key not in pending_items_dict:
+                        pending_items_dict[key] = {
+                            'item_image': item_image,
+                            'item_title': product_title,
+                            'quantity': 0,
+                            'statuses': {}
+                        }
+
+                    pending_items_dict[key]['quantity'] += quantity
+
+                    if item['status'] in pending_items_dict[key]['statuses']:
+                        pending_items_dict[key]['statuses'][item['status']] += quantity
+                    else:
+                        pending_items_dict[key]['statuses'][item['status']] = quantity
 
     pending_items = list(pending_items_dict.values())
     pending_items_sorted = sorted(pending_items, key=lambda x: x['quantity'], reverse=True)
