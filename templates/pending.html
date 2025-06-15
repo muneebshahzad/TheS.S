@@ -139,15 +139,31 @@
                     <th>Image</th>
                     <th style="width: 30%;">Title</th>
                     <th>Quantity</th>
+                    <th> </th>
                 </tr>
             </thead>
             <tbody>
                 {% for item in pending_items[:half] %}
-                <tr>
-                    <td><img src="{{ item.item_image }}" width="75" height="75"></td>
-                    <td>{{ item.item_title }}</td>
-                    <td>{{ item.quantity }}</td>
-                </tr>
+<tr data-statuses='{{ item.statuses | tojson | safe }}'>
+
+    <td>
+        <img src="{{ item.item_image }}" width="75" height="75">
+    </td>
+    <td contenteditable="true" style="cursor:text;">
+        {{ item.item_title }}
+    </td>
+    <td class="qty-cell" contenteditable="true" style="cursor:text; text-align: center;">
+            {{ item.quantity }}
+
+    </td>
+    <td style="text-align:center;">
+        <button onclick="this.closest('tr').style.display='none'" class="btn btn-sm btn-primary">
+    &#10003;
+</button>
+
+    </td>
+</tr>
+
                 {% endfor %}
             </tbody>
         </table>
@@ -160,20 +176,45 @@
                     <th>Image</th>
                     <th style="width: 30%;">Title</th>
                     <th>Quantity</th>
+                    <th> </th>
                 </tr>
             </thead>
             <tbody>
                 {% for item in pending_items[half:] %}
-                <tr>
-                    <td><img src="{{ item.item_image }}" width="75" height="75"></td>
-                    <td>{{ item.item_title }}</td>
-                    <td>{{ item.quantity }}</td>
-                </tr>
+<tr data-statuses='{{ item.statuses | tojson | safe }}'>
+
+    <td>
+        <img src="{{ item.item_image }}" width="75" height="75">
+    </td>
+    <td contenteditable="true" style="cursor:text;">
+        {{ item.item_title }}
+    </td>
+        <td class="qty-cell" contenteditable="true" style="cursor:text; text-align: center;">
+            {{ item.quantity }}
+
+    </td>
+
+    <td style="text-align:center;">
+        <button onclick="this.closest('tr').style.display='none'" class="btn btn-sm btn-primary">
+    &#10003;
+</button>
+
+    </td>
+</tr>
+
                 {% endfor %}
             </tbody>
         </table>
+
     </div>
+
+
 </div>
+<div class="mb-3">
+    <button class="btn btn-warning" onclick="hideBooked()">Hide BOOKED</button>
+    <button class="btn btn-secondary" onclick="resetView()">Reset</button>
+</div>
+
 
 
                         <div style="overflow-x:auto;" class="card-body">
@@ -366,7 +407,49 @@ function updateTotals() {
 
     // Initial call
     updateTotals();
-    </script>
+
+
+function hideBooked() {
+    document.querySelectorAll('tr[data-statuses]').forEach(row => {
+        const statusData = JSON.parse(row.getAttribute('data-statuses'));
+
+        let visibleQty = 0;
+        for (const [status, qty] of Object.entries(statusData)) {
+            if (status !== 'CONSIGNMENT BOOKED') {
+                visibleQty += qty;
+            }
+        }
+
+        const qtyCell = row.querySelector('.qty-cell');
+        if (qtyCell) qtyCell.textContent = visibleQty;
+
+        row.style.display = visibleQty === 0 ? 'none' : '';
+    });
+}
+
+function resetView() {
+    document.querySelectorAll('tr[data-statuses]').forEach(row => {
+        const statusData = JSON.parse(row.getAttribute('data-statuses'));
+
+        let totalQty = 0;
+        for (const qty of Object.values(statusData)) {
+            totalQty += qty;
+        }
+
+        const qtyCell = row.querySelector('.qty-cell');
+        if (qtyCell) qtyCell.textContent = totalQty;
+
+        row.style.display = '';
+    });
+}
+
+</script>
+
+
+
+
+
+
 
 </body>
 
