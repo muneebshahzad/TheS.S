@@ -310,10 +310,14 @@
     cell.style.textAlign = "center"; // Center align text
 
         // Apply color based on conditions
-        if (orderStatus.includes("return")) {
-        cell.style.backgroundColor = "#ff471a"; // Red for any return-related status
-        cell.style.color = "white";
-    }
+       if (
+  orderStatus.includes("return") || 
+  orderStatus.includes("undelivered") || 
+  orderStatus.includes("moved to origin")
+) {
+  cell.style.backgroundColor = "#ff471a"; // Red for any return-related status
+  cell.style.color = "white";
+}
         else if (daysPending <= 7) {
             cell.style.backgroundColor = "#ffebe6";
         } else if (daysPending > 7 && daysPending <= 15) {
