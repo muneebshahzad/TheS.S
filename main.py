@@ -261,17 +261,25 @@ def get_variant_image_and_title(product, line_item):
     if cache_key in product_image_cache:
         return product_image_cache[cache_key]
 
+    line_item_variant_id = str(getattr(line_item, "variant_id", "") or "").strip()
+    line_item_image_id = str(getattr(line_item, "image_id", "") or "").strip()
     base_image = ""
     if getattr(product, "image", None):
         base_image = getattr(product.image, "src", "") or ""
 
     variant_name = ""
-    image_src = base_image or "https://cdn.shopify.com/s/files/1/0936/0949/2789/files/7.png?v=1741033934"
+    image_src = base_image or "/static/sleekspace-wordmark.svg"
     images = list(getattr(product, "images", []) or [])
     fetched_images = False
 
+    if line_item_image_id and images:
+        for image in images:
+            if str(getattr(image, "id", "") or "").strip() == line_item_image_id:
+                image_src = getattr(image, "src", "") or image_src
+                break
+
     for variant in getattr(product, "variants", []) or []:
-        if getattr(variant, "id", None) != getattr(line_item, "variant_id", None):
+        if str(getattr(variant, "id", "") or "").strip() != line_item_variant_id:
             continue
         variant_name = "" if getattr(variant, "title", "") in {"", "Default Title"} else getattr(variant, "title", "")
         variant_image_id = getattr(variant, "image_id", None)
@@ -283,11 +291,11 @@ def get_variant_image_and_title(product, line_item):
             fetched_images = True
         if variant_image_id and images:
             for image in images:
-                if getattr(image, "id", None) == variant_image_id:
+                if str(getattr(image, "id", "") or "").strip() == str(variant_image_id).strip():
                     image_src = getattr(image, "src", "") or image_src
                     break
                 attached_variant_ids = getattr(image, "variant_ids", None) or []
-                if getattr(variant, "id", None) in attached_variant_ids:
+                if str(getattr(variant, "id", "") or "").strip() in {str(v).strip() for v in attached_variant_ids}:
                     image_src = getattr(image, "src", "") or image_src
                     break
         break
@@ -519,7 +527,7 @@ async def get_shopify_orders():
     collected = []
 
     try:
-        orders = shopify.Order.find(limit=250, order="created_at DESC", created_at_min=created_at_min, status="any")
+        orders = shopify.Order.find(limit=250, order="created_at DESC", created_at_min=created_at_min, status="open")
     except Exception as error:
         print(f"Error fetching Shopify orders: {error}")
         return []
