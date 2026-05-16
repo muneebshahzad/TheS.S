@@ -32,6 +32,7 @@ from shopify_protected_data import (
     create_oauth_state,
     exchange_oauth_code_for_token,
     fetch_protected_order_details,
+    get_graphql_api_version,
     get_graphql_endpoint,
     get_graphql_token,
     get_install_url,
@@ -191,8 +192,8 @@ def employee_portal_safe_next_url(candidate):
 
 
 def setup_shopify():
-    shop_url = (os.getenv("SHOP_URL") or "").strip()
-    token = (os.getenv("PASSWORD") or "").strip()
+    shop_url = get_shop_domain() or (os.getenv("SHOP_URL") or "").strip()
+    token = get_graphql_token() or (os.getenv("PASSWORD") or "").strip()
     api_key = (os.getenv("API_KEY") or "").strip()
     if not shop_url or not token:
         print("SHOP_URL or PASSWORD missing; Shopify client not configured.")
@@ -202,6 +203,13 @@ def setup_shopify():
         shopify.ShopifyResource.clear_session()
     except Exception:
         pass
+    try:
+        session_obj = shopify.Session(shop_url, get_graphql_api_version(), token)
+        shopify.ShopifyResource.activate_session(session_obj)
+        return
+    except Exception as error:
+        print(f"Could not activate Shopify session; falling back to legacy setup: {error}")
+
     if not shop_url.startswith("https://"):
         shop_url = f"https://{shop_url.lstrip('/')}"
     shopify.ShopifyResource.set_site(shop_url)
@@ -221,7 +229,7 @@ def shopify_rest_base_url():
 
 
 def shopify_rest_headers():
-    token = (os.getenv("PASSWORD") or "").strip()
+    token = get_graphql_token() or (os.getenv("PASSWORD") or "").strip()
     if not token:
         raise RuntimeError("Shopify admin token is missing.")
     return {
@@ -511,7 +519,7 @@ async def get_shopify_orders():
     collected = []
 
     try:
-        orders = shopify.Order.find(limit=250, order="created_at DESC", created_at_min=created_at_min)
+        orders = shopify.Order.find(limit=250, order="created_at DESC", created_at_min=created_at_min, status="any")
     except Exception as error:
         print(f"Error fetching Shopify orders: {error}")
         return []
@@ -1359,6 +1367,7 @@ def shopify_callback():
     try:
         payload = exchange_oauth_code_for_token(shop, code)
         save_offline_token(shop, payload)
+        setup_shopify()
         session.pop(SHOPIFY_OAUTH_STATE_SESSION_KEY, None)
         reload_orders()
         return redirect("/shopify/protected-data/status?connected=1")
