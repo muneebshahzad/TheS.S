@@ -1,46 +1,40 @@
-
+{% if not skip_base_password_prompt and not embedded_mode %}
 <style>
-        /* Hide the content initially */
-        body {
-            display: none; /* Hide body initially */
-        }
-    </style>
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const correctPassword = '.';
-            const accessDuration = 10 * 60 * 1000; // 10 minutes in milliseconds
+  body {
+      display: none;
+  }
+</style>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+      const correctPassword = '.';
+      const accessDuration = 10 * 60 * 1000;
 
-            function checkPassword() {
-                const lastAccess = localStorage.getItem('lastAccess');
-                const currentTime = new Date().getTime();
+      function checkPassword() {
+          const lastAccess = localStorage.getItem('lastAccess');
+          const currentTime = new Date().getTime();
 
-                if (lastAccess && (currentTime - lastAccess < accessDuration)) {
-                    // If within 10 minutes, show the content
-                    document.body.style.display = 'block';
-                    return;
-                }
+          if (lastAccess && (currentTime - lastAccess < accessDuration)) {
+              document.body.style.display = 'block';
+              return;
+          }
 
-                // Prompt for password if not within 10 minutes
-                while (true) {
-                    let userPassword = prompt('Enter the password to access this page:');
+          while (true) {
+              const userPassword = prompt('Enter the password to access this page:');
+              if (userPassword === correctPassword) {
+                  localStorage.setItem('lastAccess', currentTime);
+                  document.body.style.display = 'block';
+                  break;
+              }
+              alert('Wrong password. Please try again.');
+          }
+      }
 
-                    if (userPassword === correctPassword) {
-                        // Store the current time in localStorage
-                        localStorage.setItem('lastAccess', currentTime);
-                        // Show the content if the password is correct
-                        document.body.style.display = 'block';
-                        break; // Exit the loop
-                    } else {
-                        alert('Wrong password. Please try again.');
-                    }
-                }
-            }
+      checkPassword();
+  });
+</script>
+{% endif %}
 
-            // Call the function to check password when the page loads
-            checkPassword();
-        });
-    </script>
-
+{% if not embedded_mode %}
 <ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
 
             <!-- Sidebar - Brand -->
@@ -48,7 +42,7 @@
                 <div class="sidebar-brand-icon rotate-n-15">
                     <i class="fas fa-laugh-wink"></i>
                 </div>
-                <div class="sidebar-brand-text mx-3">Daily Tasker<sup>2</sup></div>
+                <div class="sidebar-brand-text mx-3">Sleek Space Ops</div>
             </a>
 
             <!-- Divider -->
@@ -102,4 +96,5 @@
             </div>
 
         </ul>
+{% endif %}
 

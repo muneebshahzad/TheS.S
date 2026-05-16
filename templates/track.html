@@ -1,486 +1,788 @@
-<!DOCTYPE html>
-<html lang="en">
+{% extends 'base.html' %}
+{% block title %}The Sleek Space – Order Tracking{% endblock %}
 
-<head>
+{% block content %}
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
 
-    <meta charset="utf-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-    <meta name="description" content="">
-    <meta name="author" content="">
+  /* ── Stats strip ── */
+  .stats-strip { display: flex; background: #fff; border-bottom: 1px solid #e3e6f0; overflow-x: auto; padding: 0 6px; scrollbar-width: none; flex-shrink: 0; }
+  .stats-strip::-webkit-scrollbar { display: none; }
+  .stat { display: flex; flex-direction: column; align-items: center; padding: 8px 12px; flex-shrink: 0; gap: 1px; }
+  .stat-val { font-size: 16px; font-weight: 700; line-height: 1; }
+  .stat-pkr { font-size: 9px; font-weight: 600; color: #b0b2be; font-family: 'DM Mono', monospace; margin-top: 1px; white-space: nowrap; }
+  .stat-lbl { font-size: 10px; color: #8a8b96; font-weight: 500; white-space: nowrap; }
+  .stat-div  { width: 1px; background: #e3e6f0; margin: 8px 0; flex-shrink: 0; }
 
-    <title>Daily Tasker - Tracking</title>
+  /* ── Bulk bar ── */
+  .bulk-bar { display: none; background: #2d2e36; color: #fff; padding: 9px 14px; align-items: center; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid #1a1b20; flex-shrink: 0; }
+  .bulk-bar.visible { display: flex; }
+  .bulk-count { font-size: 12px; font-weight: 700; white-space: nowrap; padding-right: 4px; }
+  .bulk-actions { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; flex: 1; }
+  .bulk-btn { padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.1); color: #fff; cursor: pointer; font-size: 11px; font-weight: 600; font-family: 'DM Sans', sans-serif; white-space: nowrap; transition: background 0.15s; }
+  .bulk-btn:hover { background: rgba(255,255,255,0.2); }
+  .bulk-clear { padding: 4px 10px; border-radius: 6px; border: 1px solid #555; background: transparent; color: #888; cursor: pointer; font-size: 11px; font-weight: 600; font-family: 'DM Sans', sans-serif; margin-left: auto; white-space: nowrap; }
 
-    <!-- Custom fonts for this template -->
-    <link href="static/assets/vendor/fontawesome-free/css/all.min.css" rel="stylesheet" type="text/css">
-    <link
-        href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i"
-        rel="stylesheet">
+  /* ── Filter strip ── */
+  .filter-strip { display: flex; align-items: center; gap: 6px; padding: 8px 14px; overflow-x: auto; scrollbar-width: none; background: #f2f4f8; flex-shrink: 0; }
+  .filter-strip::-webkit-scrollbar { display: none; }
+  .fpill { padding: 5px 13px; border-radius: 99px; border: 1.5px solid #e3e6f0; font-size: 11px; font-weight: 600; background: #fff; color: #8a8b96; cursor: pointer; white-space: nowrap; font-family: 'DM Sans', sans-serif; flex-shrink: 0; transition: all 0.15s; }
+  .fpill.active { background: #4e73df; color: #fff; border-color: #4e73df; }
+  .refresh-btn { margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 7px; border: 1px solid #e3e6f0; background: #fff; font-size: 11px; font-weight: 600; font-family: 'DM Sans', sans-serif; color: #4e73df; cursor: pointer; white-space: nowrap; }
+  .refresh-btn:hover { background: #f0f4ff; }
 
-    <!-- Custom styles for this template -->
-    <link href="static/assets/css/sb-admin-2.min.css" rel="stylesheet">
+  /* ── Employee approvals ── */
+  .approval-card { background: #fff7ec; border: 1px solid #f2d1a6; border-radius: 12px; overflow: hidden; }
+  .approval-list { display: flex; flex-direction: column; gap: 8px; }
+  .approval-item { display: grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; border-top: 1px solid rgba(20,33,61,0.08); }
+  .approval-item:first-child { border-top: none; }
+  .approval-thumb { width: 56px; height: 56px; border-radius: 10px; overflow: hidden; background: #f2f4f8; display: flex; align-items: center; justify-content: center; }
+  .approval-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .approval-title { font-size: 13px; font-weight: 700; color: #2d2e36; margin-bottom: 4px; }
+  .approval-meta { font-size: 11px; color: #8a8b96; line-height: 1.45; }
+  .approval-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .approval-request { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 10px; font-weight: 700; white-space: nowrap; margin-bottom: 6px; }
+  .approval-request.deliver { background: #fff3cd; color: #8b5a00; }
+  .approval-request.cancel { background: #fde8e6; color: #b12727; }
 
-    <!-- Custom styles for this page -->
-    <link href="static/assets/vendor/datatables/dataTables.bootstrap4.min.css" rel="stylesheet">
- <style>
-        .status-buttons {
-            display: none;
-            margin-top: 10px;
-        }
-        .status-buttons .btn {
-            margin-right: 5px;
-            margin-bottom: 5px;
-        }
-    </style>
-</head>
+  /* ── Shipper advice ── */
+  .shipper-advice-card { background: #fff4eb; border: 1px solid #f2d1a6; border-radius: 12px; overflow: hidden; }
+  .shipper-advice-head { display:flex; align-items:center; gap:8px; padding:12px 14px; border-bottom:1px solid rgba(20,33,61,0.08); flex-wrap:wrap; }
+  .shipper-advice-list { display:flex; flex-direction:column; gap:0; }
+  .shipper-advice-item { display:grid; grid-template-columns: 56px 1fr auto; gap:12px; align-items:start; padding:12px 14px; border-top:1px solid rgba(20,33,61,0.08); }
+  .shipper-advice-item:first-child { border-top:none; }
+  .shipper-advice-thumb { width:56px; height:56px; border-radius:10px; overflow:hidden; background:#f2f4f8; display:flex; align-items:center; justify-content:center; }
+  .shipper-advice-thumb img { width:100%; height:100%; object-fit:cover; }
+  .shipper-advice-title { font-size:13px; font-weight:700; color:#2d2e36; margin-bottom:4px; }
+  .shipper-advice-meta { font-size:11px; color:#8a8b96; line-height:1.45; }
+  .shipper-advice-tags { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+  .shipper-advice-pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:10px; font-weight:700; white-space:nowrap; }
+  .shipper-advice-pill.pending { background:#fff3cd; color:#8b5a00; }
+  .shipper-advice-pill.ra { background:#e8f8fb; color:#0a5c6e; }
+  .shipper-advice-pill.rt { background:#fde8e6; color:#b12727; }
+  .shipper-advice-actions { display:flex; flex-direction:column; gap:8px; width:210px; max-width:100%; }
+  .shipper-advice-remarks { width:100%; border:1px solid #e3e6f0; border-radius:8px; padding:8px 10px; font-size:11px; font-family:'DM Sans', sans-serif; min-height:64px; resize:vertical; background:#fff; }
+  .shipper-advice-btns { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .shipper-advice-empty { padding:12px 14px; font-size:12px; color:#8a8b96; }
 
-<body id="page-top">
+  /* ── Order card ── */
+  .card { background: #fff; border-radius: 12px; border: 1.5px solid #e3e6f0; overflow: hidden; transition: box-shadow 0.15s, border-color 0.15s; }
+  .card:hover { box-shadow: 0 2px 14px rgba(78,115,223,0.08); }
+  .card.selected { border-color: #4e73df; background: #fafbff; }
 
-    <!-- Page Wrapper -->
-    <div id="wrapper">
+  /* ── Card header ── */
+  .card-head { display: flex; align-items: center; gap: 10px; padding: 11px 14px 8px; flex-wrap: nowrap; }
 
-        <!-- Sidebar -->
-        {% include 'header.html' %}
-        <!-- End of Sidebar -->
+  /* Checkbox */
+  .cb-wrap { flex-shrink: 0; width: 18px; height: 18px; position: relative; cursor: pointer; }
+  .cb-wrap input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .cb-box { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid #d0d3e0; background: #fff; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+  .cb-wrap input:checked ~ .cb-box { background: #4e73df; border-color: #4e73df; }
+  .cb-wrap input:checked ~ .cb-box::after { content: ''; width: 5px; height: 9px; border: 2px solid #fff; border-top: none; border-left: none; transform: rotate(42deg) translateY(-1px); display: block; }
 
-        <!-- Content Wrapper -->
-        <div id="content-wrapper" class="d-flex flex-column">
+  .card-id { font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 700; color: #4e73df; text-decoration: none; }
+  .card-id:hover { text-decoration: underline; }
+  .card-date { font-size: 10px; color: #b0b2be; margin-top: 1px; }
+  .ch-spacer { flex: 1; }
+  .card-amount { font-family: 'DM Mono', monospace; font-size: 14px; font-weight: 700; color: #2d2e36; white-space: nowrap; }
+  .card-amount-cur { font-size: 10px; color: #8a8b96; margin-left: 2px; }
 
-            <!-- Main Content -->
-            <div id="content">
+  /* Status badge */
+  .sbadge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 99px; font-size: 10px; font-weight: 700; flex-shrink: 0; white-space: nowrap; }
+  .sb-booked    { background: #ddeeff; color: #1a6bbd; }
+  .sb-unbooked  { background: #ececec; color: #666; }
+  .sb-delivered { background: #d9f7eb; color: #0e7a53; }
+  .sb-ofd       { background: #fff3cd; color: #7a5c00; }
+  .sb-return    { background: #fde8e6; color: #c0392b; }
 
-                <!-- Topbar -->
-                <nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
+  /* ── Card body ── */
+  .card-body { padding: 0 14px 0; display: flex; flex-direction: column; gap: 10px; }
 
-                    <!-- Sidebar Toggle (Topbar) -->
-                    <form class="form-inline">
-                        <button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3">
-                            <i class="fa fa-bars"></i>
-                        </button>
-                    </form>
+  /* Product thumbnails */
+  .products { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .products::-webkit-scrollbar { display: none; }
+  .product { display: flex; flex-direction: column; align-items: center; gap: 5px; flex-shrink: 0; width: 72px; }
+  .product-img { width: 72px; height: 72px; border-radius: 9px; background: #f2f4f8; border: 1px solid #e8eaef; overflow: hidden; display: flex; align-items: center; justify-content: center; font-size: 24px; flex-shrink: 0; }
+  .product-img img { width: 100%; height: 100%; object-fit: cover; }
+  .product-name { font-size: 9px; color: #4a4b55; text-align: center; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 72px; font-weight: 500; }
+  .product-qty { font-size: 9px; color: #b0b2be; }
+  .product-track { font-family: 'DM Mono', monospace; font-size: 8px; color: #3a3b45; background: #e8eaef; padding: 2px 5px; border-radius: 3px; text-decoration: none; text-align: center; max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; font-weight: 600; transition: background 0.15s, color 0.15s; }
+  .product-track:hover { background: #2d2e36; color: #fff; }
+  .product-notrack { font-size: 8px; color: #c0c2cc; font-style: italic; }
 
-                    <!-- Topbar Search -->
+  /* Desktop info block */
+  .info-block { display: flex; flex-direction: column; gap: 4px; }
+  .info-row { display: flex; gap: 6px; font-size: 11px; align-items: flex-start; }
+  .info-lbl { color: #b0b2be; width: 56px; flex-shrink: 0; font-size: 10px; padding-top: 1px; }
+  .info-val { color: #2d2e36; font-weight: 500; line-height: 1.4; }
+  .tags-wrap { display: flex; flex-wrap: wrap; gap: 4px; }
 
+  /* Desktop columns */
+  .desktop-info    { display: none; }
+  .desktop-actions { display: none; }
 
-                    <!-- Topbar Navbar -->
-                    <ul class="navbar-nav ml-auto">
+  /* Mobile: expandable detail */
+  .mobile-detail { display: none; flex-direction: column; gap: 8px; border-top: 1px solid #f2f4f8; padding: 10px 14px 0; }
+  .mobile-detail.open { display: flex; }
 
-                        <!-- Nav Item - Search Dropdown (Visible Only XS) -->
-                        <li class="nav-item dropdown no-arrow d-sm-none">
-                            <a class="nav-link dropdown-toggle" href="#" id="searchDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                                <i class="fas fa-search fa-fw"></i>
-                            </a>
-                            <!-- Dropdown - Messages -->
-                            <div class="dropdown-menu dropdown-menu-right p-3 shadow animated--grow-in" aria-labelledby="searchDropdown">
-                                <form class="form-inline mr-auto w-100 navbar-search">
-                                    <div class="input-group">
-                                        <input type="text" class="form-control bg-light border-0 small" placeholder="Search for..." aria-label="Search" aria-describedby="basic-addon2">
-                                        <div class="input-group-append">
-                                            <button class="btn btn-primary" type="button">
-                                                <i class="fas fa-search fa-sm"></i>
-                                            </button>
+  /* Expanded item row (in detail) */
+  .detail-item { display: flex; align-items: center; gap: 8px; background: #f8f9fc; border: 1px solid #e8eaef; border-radius: 7px; padding: 7px 9px; }
+  .detail-item-img { width: 32px; height: 32px; border-radius: 5px; background: #e3e6f0; overflow: hidden; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+  .detail-item-img img { width: 100%; height: 100%; object-fit: cover; }
+  .detail-item-name { flex: 1; font-size: 11px; font-weight: 600; color: #3a3b45; min-width: 0; }
+  .detail-item-qty  { font-size: 10px; color: #8a8b96; }
 
-                                        </div>
-                                    </div>
-                                </form>
-                            </div>
-                        </li>
+  /* Mobile actions — right-aligned */
+  .mobile-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 8px 14px 11px; }
+  .mobile-expand { width: 26px; height: 26px; border-radius: 6px; border: 1px solid #e3e6f0; background: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.2s; flex-shrink: 0; }
 
-                        <!-- Nav Item - Alerts -->
-<!--                        <li class="nav-item dropdown no-arrow mx-1">-->
-<!--                            <a class="nav-link dropdown-toggle" href="#" id="alertsDropdown" role="button"-->
-<!--                                data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">-->
-<!--                                <i class="fas fa-bell fa-fw"></i>-->
-<!--                                &lt;!&ndash; Counter - Alerts &ndash;&gt;-->
-<!--                                <span class="badge badge-danger badge-counter">3+</span>-->
-<!--                            </a>-->
-<!--                            &lt;!&ndash; Dropdown - Alerts &ndash;&gt;-->
-<!--                            <div class="dropdown-list dropdown-menu dropdown-menu-right shadow animated&#45;&#45;grow-in"-->
-<!--                                aria-labelledby="alertsDropdown">-->
-<!--                                <h6 class="dropdown-header">-->
-<!--                                    Alerts Center-->
-<!--                                </h6>-->
-<!--                                <a class="dropdown-item d-flex align-items-center" href="#">-->
-<!--                                    <div class="mr-3">-->
-<!--                                        <div class="icon-circle bg-primary">-->
-<!--                                            <i class="fas fa-file-alt text-white"></i>-->
-<!--                                        </div>-->
-<!--                                    </div>-->
-<!--                                    <div>-->
-<!--                                        <div class="small text-gray-500">December 12, 2019</div>-->
-<!--                                        <span class="font-weight-bold">A new monthly report is ready to download!</span>-->
-<!--                                    </div>-->
-<!--                                </a>-->
-<!--                                <a class="dropdown-item d-flex align-items-center" href="#">-->
-<!--                                    <div class="mr-3">-->
-<!--                                        <div class="icon-circle bg-success">-->
-<!--                                            <i class="fas fa-donate text-white"></i>-->
-<!--                                        </div>-->
-<!--                                    </div>-->
-<!--                                    <div>-->
-<!--                                        <div class="small text-gray-500">December 7, 2019</div>-->
-<!--                                        $290.29 has been deposited into your account!-->
-<!--                                    </div>-->
-<!--                                </a>-->
-<!--                                <a class="dropdown-item d-flex align-items-center" href="#">-->
-<!--                                    <div class="mr-3">-->
-<!--                                        <div class="icon-circle bg-warning">-->
-<!--                                            <i class="fas fa-exclamation-triangle text-white"></i>-->
-<!--                                        </div>-->
-<!--                                    </div>-->
-<!--                                    <div>-->
-<!--                                        <div class="small text-gray-500">December 2, 2019</div>-->
-<!--                                        Spending Alert: We've noticed unusually high spending for your account.-->
-<!--                                    </div>-->
-<!--                                </a>-->
-<!--                                <a class="dropdown-item text-center small text-gray-500" href="#">Show All Alerts</a>-->
-<!--                            </div>-->
-<!--                        </li>-->
+  /* Action buttons */
+  .mark-as-wrap { position: relative; }
+  .mark-as-btn { display: flex; align-items: center; gap: 4px; padding: 5px 9px; border-radius: 7px; background: #f2f4f8; color: #3a3b45; border: 1px solid #d8dae8; cursor: pointer; font-size: 11px; font-weight: 600; font-family: 'DM Sans', sans-serif; white-space: nowrap; justify-content: center; }
+  .mark-as-btn:hover { background: #e6e9f2; border-color: #c0c4d8; }
+  .icon-btn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; border: 1px solid #e3e6f0; background: #fff; cursor: pointer; text-decoration: none; font-size: 14px; flex-shrink: 0; }
+  .icon-btn:hover { background: #f2f4f8; }
 
-<!--                        &lt;!&ndash; Nav Item - Messages &ndash;&gt;-->
-<!--                        <li class="nav-item dropdown no-arrow mx-1">-->
-<!--                            <a class="nav-link dropdown-toggle" href="#" id="messagesDropdown" role="button"-->
-<!--                                data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">-->
-<!--                                <i class="fas fa-envelope fa-fw"></i>-->
-<!--                                &lt;!&ndash; Counter - Messages &ndash;&gt;-->
-<!--                                <span class="badge badge-danger badge-counter">7</span>-->
-<!--                            </a>-->
-<!--                            &lt;!&ndash; Dropdown - Messages &ndash;&gt;-->
-<!--                            <div class="dropdown-list dropdown-menu dropdown-menu-right shadow animated&#45;&#45;grow-in"-->
-<!--                                aria-labelledby="messagesDropdown">-->
-<!--                                <h6 class="dropdown-header">-->
-<!--                                    Message Center-->
-<!--                                </h6>-->
-<!--                                <a class="dropdown-item d-flex align-items-center" href="#">-->
-<!--                                    <div class="dropdown-list-image mr-3">-->
-<!--                                        <img class="rounded-circle" src="img/undraw_profile_1.svg"-->
-<!--                                            alt="...">-->
-<!--                                        <div class="status-indicator bg-success"></div>-->
-<!--                                    </div>-->
-<!--                                    <div class="font-weight-bold">-->
-<!--                                        <div class="text-truncate">Hi there! I am wondering if you can help me with a-->
-<!--                                            problem I've been having.</div>-->
-<!--                                        <div class="small text-gray-500">Emily Fowler · 58m</div>-->
-<!--                                    </div>-->
-<!--                                </a>-->
-<!--                                <a class="dropdown-item d-flex align-items-center" href="#">-->
-<!--                                    <div class="dropdown-list-image mr-3">-->
-<!--                                        <img class="rounded-circle" src="img/undraw_profile_2.svg"-->
-<!--                                            alt="...">-->
-<!--                                        <div class="status-indicator"></div>-->
-<!--                                    </div>-->
-<!--                                    <div>-->
-<!--                                        <div class="text-truncate">I have the photos that you ordered last month, how-->
-<!--                                            would you like them sent to you?</div>-->
-<!--                                        <div class="small text-gray-500">Jae Chun · 1d</div>-->
-<!--                                    </div>-->
-<!--                                </a>-->
-<!--                                <a class="dropdown-item d-flex align-items-center" href="#">-->
-<!--                                    <div class="dropdown-list-image mr-3">-->
-<!--                                        <img class="rounded-circle" src="img/undraw_profile_3.svg"-->
-<!--                                            alt="...">-->
-<!--                                        <div class="status-indicator bg-warning"></div>-->
-<!--                                    </div>-->
-<!--                                    <div>-->
-<!--                                        <div class="text-truncate">Last month's report looks great, I am very happy with-->
-<!--                                            the progress so far, keep up the good work!</div>-->
-<!--                                        <div class="small text-gray-500">Morgan Alvarez · 2d</div>-->
-<!--                                    </div>-->
-<!--                                </a>-->
-<!--                                <a class="dropdown-item d-flex align-items-center" href="#">-->
-<!--                                    <div class="dropdown-list-image mr-3">-->
-<!--                                        <img class="rounded-circle" src="https://source.unsplash.com/Mv9hjnEUHR4/60x60"-->
-<!--                                            alt="...">-->
-<!--                                        <div class="status-indicator bg-success"></div>-->
-<!--                                    </div>-->
-<!--                                    <div>-->
-<!--                                        <div class="text-truncate">Am I a good boy? The reason I ask is because someone-->
-<!--                                            told me that people say this to all dogs, even if they aren't good...</div>-->
-<!--                                        <div class="small text-gray-500">Chicken the Dog · 2w</div>-->
-<!--                                    </div>-->
-<!--                                </a>-->
-<!--                                <a class="dropdown-item text-center small text-gray-500" href="#">Read More Messages</a>-->
-<!--                            </div>-->
-<!--                        </li>-->
+  /* Dropdown */
+  .dropdown-menu { display: none; position: absolute; background: #fff; border: 1px solid #e3e6f0; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.13); min-width: 185px; overflow: hidden; z-index: 300; }
+  .dropdown-menu.open { display: block; }
+  .dd-item { display: flex; align-items: center; gap: 8px; padding: 9px 14px; font-size: 12px; font-weight: 500; cursor: pointer; font-family: 'DM Sans', sans-serif; width: 100%; border: none; background: none; text-align: left; color: #2d2e36; text-decoration: none; }
+  .dd-item:hover { background: #f2f4f8; }
+  .dd-item.danger { color: #c0392b; }
 
-                         <div class="topbar-divider d-none d-sm-block"></div>
+  /* Mobile dropdowns: open upward to the right */
+  .mobile-actions .mark-as-wrap .dropdown-menu { bottom: 110%; right: 0; left: auto; }
+  /* Desktop dropdowns: open downward to the right */
+  .desktop-actions .mark-as-wrap .dropdown-menu { top: 110%; right: 0; left: auto; }
 
-                        <!-- Nav Item - User Information -->
-                        <li class="nav-item dropdown no-arrow">
-                            <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                                <span class="mr-2 d-none d-lg-inline text-gray-600 small">User</span>
-                                <img class="img-profile rounded-circle" src="static/img/undraw_profile.svg">
-                            </a>
-                            <!-- Dropdown - User Information -->
-                            <div class="dropdown-menu dropdown-menu-right shadow animated--grow-in" aria-labelledby="userDropdown">
-                                <a class="dropdown-item" href="#">
-                                    <i class="fas fa-user fa-sm fa-fw mr-2 text-gray-400"></i>
-                                    Profile
-                                </a>
-                                <a class="dropdown-item" href="#">
-                                    <i class="fas fa-cogs fa-sm fa-fw mr-2 text-gray-400"></i>
-                                    Settings
-                                </a>
-                                <a class="dropdown-item" href="#">
-                                    <i class="fas fa-list fa-sm fa-fw mr-2 text-gray-400"></i>
-                                    Activity Log
-                                </a>
-                                <div class="dropdown-divider"></div>
-                                <a class="dropdown-item" href="#" data-toggle="modal" data-target="#logoutModal">
-                                    <i class="fas fa-sign-out-alt fa-sm fa-fw mr-2 text-gray-400"></i>
-                                    Logout
-                                </a>
-                            </div>
-                        </li>
+  /* ── Bottom bar ── */
+  .bottom-bar { display: none; background: #fff; border-top: 1px solid #e3e6f0; padding: 8px 14px; gap: 8px; flex-shrink: 0; }
+  .bottom-bar.visible { display: flex; }
+  .bottom-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px; border-radius: 8px; border: 1px solid transparent; cursor: pointer; font-size: 11px; font-weight: 600; font-family: 'DM Sans', sans-serif; }
+  .bottom-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .bb-green { background: #eafaf4; color: #0e7a53; border-color: #b2e8d4; }
+  .bb-green:not(:disabled):hover { background: #d4f5ea; }
+  .bb-red   { background: #fef0ee; color: #c0392b; border-color: #f5c0b8; }
+  .bb-red:not(:disabled):hover   { background: #fde3df; }
 
-                    </ul>
+  @media (min-width: 680px) {
+    .card-body { flex-direction: row; align-items: flex-start; gap: 16px; padding: 0 14px 12px; }
+    .products { flex: 0 0 auto; flex-wrap: wrap; overflow: visible; padding-bottom: 0; max-width: 240px; }
+    .product { width: 76px; }
+    .product-img { width: 76px; height: 76px; }
+    .product-name { max-width: 76px; }
+    .product-track { max-width: 76px; }
+    .desktop-info    { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; padding-top: 2px; }
+    .desktop-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; width: 130px; padding-top: 2px; }
+    .desktop-actions .icon-btn { width: 100%; }
+    .mobile-actions { display: none; }
+    .mobile-detail  { display: none !important; }
+    .filter-strip { padding: 8px 20px; }
+    .bottom-bar { padding: 8px 20px; }
+  }
 
-                </nav>
-                <!-- End of Topbar -->
+  @media (max-width: 679px) {
+    .approval-item { grid-template-columns: 56px 1fr; }
+    .approval-actions { grid-column: 1 / -1; justify-content: stretch; }
+    .shipper-advice-item { grid-template-columns: 56px 1fr; }
+    .shipper-advice-actions { grid-column: 1 / -1; width:100%; }
+    .shipper-advice-btns { justify-content:stretch; }
+  }
+</style>
 
-                <!-- Begin Page Content -->
-                <div class="container-fluid">
+<div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
 
+  <!-- Topbar -->
+  <div class="topbar">
+    <span class="topbar-title">Order Tracking</span>
+    <div style="flex:1"></div>
+    <div class="search-box">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#858796" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="orderSearch" placeholder="Search orders, customers, tracking…" style="width:220px;" oninput="filterOrders()"/>
+      <button id="searchClear" onclick="document.getElementById('orderSearch').value='';filterOrders()" style="display:none;border:none;background:none;cursor:pointer;color:#858796;font-size:15px;line-height:1;padding:0;">×</button>
+    </div>
+    <span style="font-size:11px;color:#858796;">Last refreshed: <span id="lastRefreshTime"></span></span>
+  </div>
 
-                    <!-- Page Heading -->
-                    <h1 class="h3 mb-2 text-gray-800">Order Tracking</h1>
+  <!-- Stats strip -->
+  <div class="stats-strip" id="statsStrip"></div>
 
-                    <!-- DataTales Example -->
-                    <div class="card shadow mb-4">
-                        <div class="card-header py-3">
-                            <h6 class="m-0 font-weight-bold text-primary">Shopify - Pending </h6>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-responsive">
+  <!-- Bulk selection bar -->
+  <div class="bulk-bar" id="bulkBar">
+    <span class="bulk-count" id="bulkCount">0 selected</span>
+    <div class="bulk-actions">
+      <button class="bulk-btn" onclick="bulkMark('Delivered')">✅ Delivered</button>
+      <button class="bulk-btn" onclick="bulkMark('Returned')">↩ Returned</button>
+      <button class="bulk-btn" onclick="bulkMark('Booked')">🏷️ Booked</button>
+      <button class="bulk-btn" onclick="bulkMark('Out For Delivery')">🚚 Out For Delivery</button>
+      <button class="bulk-btn" onclick="bulkMark('Being Return')">📦 Being Return</button>
+      <button class="bulk-btn" onclick="bulkMark('Cancelled')">✕ Cancelled</button>
+    </div>
+    <button class="bulk-clear" onclick="clearSelection()">✕ Clear</button>
+  </div>
 
-                                <table class="table table-bordered" id="dataTable" width="100%" cellspacing="0">
+  <!-- Scrollable body -->
+  <div style="flex:1;overflow:auto;" id="mainScroll">
 
-    <thead>
-        <tr>
-            <th>Order ID</th>
-            <th style="width: 15%;">Customer</th>
-            <th>City</th>
-            <th>Tags</th>
-            <th>Payment</th>
-            <th>Date</th>
-            <th>Total Price</th>
-            <th>Items</th>
-            <th>Status</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tfoot>
-        <tr>
-            <th>Order ID</th>
-            <th style="width: 15%;">Customer</th>
-            <th>City</th>
-            <th>Tags</th>
-            <th>Payment</th>
-            <th>Date</th>
-            <th>Total Price</th>
-            <th>Items</th>
-            <th>Status</th>
-            <th>Actions</th>
-        </tr>
-    </tfoot>
-    <tbody>
-        {% for order in order_details %}
-            <tr>
-                <td>
+    <!-- Filter pills + Refresh -->
+    <div class="filter-strip">
+      {% for f in ['All','Booked','Un-Booked','Delivered','Out For Delivery','Being Return','RETURNED TO SHIPPER'] %}
+      <button class="fpill {% if loop.first %}active{% endif %}" data-filter="{{ f }}" onclick="setFilter(this)">{{ f }}</button>
+      {% endfor %}
+      <button class="refresh-btn" id="refreshTrackingBtn" onclick="refreshTracking()">
+        <span id="refreshIcon">🔄</span> Refresh Tracking
+      </button>
+    </div>
 
-  <a href="{{order.order_link}}"><p>{{ order.order_id }}</p></a>
-</td>
-                <td>
-                    {{ order.line_items[0].name }}<br>
-                    {{ order.line_items[0].address }}<br>
-                    {{ order.line_items[0].city }}<br>
-                    {{ order.line_items[0].phone }}<br>
-                    <a href="tel:{{ order.line_items[0].phone }}" class="btn btn-primary btn-sm">Call</a>
-                    <div class="btn-group">
-                        <button type="button" class="btn btn-success btn-sm dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                            WhatsApp
-                        </button>
-                        <div class="dropdown-menu">
-                            <a class="dropdown-item" href="https://wa.me/{{ order.line_items[0].phone }}?text=Hello%20{{ order.line_items[0].name }},%20Your%20order%23{{ order.order_id }}%20from%20TickBags.com%20has%20been%20dispatched%20and%20is%20expected%20to%20be%20delivered%20in%203-7%20working%20days.%20Your%20patience%20is%20highly%20appreciated." target="_blank">Send Dispatch Message</a>
-                            <a class="dropdown-item" href="https://wa.me/{{ order.line_items[0].phone }}?text=Hello%20{{ order.line_items[0].name }},%20Your%20order%23{{ order.order_id }}%20from%20TickBags.com%20has%20been%20delayed,%20please%20be%20assured%20that%20we%20are%20trying%20our%20best%20to%20deliver%20it%20at%20earliest.%20Your%20patience%20is%20highly%20appreciated." target="_blank">Send Delay Message</a>
-                            <a class="dropdown-item" href="https://wa.me/{{ order.line_items[0].phone }}?text=Hello%20{{ order.line_items[0].name }},%20Logistics%20company%20made%20an%20attempt%20to%20deliver%20your%20order%23{{ order.order_id }}%20from%20TickBags.com%20but%20as%20per%20them,%20you%20weren't%20available%20at%20address%20or%20the%20address%20was%20closed.%20Please%20let%20us%20know%20when%20should%20we%20re-arrange%20the%20delivery.%20Thank%20You" target="_blank">Send Address Closed Message</a>
-                            <a class="dropdown-item" href="https://wa.me/{{ order.line_items[0].phone }}?text=Hello%20{{ order.line_items[0].name }},%20Logistics%20company%20made%20an%20attempt%20to%20deliver%20your%20order%23{{ order.order_id }}%20from%20TickBags.com%20and%20according%20to%20them,%20you%20refused%20to%20accept%20the%20delivery.%20Please%20let%20us%20know%20if%20you're%20still%20interested%20in%20receiving%20the%20product." target="_blank">Send Refused Message</a>
-                            <a class="dropdown-item" href="https://wa.me/{{ order.line_items[0].phone }}?text=Hello%20{{ order.line_items[0].name }},%20Your%20order%23{{ order.order_id }}%20from%20TickBags.com%20was%20delivered%20recently.%20Please%20let%20us%20know%20about%20your%20experience%20with%20us.%20Your%20feedback%20will%20surely%20help%20us%20improve.%20Thank%20You!" target="_blank">Send Feedback Message</a>
-                        </div>
-                    </div>
-                </td>
-                <td>{{ order.line_items[0].city }}</td>
+    {% if employee_approvals %}
+    <div style="padding:10px 14px 0;display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <div style="width:24px;height:24px;border-radius:6px;background:#f2b632;display:flex;align-items:center;justify-content:center;font-size:12px;">🛂</div>
+      <span style="font-size:13px;font-weight:700;color:#3a3b45;">Employee Approvals</span>
+      <span class="section-count" style="background:rgba(242,182,50,0.14);color:#8b5a00;">{{ employee_approvals|length }}</span>
+    </div>
 
-                <td>{% for tag in order.tags %}
-                     <span class="badge badge-secondary">{{ tag }}</span><br>
-                {% endfor %}</td>
-                <td>{{ order.financial_status }}</td>
-                <td>{{ order.created_at }}</td>
-                <td>{{ order.total_price }}</td>
-                <td>
-                    <table class="table table-sm">
-                        <thead>
-                            <tr>
-                                <th>Image</th>
-                                <th style="width: 30%;">Title</th>
-                                <th>Pcs</th>
-                                <th>Tracking Number</th>
-                                <th style="width: 20%;">Status</th>
-                                <th>Email</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for item in order.line_items %}
-                                <tr>
-                                    <td><img src="{{ item.image_src }}" width="50" height="50"></td>
-                                    <td>{{ item.product_title }}</td>
-                                    <td>{{ item.quantity }}</td>
-                                    <td><a href=track/{{item.tracking_number}} target=”_blank”> {{ item.tracking_number }} </a> </td>
-                                    <td>{{ item.status }}</td>
+    <div style="padding:0 14px 12px;max-width:960px;">
+      <div class="approval-card">
+        <div class="approval-list">
+          {% for approval in employee_approvals %}
+          <div class="approval-item">
+            <div class="approval-thumb">
+              {% if approval.item_image and approval.item_image != 'None' %}<img src="{{ approval.item_image }}" alt="">{% else %}📦{% endif %}
+            </div>
+            <div>
+              <div class="approval-request {{ 'deliver' if approval.requested_status == 'Delivered in Lahore' else 'cancel' }}">
+                {{ approval.requested_status }}
+              </div>
+              <div class="approval-title">#{{ approval.order_id }} • {{ approval.item_title }}</div>
+              <div class="approval-meta">
+                {{ approval.customer_name or 'No customer name' }}{% if approval.customer_city %} • {{ approval.customer_city }}{% endif %}
+                {% if approval.customer_phone %}<br>{{ approval.customer_phone }}{% endif %}
+                {% if approval.tracking_number and approval.tracking_number != 'N/A' %}<br>{{ approval.tracking_number }}{% endif %}
+              </div>
+            </div>
+            <div class="approval-actions">
+              <button
+                class="btn {% if approval.requested_status == 'Delivered in Lahore' %}btn-success{% else %}btn-danger{% endif %}"
+                onclick="approveEmployeeRequest('{{ approval.order_id }}', '{{ approval.tracking_number }}', '{{ approval.requested_status }}')">
+                {% if approval.requested_status == 'Delivered in Lahore' %}Approve Delivery{% else %}Approve Cancel{% endif %}
+              </button>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
 
-                                    <td>
-                                       <div class="btn-group">
-    <button type="button" class="btn btn-info btn-sm dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-        Email
+    <!-- ── Shopify Section ── -->
+    <div style="padding:10px 14px 0;display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <div style="width:24px;height:24px;border-radius:6px;background:#96bf48;display:flex;align-items:center;justify-content:center;font-size:12px;">🛍</div>
+      <span style="font-size:13px;font-weight:700;color:#3a3b45;">Shopify Orders</span>
+      <span class="section-count" id="shopifyCount">0</span>
+    </div>
+
+    <div style="padding:0 14px;display:flex;flex-direction:column;gap:10px;max-width:960px;" id="shopifyOrderList">
+      {% for order in order_details %}
+      {% set item0 = order.line_items[0] if order.line_items else {} %}
+      {% set name  = item0.get('name') or order.customer_details.get('name') or '' %}
+      {% set city  = item0.get('city') or order.customer_details.get('city') or '' %}
+      {% set phone = item0.get('phone') or order.customer_details.get('phone') or '' %}
+      {% set addr  = order.customer_details.get('address') or item0.get('address') or '' %}
+      {% set s = order.status or '' %}
+      {% set wa_phone = phone | replace('+','') %}
+
+      {% if s == 'Booked' %}{% set badge_cls = 'sb-booked' %}{% set dot_col = '#4e73df' %}
+      {% elif s == 'Un-Booked' %}{% set badge_cls = 'sb-unbooked' %}{% set dot_col = '#aaa' %}
+      {% elif s == 'Delivered' %}{% set badge_cls = 'sb-delivered' %}{% set dot_col = '#1cc88a' %}
+      {% elif s == 'Out For Delivery' %}{% set badge_cls = 'sb-ofd' %}{% set dot_col = '#f6c23e' %}
+      {% else %}{% set badge_cls = 'sb-return' %}{% set dot_col = '#e74a3b' %}{% endif %}
+
+      <div class="card" id="order-card-{{ order.id }}"
+           data-status="{{ s }}"
+           data-search="{{ order.order_id }} {{ name }} {{ city }} {% for i in order.line_items %}{{ i.product_title }} {{ i.tracking_number }} {% endfor %}">
+
+        <!-- Header: checkbox | order# | date | status | amount -->
+        <div class="card-head">
+          <label class="cb-wrap" onclick="event.stopPropagation()">
+            <input type="checkbox" onchange="toggleSelect('{{ order.id }}')"/>
+            <div class="cb-box"></div>
+          </label>
+          <div>
+            <a class="card-id" href="{{ order.order_link }}" target="_blank">#{{ order.order_id }}</a>
+            <div class="card-date">{{ order.created_at[:10] }}</div>
+          </div>
+          <div class="ch-spacer"></div>
+          <span class="sbadge {{ badge_cls }}">
+            <svg width="6" height="6" viewBox="0 0 6 6"><circle cx="3" cy="3" r="3" fill="{{ dot_col }}"/></svg>
+            {{ s or 'Un-Booked' }}
+          </span>
+          <span class="card-amount">{{ order.total_price|float|int|format_number }}<span class="card-amount-cur">PKR</span></span>
+        </div>
+
+        <!-- Body: products | desktop-info | desktop-actions -->
+        <div class="card-body">
+
+          <!-- Product thumbnails -->
+          <div class="products">
+            {% for item in order.line_items %}
+            <div class="product">
+              <div class="product-img">
+                {% if item.image_src and item.image_src != 'None' %}<img src="{{ item.image_src }}" alt="">{% else %}📦{% endif %}
+              </div>
+              <div class="product-name" title="{{ item.product_title }}">{{ item.product_title }}</div>
+              <div class="product-qty">×{{ item.quantity }}</div>
+              {% if item.tracking_number and item.tracking_number != 'N/A' %}
+              <a class="product-track" href="/track/{{ item.tracking_number }}" target="_blank">{{ item.tracking_number }}</a>
+              {% else %}
+              <span class="product-notrack">No tracking</span>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+
+          <!-- Desktop: customer info -->
+          <div class="desktop-info">
+            <div class="info-block">
+              {% if name %}
+              <div class="info-row">
+                <span class="info-lbl">Customer</span>
+                <span class="info-val" style="font-weight:600">{{ name }}{% if city %}, <span style="font-weight:400;color:#8a8b96">{{ city }}</span>{% endif %}</span>
+              </div>
+              {% endif %}
+              {% if phone %}
+              <div class="info-row">
+                <span class="info-lbl">Phone</span>
+                <span class="info-val" style="font-family:'DM Mono',monospace;color:#4e73df">{{ phone }}</span>
+              </div>
+              {% endif %}
+              {% if addr %}
+              <div class="info-row">
+                <span class="info-lbl">Address</span>
+                <span class="info-val" style="color:#8a8b96;font-size:10px">📍 {{ addr }}</span>
+              </div>
+              {% endif %}
+              {% if order.tags %}
+              <div class="info-row">
+                <span class="info-lbl">Tags</span>
+                <span class="info-val">
+                  <div class="tags-wrap">
+                    {% for tag in order.tags %}<span class="tag-badge" style="{{ tag_style(tag) }}">{{ tag }}</span>{% endfor %}
+                  </div>
+                </span>
+              </div>
+              {% endif %}
+              <div class="info-row">
+                <span class="info-lbl">Payment</span>
+                <span class="info-val">{{ order.financial_status or 'Pending' }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Desktop: action buttons -->
+          <div class="desktop-actions">
+            <div class="mark-as-wrap">
+              <button class="mark-as-btn" onclick="toggleDD(event,'dta-{{ order.id }}')">
+                Mark As <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <div class="dropdown-menu" id="dta-{{ order.id }}" style="top:110%;right:0;left:auto;">
+                <button class="dd-item" onclick="markOrder('{{ order.id }}','Delivered');closeDD()">✅ Delivered</button>
+                <button class="dd-item danger" onclick="markOrder('{{ order.id }}','Returned');closeDD()">↩ Returned</button>
+                <button class="dd-item danger" onclick="markOrder('{{ order.id }}','Cancelled');closeDD()">✕ Cancelled</button>
+                <button class="dd-item" onclick="markOrder('{{ order.id }}','Confirmed');closeDD()">✓ Confirmed</button>
+                <button class="dd-item" onclick="markOrder('{{ order.id }}','Call Not Attended');closeDD()">📵 Call Not Attended</button>
+              </div>
+            </div>
+            {% if phone %}
+            <a class="icon-btn" href="tel:{{ phone }}" title="Call">📞</a>
+            <div class="mark-as-wrap">
+              <button class="icon-btn" onclick="toggleDD(event,'dtw-{{ order.id }}')" title="WhatsApp">💬</button>
+              <div class="dropdown-menu" id="dtw-{{ order.id }}" style="top:110%;right:0;left:auto;">
+                <a class="dd-item" href="https://wa.me/{{ wa_phone }}?text={{ ('Hello ' ~ name ~ ', Your order#' ~ order.order_id ~ ' from TheSleekSpace.com has been dispatched and is expected to be delivered in 3-7 working days.') | urlencode }}" target="_blank">📦 Dispatch Message</a>
+                <a class="dd-item" href="https://wa.me/{{ wa_phone }}?text={{ ('Hello ' ~ name ~ ', Your order#' ~ order.order_id ~ ' from TheSleekSpace.com has been delayed. We are trying our best to deliver it as early as possible.') | urlencode }}" target="_blank">⏳ Delay Message</a>
+                <a class="dd-item" href="https://wa.me/{{ wa_phone }}?text={{ ('Hello ' ~ name ~ ', Our courier attempted delivery of order#' ~ order.order_id ~ ' but the address was closed. Please let us know when to re-arrange delivery.') | urlencode }}" target="_blank">🏠 Address Closed</a>
+                <a class="dd-item" href="https://wa.me/{{ wa_phone }}?text={{ ('Hello ' ~ name ~ ', We were told order#' ~ order.order_id ~ ' was refused. Let us know if you would still like to receive it.') | urlencode }}" target="_blank">🚫 Refused Message</a>
+                <a class="dd-item" href="https://wa.me/{{ wa_phone }}?text={{ ('Hello ' ~ name ~ ', Your order#' ~ order.order_id ~ ' from TheSleekSpace.com was delivered recently. We would love your feedback.') | urlencode }}" target="_blank">⭐ Feedback</a>
+              </div>
+            </div>
+            {% endif %}
+          </div>
+        </div><!-- /card-body -->
+
+        <!-- Mobile: expandable detail -->
+        <div class="mobile-detail" id="md-{{ order.id }}">
+          <div class="info-block">
+            {% if name %}
+            <div class="info-row">
+              <span class="info-lbl">Customer</span>
+              <span class="info-val" style="font-weight:600">{{ name }}{% if city %}, <span style="font-weight:400;color:#8a8b96">{{ city }}</span>{% endif %}</span>
+            </div>
+            {% endif %}
+            {% if phone %}
+            <div class="info-row"><span class="info-lbl">Phone</span><span class="info-val" style="font-family:'DM Mono',monospace;color:#4e73df">{{ phone }}</span></div>
+            {% endif %}
+            {% if addr %}
+            <div class="info-row"><span class="info-lbl">Address</span><span class="info-val" style="color:#8a8b96;font-size:10px">📍 {{ addr }}</span></div>
+            {% endif %}
+            {% if order.tags %}
+            <div class="info-row">
+              <span class="info-lbl">Tags</span>
+              <span class="info-val"><div class="tags-wrap">{% for tag in order.tags %}<span class="tag-badge" style="{{ tag_style(tag) }}">{{ tag }}</span>{% endfor %}</div></span>
+            </div>
+            {% endif %}
+            <div class="info-row"><span class="info-lbl">Payment</span><span class="info-val">{{ order.financial_status or 'Pending' }}</span></div>
+          </div>
+          <!-- Per-item detail with email -->
+          {% for item in order.line_items %}
+          <div class="detail-item">
+            <div class="detail-item-img">
+              {% if item.image_src and item.image_src != 'None' %}<img src="{{ item.image_src }}" alt="">{% else %}📦{% endif %}
+            </div>
+            <div style="flex:1;min-width:0;">
+              <div class="detail-item-name" title="{{ item.product_title }}">{{ item.product_title }}</div>
+              <div class="detail-item-qty">Qty: {{ item.quantity }}</div>
+            </div>
+            {% if item.tracking_number and item.tracking_number != 'N/A' %}
+            <a href="/track/{{ item.tracking_number }}" target="_blank" style="font-family:'DM Mono',monospace;font-size:9px;color:#3a3b45;background:#e8eaef;padding:2px 6px;border-radius:3px;text-decoration:none;white-space:nowrap;">{{ item.tracking_number }}</a>
+            {% endif %}
+            {{ status_badge(item.status) }}
+          </div>
+          {% endfor %}
+        </div><!-- /mobile-detail -->
+
+        <!-- Mobile actions (right-aligned) -->
+        <div class="mobile-actions">
+          <button class="mobile-expand" id="exp-{{ order.id }}" onclick="toggleMobile('{{ order.id }}')" title="Details">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4L6 8L10 4" stroke="#8a8b96" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="mark-as-wrap">
+            <button class="mark-as-btn" onclick="toggleDD(event,'mba-{{ order.id }}')">
+              Mark As <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="dropdown-menu" id="mba-{{ order.id }}">
+              <button class="dd-item" onclick="markOrder('{{ order.id }}','Delivered');closeDD()">✅ Delivered</button>
+              <button class="dd-item danger" onclick="markOrder('{{ order.id }}','Returned');closeDD()">↩ Returned</button>
+              <button class="dd-item danger" onclick="markOrder('{{ order.id }}','Cancelled');closeDD()">✕ Cancelled</button>
+              <button class="dd-item" onclick="markOrder('{{ order.id }}','Confirmed');closeDD()">✓ Confirmed</button>
+              <button class="dd-item" onclick="markOrder('{{ order.id }}','Call Not Attended');closeDD()">📵 Call Not Attended</button>
+            </div>
+          </div>
+          {% if phone %}
+          <a class="icon-btn" href="tel:{{ phone }}" title="Call">📞</a>
+          <div class="mark-as-wrap">
+            <button class="icon-btn" onclick="toggleDD(event,'mbw-{{ order.id }}')" title="WhatsApp">💬</button>
+            <div class="dropdown-menu" id="mbw-{{ order.id }}">
+              <a class="dd-item" href="https://wa.me/{{ wa_phone }}?text={{ ('Hello ' ~ name ~ ', Your order#' ~ order.order_id ~ ' from TheSleekSpace.com has been dispatched and is expected to be delivered in 3-7 working days.') | urlencode }}" target="_blank">📦 Dispatch Message</a>
+              <a class="dd-item" href="https://wa.me/{{ wa_phone }}?text={{ ('Hello ' ~ name ~ ', Your order#' ~ order.order_id ~ ' from TheSleekSpace.com has been delayed. We are trying our best to deliver it as early as possible.') | urlencode }}" target="_blank">⏳ Delay Message</a>
+              <a class="dd-item" href="https://wa.me/{{ wa_phone }}?text={{ ('Hello ' ~ name ~ ', Our courier attempted delivery of order#' ~ order.order_id ~ ' but the address was closed. Please let us know when to re-arrange delivery.') | urlencode }}" target="_blank">🏠 Address Closed</a>
+              <a class="dd-item" href="https://wa.me/{{ wa_phone }}?text={{ ('Hello ' ~ name ~ ', We were told order#' ~ order.order_id ~ ' was refused. Let us know if you would still like to receive it.') | urlencode }}" target="_blank">🚫 Refused Message</a>
+              <a class="dd-item" href="https://wa.me/{{ wa_phone }}?text={{ ('Hello ' ~ name ~ ', Your order#' ~ order.order_id ~ ' from TheSleekSpace.com was delivered recently. We would love your feedback.') | urlencode }}" target="_blank">⭐ Feedback</a>
+            </div>
+          </div>
+          {% endif %}
+        </div><!-- /mobile-actions -->
+
+      </div><!-- /card -->
+      {% else %}
+      <div style="text-align:center;padding:40px 0;color:#858796;font-size:13px;">No orders loaded yet. Data refreshes 30 seconds after startup.</div>
+      {% endfor %}
+    </div><!-- /shopifyOrderList -->
+  </div><!-- /mainScroll -->
+
+  <!-- Bottom bar -->
+  <div class="bottom-bar" id="bottomBar">
+    <button class="bottom-btn bb-green" id="btnDeliver" onclick="applyDeliveredToAll()">
+      ✅ <span id="deliverLabel">Mark All Delivered</span>
     </button>
-    <div class="dropdown-menu">
-        <a class="dropdown-item" href="#" onclick="sendEmail('delay', '{{ item.tracking_number }}')">Send Email for Delay</a>
-        <a class="dropdown-item" href="#" onclick="sendEmail('incomplete', '{{ item.tracking_number }}')">Send Email for Incomplete Address</a>
-        <a class="dropdown-item" href="#" onclick="sendEmail('refusal', '{{ item.tracking_number }}')">Send Email for Fake Refusal</a>
-    </div>
-</div>
-                                    </td>
+    <button class="bottom-btn bb-red" id="btnReturn" onclick="applyReturnedToAll()">
+      ↩ <span id="returnLabel">Mark All Returned</span>
+    </button>
+  </div>
 
-                                </tr>
-                            {% endfor %}
-                        </tbody>
+</div><!-- /flex column -->
+{% endblock %}
 
-                    </table>
-                </td>
-                 <td> {{ order.status}}</td>
-                 <td>
-                        <button class="btn btn-primary btn-sm" onclick="toggleStatusButtons(this)">Mark As</button>
-                        <div class="status-buttons">
-                             <button class="btn btn-outline-success btn-sm" onclick="applyTag('{{ order.id }}', 'Delivered')">Delivered</button>
-                            <button class="btn btn-outline-danger btn-sm" onclick="applyTag('{{ order.id }}', 'Returned')">Returned</button>
-                            <button class="btn btn-outline-warning btn-sm" onclick="applyTag('{{ order.id }}', 'Cancelled')">Cancelled</button>
-                            <button class="btn btn-outline-info btn-sm" onclick="applyTag('{{ order.id }}', 'Confirmed')">Confirmed</button>
-                            <button class="btn btn-outline-secondary btn-sm" onclick="applyTag('{{ order.id }}', 'Call Not Attended')">Call Not Attended</button>
-                        </div>
-                    </td>
-            </tr>
-        {% endfor %}
-    </tbody>
-</table>
-                                 <button class="btn btn-primary btn-sm" onclick="applyDeliveredToAll()">Apply 'Delivered' to All Delivered Orders</button>
-                            </div>
-                        </div>
-                    </div>
-
-                </div>
-                <!-- /.container-fluid -->
-
-            </div>
-            <!-- End of Main Content -->
-
-            <!-- Footer -->
-            <footer class="sticky-footer bg-white">
-                <div class="container my-auto">
-                    <div class="copyright text-center my-auto">
-                        <span>Copyright &copy; Your Website 2020</span>
-                    </div>
-                </div>
-            </footer>
-            <!-- End of Footer -->
-
-        </div>
-        <!-- End of Content Wrapper -->
-
-    </div>
-    <!-- End of Page Wrapper -->
-
-    <!-- Scroll to Top Button-->
-    <a class="scroll-to-top rounded" href="#page-top">
-        <i class="fas fa-angle-up"></i>
-    </a>
-
-    <!-- Logout Modal-->
-    <div class="modal fade" id="logoutModal" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel"
-        aria-hidden="true">
-        <div class="modal-dialog" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="exampleModalLabel">Ready to Leave?</h5>
-                    <button class="close" type="button" data-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">×</span>
-                    </button>
-                </div>
-                <div class="modal-body">Select "Logout" below if you are ready to end your current session.</div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" type="button" data-dismiss="modal">Cancel</button>
-                    <a class="btn btn-primary" href="login.html">Logout</a>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Bootstrap core JavaScript-->
-    <script src="static/assets/vendor/jquery/jquery.min.js"></script>
-    <script src="static/assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
-
-    <!-- Core plugin JavaScript-->
-    <script src="static/assets/vendor/jquery-easing/jquery.easing.min.js"></script>
-
-    <!-- Custom scripts for all pages-->
-    <script src="static/assets/js/sb-admin-2.min.js"></script>
-
-    <!-- Page level plugins -->
-    <script src="static/assets/vendor/datatables/jquery.dataTables.min.js"></script>
-    <script src="static/assets/vendor/datatables/dataTables.bootstrap4.min.js"></script>
-
-    <!-- Page level custom scripts -->
-    <script src="static/assets/js/demo/datatables-demo.js"></script>
-        <script src="static/assets/js/demo/datatables-demo.js"></script>
-    <script src="static/assets/js/track.js"></script>
-
+{% block extra_js %}
 <script>
-    $(document).ready(function() {
-        // Check if the table is already a DataTable and destroy it if necessary
-        if ($.fn.DataTable.isDataTable('#dataTable')) {
-            $('#dataTable').DataTable().destroy();
-        }
+const ORDER_DATA = {{ order_details | tojson }};
 
-        // Initialize the DataTable with desired settings
-        $('#dataTable').DataTable({
-            "order": [[0, "desc"]],
-            "columnDefs": [
-                { "searchable": false, "targets": [-1, 4] }  // Make the last column and the 5th column non-searchable
-            ]
-        });
-    });
-</script>
-<script>
-        $(document).ready(function() {
-            var currentUrl = window.location.pathname;
-            $('.nav-item a').each(function() {
-                var linkUrl = $(this).attr('href');
-                if (currentUrl === '/' + linkUrl) {
-                    $(this).parent().addClass('active');
-                }
-            });
-        });
+// ── Stats strip ──
+function renderStats() {
+  const counts = {}, totals = {};
+  let grandTotal = 0;
+  ORDER_DATA.forEach(o => {
+    const s = o.status || 'Un-Booked';
+    counts[s] = (counts[s] || 0) + 1;
+    totals[s] = (totals[s] || 0) + Number(o.total_price || 0);
+    grandTotal += Number(o.total_price || 0);
+  });
+  const fmt = n => n >= 1000 ? Math.round(n / 1000) + 'k' : Math.round(n).toString();
+  const retCnt = (counts['Being Return'] || 0) + (counts['RETURNED TO SHIPPER'] || 0);
+  const retAmt = (totals['Being Return'] || 0) + (totals['RETURNED TO SHIPPER'] || 0);
 
- function applyDeliveredToAll() {
-    const orders = {{ order_details|tojson }};
-
-    orders.forEach(order => {
-        if (order.status === 'DELIVERED') {
-            applyTag(order.order_id, 'Delivered');
-        }
-    });
+  document.getElementById('statsStrip').innerHTML = `
+    <div class="stat">
+      <span class="stat-val" style="color:#4e73df">${ORDER_DATA.length}</span>
+      <span class="stat-pkr">Rs ${fmt(grandTotal)}</span>
+      <span class="stat-lbl">Total</span>
+    </div>
+    <div class="stat-div"></div>
+    <div class="stat">
+      <span class="stat-val" style="color:#4e73df">${counts['Booked']||0}</span>
+      <span class="stat-pkr">Rs ${fmt(totals['Booked']||0)}</span>
+      <span class="stat-lbl">Booked</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val" style="color:#8a8b96">${counts['Un-Booked']||0}</span>
+      <span class="stat-pkr">Rs ${fmt(totals['Un-Booked']||0)}</span>
+      <span class="stat-lbl">Un-Booked</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val" style="color:#f6c23e">${counts['Out For Delivery']||0}</span>
+      <span class="stat-pkr">Rs ${fmt(totals['Out For Delivery']||0)}</span>
+      <span class="stat-lbl">Out For Del.</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val" style="color:#1cc88a">${counts['Delivered']||0}</span>
+      <span class="stat-pkr">Rs ${fmt(totals['Delivered']||0)}</span>
+      <span class="stat-lbl">Delivered</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val" style="color:#e74a3b">${retCnt}</span>
+      <span class="stat-pkr">Rs ${fmt(retAmt)}</span>
+      <span class="stat-lbl">Returned</span>
+    </div>
+    <div class="stat-div"></div>
+    <div class="stat">
+      <span class="stat-val" style="color:#d4a800;font-size:13px">${Math.round(grandTotal).toLocaleString('en-PK')}</span>
+      <span class="stat-pkr">&nbsp;</span>
+      <span class="stat-lbl">PKR Total</span>
+    </div>
+  `;
+  document.getElementById('shopifyCount').textContent = ORDER_DATA.length;
+  document.getElementById('lastRefreshTime').textContent = new Date().toLocaleTimeString();
 }
+
+// ── Bottom bar ──
+let ofdCount = ORDER_DATA.filter(o => o.status === 'Out For Delivery').length;
+let rtsCount = ORDER_DATA.filter(o => o.status === 'RETURNED TO SHIPPER').length;
+
+function updateBottomBar() {
+  const btnD = document.getElementById('btnDeliver');
+  const btnR = document.getElementById('btnReturn');
+  const bar  = document.getElementById('bottomBar');
+  document.getElementById('deliverLabel').textContent = `Mark All Delivered (${ofdCount} Orders)`;
+  document.getElementById('returnLabel').textContent  = `Mark All Returned (${rtsCount} Orders)`;
+  btnD.style.display = ofdCount > 0 ? 'flex' : 'none';
+  btnR.style.display = rtsCount > 0 ? 'flex' : 'none';
+  bar.classList.toggle('visible', ofdCount > 0 || rtsCount > 0);
+}
+
+// ── Filter + Search ──
+let currentFilter = 'All';
+
+function setFilter(btn) {
+  document.querySelectorAll('.fpill').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  currentFilter = btn.dataset.filter;
+  applyFilterSearch();
+}
+
+function filterOrders() {
+  const val = document.getElementById('orderSearch').value;
+  document.getElementById('searchClear').style.display = val ? 'block' : 'none';
+  applyFilterSearch();
+}
+
+function applyFilterSearch() {
+  const q = document.getElementById('orderSearch').value.toLowerCase();
+  let visible = 0;
+  document.querySelectorAll('#shopifyOrderList .card').forEach(card => {
+    const status = card.dataset.status || '';
+    const search = card.dataset.search || '';
+    const matchFilter = currentFilter === 'All' || status === currentFilter || status.includes(currentFilter);
+    const matchSearch = !q || search.toLowerCase().includes(q);
+    const show = matchFilter && matchSearch;
+    card.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  document.getElementById('shopifyCount').textContent = visible;
+}
+
+// ── Mark single order ──
+function markOrder(orderId, tag) {
+  fetch('/apply_tag', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ order_id: orderId, tag })
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (!d.success) {
+      showToast('Failed: ' + (d.error || ''));
+      return;
+    }
+    showToast(`Marked as "${tag}"`);
+    setTimeout(() => window.location.reload(), 700);
+  })
+  .catch(() => showToast('Request failed'));
+}
+
+function approveEmployeeRequest(orderId, trackingNumber, requestedStatus) {
+  fetch('/employee_status/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ order_id: orderId, tracking_number: trackingNumber, requested_status: requestedStatus })
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.success) {
+      showToast(d.message || 'Approval applied');
+      setTimeout(() => location.reload(), 900);
+      return;
+    }
+    showToast('Failed: ' + (d.error || 'Approval failed'));
+  })
+  .catch(() => showToast('Approval request failed'));
+}
+
+// ── Bulk selection ──
+const selectedOrders = new Set();
+
+function toggleSelect(orderId) {
+  const card = document.getElementById('order-card-' + orderId);
+  if (selectedOrders.has(orderId)) {
+    selectedOrders.delete(orderId);
+    if (card) card.classList.remove('selected');
+  } else {
+    selectedOrders.add(orderId);
+    if (card) card.classList.add('selected');
+  }
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulkBar');
+  const cnt = document.getElementById('bulkCount');
+  bar.classList.toggle('visible', selectedOrders.size > 0);
+  cnt.textContent = `${selectedOrders.size} order${selectedOrders.size > 1 ? 's' : ''} selected`;
+}
+
+function clearSelection() {
+  selectedOrders.forEach(id => {
+    const card = document.getElementById('order-card-' + id);
+    if (card) {
+      card.classList.remove('selected');
+      const cb = card.querySelector('input[type=checkbox]');
+      if (cb) cb.checked = false;
+    }
+  });
+  selectedOrders.clear();
+  updateBulkBar();
+}
+
+async function bulkMark(tag) {
+  const ids = [...selectedOrders];
+  if (!ids.length) return;
+  const cnt = document.getElementById('bulkCount');
+  for (let i = 0; i < ids.length; i++) {
+    cnt.textContent = `Applying ${i+1}/${ids.length}…`;
+    try {
+      await fetch('/apply_tag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: ids[i], tag })
+      });
+    } catch(e) {}
+    await new Promise(r => setTimeout(r, 400));
+  }
+  showToast(`Applied "${tag}" to ${ids.length} orders`);
+  clearSelection();
+}
+
+// ── Apply Delivered to All (Out For Delivery → Delivered) ──
+async function applyDeliveredToAll() {
+  const btn = document.getElementById('btnDeliver');
+  const lbl = document.getElementById('deliverLabel');
+  const toDeliver = ORDER_DATA.filter(o => o.status === 'Out For Delivery');
+  if (!toDeliver.length) return;
+  btn.disabled = true;
+  for (let i = 0; i < toDeliver.length; i++) {
+    lbl.textContent = `Applying ${i+1}/${toDeliver.length}…`;
+    try {
+      await fetch('/apply_tag', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({order_id: toDeliver[i].id, tag:'Delivered'}) });
+    } catch(e) {}
+    await new Promise(r => setTimeout(r, 600));
+  }
+  showToast(`Applied "Delivered" to ${toDeliver.length} orders`);
+  ofdCount = 0;
+  updateBottomBar();
+  btn.disabled = false;
+}
+
+// ── Apply Returned to All (RETURNED TO SHIPPER → Returned) ──
+async function applyReturnedToAll() {
+  const btn = document.getElementById('btnReturn');
+  const lbl = document.getElementById('returnLabel');
+  const toReturn = ORDER_DATA.filter(o => o.status === 'RETURNED TO SHIPPER');
+  if (!toReturn.length) return;
+  btn.disabled = true;
+  for (let i = 0; i < toReturn.length; i++) {
+    lbl.textContent = `Applying ${i+1}/${toReturn.length}…`;
+    try {
+      await fetch('/apply_tag', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({order_id: toReturn[i].id, tag:'Returned'}) });
+    } catch(e) {}
+    await new Promise(r => setTimeout(r, 600));
+  }
+  showToast(`Applied "Returned" to ${toReturn.length} orders`);
+  rtsCount = 0;
+  updateBottomBar();
+  btn.disabled = false;
+}
+
+// ── Refresh Tracking ──
+function refreshTracking() {
+  const btn  = document.getElementById('refreshTrackingBtn');
+  const icon = document.getElementById('refreshIcon');
+  btn.disabled = true;
+  icon.style.animation = 'spin 1s linear infinite';
+  icon.style.display = 'inline-block';
+  fetch('/refresh', { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    .then(r => r.json())
+    .then(d => {
+      icon.style.animation = '';
+      btn.disabled = false;
+      if (d.message === 'Data refreshed successfully') {
+        location.reload();
+        return;
+      }
+      showToast(d.message || 'Tracking refresh completed.');
+    })
+    .catch(() => { icon.style.animation = ''; btn.disabled = false; showToast('Refresh failed'); });
+}
+
+// ── Dropdowns ──
+function toggleDD(e, id) {
+  e.stopPropagation();
+  const m = document.getElementById(id);
+  if (!m) return;
+  const was = m.classList.contains('open');
+  closeDD();
+  if (!was) m.classList.add('open');
+}
+function closeDD() { document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('open')); }
+document.addEventListener('click', closeDD);
+
+// ── Mobile expand (Shopify) ──
+function toggleMobile(orderId) {
+  const md  = document.getElementById('md-' + orderId);
+  const btn = document.getElementById('exp-' + orderId);
+  if (!md || !btn) return;
+  const open = md.classList.toggle('open');
+  btn.style.transform = open ? 'rotate(180deg)' : '';
+}
+
+// ── Init ──
+renderStats();
+updateBottomBar();
 </script>
-
-</body>
-
-</html>
+{% endblock %}

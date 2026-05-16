@@ -1,456 +1,184 @@
-<!DOCTYPE html>
-<html lang="en">
+{% extends 'base.html' %}
+{% block title %}The Sleek Space – Pending Orders{% endblock %}
 
-<head>
+{% block content %}
+<style>
+  .pending-shell { display:flex; flex-direction:column; height:100%; overflow:hidden; }
+  .pending-topbar { height:52px; background:#fff; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; padding:0 20px; gap:12px; flex-shrink:0; }
+  .pending-title { font-size:16px; font-weight:700; color:#3a3b45; }
+  .pending-scroll { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:16px; }
+  .stats-grid { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; }
+  .section-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; align-items:start; }
+  .summary-list, .order-list { display:flex; flex-direction:column; gap:10px; }
+  .summary-row { display:grid; grid-template-columns:56px 1fr auto; gap:12px; align-items:center; padding:10px 12px; border:1px solid #e3e6f0; border-radius:10px; background:#fff; }
+  .summary-thumb { width:56px; height:56px; border-radius:10px; overflow:hidden; background:#f2f4f8; display:flex; align-items:center; justify-content:center; }
+  .summary-thumb img { width:100%; height:100%; object-fit:cover; }
+  .summary-title { font-size:13px; font-weight:700; color:#2d2e36; margin-bottom:4px; }
+  .summary-meta { font-size:11px; color:#858796; display:flex; gap:8px; flex-wrap:wrap; }
+  .summary-qty { font-size:22px; font-weight:800; color:#4e73df; }
+  .order-card { border:1px solid #e3e6f0; border-radius:12px; background:#fff; overflow:hidden; }
+  .order-head { padding:12px 14px; display:flex; align-items:flex-start; gap:12px; }
+  .order-id { font-family:'DM Mono', monospace; font-size:14px; font-weight:700; color:#4e73df; text-decoration:none; }
+  .order-date { font-size:10px; color:#b0b2be; margin-top:2px; }
+  .order-tags { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+  .order-body { border-top:1px solid #eef0f6; padding:12px 14px; display:grid; grid-template-columns:1.1fr .9fr; gap:14px; }
+  .order-items { display:flex; flex-direction:column; gap:8px; }
+  .item-row { display:grid; grid-template-columns:44px 1fr auto; gap:10px; align-items:center; padding:8px 10px; border:1px solid #e8eaef; border-radius:9px; background:#f8f9fc; }
+  .item-row img { width:44px; height:44px; border-radius:8px; object-fit:cover; }
+  .item-title { font-size:12px; font-weight:600; color:#2d2e36; }
+  .item-meta { font-size:10px; color:#858796; margin-top:2px; }
+  .item-qty { font-size:11px; font-weight:700; color:#4e73df; white-space:nowrap; }
+  .order-side { display:flex; flex-direction:column; gap:10px; }
+  .mini-block { padding:10px 12px; border:1px solid #e8eaef; border-radius:10px; background:#fff; }
+  .mini-label { font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#858796; margin-bottom:6px; }
+  .mini-value { font-size:12px; color:#2d2e36; line-height:1.45; }
+  .money-line { display:flex; justify-content:space-between; gap:10px; font-size:11px; color:#6f7280; margin-top:6px; }
+  .money-line strong { color:#2d2e36; }
+  .empty-state { padding:34px 16px; text-align:center; color:#858796; font-size:13px; }
+  @media (max-width: 900px) {
+    .section-grid, .order-body { grid-template-columns:1fr; }
+  }
+  @media (max-width: 767px) {
+    .pending-topbar { padding:0 14px; }
+    .pending-scroll { padding:12px; }
+    .stats-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
+    .summary-row { grid-template-columns:48px 1fr auto; gap:10px; }
+    .summary-thumb { width:48px; height:48px; }
+  }
+</style>
 
-    <meta charset="utf-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-    <meta name="description" content="">
-    <meta name="author" content="">
+<div class="pending-shell">
+  <div class="pending-topbar">
+    <span class="pending-title">Pending Orders</span>
+    <div style="flex:1"></div>
+    <span style="font-size:11px;color:#858796;">{{ all_orders|length }} order{{ '' if all_orders|length == 1 else 's' }} waiting</span>
+  </div>
 
-    <title>Daily Tasker - Pending Orders</title>
-
-    <!-- Custom fonts for this template -->
-    <link href="static/assets/vendor/fontawesome-free/css/all.min.css" rel="stylesheet" type="text/css">
-    <link
-        href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i"
-        rel="stylesheet">
-
-    <!-- Custom styles for this template -->
-    <link href="static/assets/css/sb-admin-2.min.css" rel="stylesheet">
-
-    <!-- Custom styles for this page -->
-    <link href="static/assets/vendor/datatables/dataTables.bootstrap4.min.css" rel="stylesheet">
- <style>
-        .status-buttons {
-            display: none;
-            margin-top: 10px;
-        }
-        .status-buttons .btn {
-            margin-right: 5px;
-            margin-bottom: 5px;
-        }
-    </style>
-</head>
-
-<body id="page-top">
-
-    <!-- Page Wrapper -->
-    <div id="wrapper">
-
-        <!-- Sidebar -->
-        {% include 'header.html' %}
-        <!-- End of Sidebar -->
-
-        <!-- Content Wrapper -->
-        <div id="content-wrapper" class="d-flex flex-column">
-
-            <!-- Main Content -->
-            <div id="content">
-
-                <!-- Topbar -->
-                <nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
-
-                    <!-- Sidebar Toggle (Topbar) -->
-                    <form class="form-inline">
-                        <button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3">
-                            <i class="fa fa-bars"></i>
-                        </button>
-                    </form>
-
-                    <!-- Topbar Search -->
-
-
-                    <!-- Topbar Navbar -->
-                    <ul class="navbar-nav ml-auto">
-
-                        <!-- Nav Item - Search Dropdown (Visible Only XS) -->
-                        <li class="nav-item dropdown no-arrow d-sm-none">
-                            <a class="nav-link dropdown-toggle" href="#" id="searchDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                                <i class="fas fa-search fa-fw"></i>
-                            </a>
-                            <!-- Dropdown - Messages -->
-                            <div class="dropdown-menu dropdown-menu-right p-3 shadow animated--grow-in" aria-labelledby="searchDropdown">
-                                <form class="form-inline mr-auto w-100 navbar-search">
-                                    <div class="input-group">
-                                        <input type="text" class="form-control bg-light border-0 small" placeholder="Search for..." aria-label="Search" aria-describedby="basic-addon2">
-                                        <div class="input-group-append">
-                                            <button class="btn btn-primary" type="button">
-                                                <i class="fas fa-search fa-sm"></i>
-                                            </button>
-
-                                        </div>
-                                    </div>
-                                </form>
-                            </div>
-                        </li>
-
-
-                         <div class="topbar-divider d-none d-sm-block"></div>
-
-                        <!-- Nav Item - User Information -->
-                        <li class="nav-item dropdown no-arrow">
-                            <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                                <span class="mr-2 d-none d-lg-inline text-gray-600 small">User</span>
-                                <img class="img-profile rounded-circle" src="static/img/undraw_profile.svg">
-                            </a>
-                            <!-- Dropdown - User Information -->
-                            <div class="dropdown-menu dropdown-menu-right shadow animated--grow-in" aria-labelledby="userDropdown">
-                                <a class="dropdown-item" href="#">
-                                    <i class="fas fa-user fa-sm fa-fw mr-2 text-gray-400"></i>
-                                    Profile
-                                </a>
-                                <a class="dropdown-item" href="#">
-                                    <i class="fas fa-cogs fa-sm fa-fw mr-2 text-gray-400"></i>
-                                    Settings
-                                </a>
-                                <a class="dropdown-item" href="#">
-                                    <i class="fas fa-list fa-sm fa-fw mr-2 text-gray-400"></i>
-                                    Activity Log
-                                </a>
-                                <div class="dropdown-divider"></div>
-                                <a class="dropdown-item" href="#" data-toggle="modal" data-target="#logoutModal">
-                                    <i class="fas fa-sign-out-alt fa-sm fa-fw mr-2 text-gray-400"></i>
-                                    Logout
-                                </a>
-                            </div>
-                        </li>
-
-                    </ul>
-
-                </nav>
-                <!-- End of Topbar -->
-
-                <!-- Begin Page Content -->
-                <div class="container-fluid">
-
-
-                    <!-- DataTales Example -->
-                    <div class="card shadow mb-4">
-                        <div class="card-header py-3">
-                            <h6 class="m-0 font-weight-bold text-primary">Pending Orders </h6>
-                        </div>
-                      <div style="display: flex; justify-content: center; gap: 20px;">
-    <div class="table-responsive" style="flex: 1;">
-        <table class="table table-bordered" width="100%" cellspacing="0">
-            <thead>
-                <tr>
-                    <th>Image</th>
-                    <th style="width: 30%;">Title</th>
-                    <th>Quantity</th>
-                    <th> </th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in pending_items[:half] %}
-<tr data-statuses='{{ item.statuses | tojson | safe }}'>
-
-    <td>
-        <img src="{{ item.item_image }}" width="75" height="75">
-    </td>
-    <td contenteditable="true" style="cursor:text;">
-        {{ item.item_title }}
-    </td>
-    <td class="qty-cell" contenteditable="true" style="cursor:text; text-align: center;">
-            {{ item.quantity }}
-
-    </td>
-    <td style="text-align:center;">
-        <button onclick="this.closest('tr').style.display='none'" class="btn btn-sm btn-primary">
-    &#10003;
-</button>
-
-    </td>
-</tr>
-
-                {% endfor %}
-            </tbody>
-        </table>
+  <div class="pending-scroll">
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(78,115,223,0.1)">📋</div><div><div class="stat-label">Orders</div><div class="stat-value" style="color:#4e73df">{{ all_orders|length }}</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(28,200,138,0.1)">📦</div><div><div class="stat-label">Unique Items</div><div class="stat-value" style="color:#1cc88a">{{ pending_items|length }}</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(246,194,62,0.12)">🏷️</div><div><div class="stat-label">Booked</div><div class="stat-value" style="color:#f6c23e">{{ all_orders|selectattr('status', 'equalto', 'Booked')|list|length }}</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(133,135,150,0.12)">⌛</div><div><div class="stat-label">Un-Booked</div><div class="stat-value" style="color:#858796">{{ all_orders|selectattr('status', 'equalto', 'Un-Booked')|list|length }}</div></div></div>
     </div>
 
-    <div class="table-responsive" style="flex: 1;">
-        <table class="table table-bordered" width="100%" cellspacing="0">
-            <thead>
-                <tr>
-                    <th>Image</th>
-                    <th style="width: 30%;">Title</th>
-                    <th>Quantity</th>
-                    <th> </th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in pending_items[half:] %}
-<tr data-statuses='{{ item.statuses | tojson | safe }}'>
-
-    <td>
-        <img src="{{ item.item_image }}" width="75" height="75">
-    </td>
-    <td contenteditable="true" style="cursor:text;">
-        {{ item.item_title }}
-    </td>
-        <td class="qty-cell" contenteditable="true" style="cursor:text; text-align: center;">
-            {{ item.quantity }}
-
-    </td>
-
-    <td style="text-align:center;">
-        <button onclick="this.closest('tr').style.display='none'" class="btn btn-sm btn-primary">
-    &#10003;
-</button>
-
-    </td>
-</tr>
-
+    <div class="section-grid">
+      <div class="section-card">
+        <div class="section-header">
+          <span style="font-size:14px;font-weight:700;color:#3a3b45;">Item Summary</span>
+          <span class="section-count">{{ pending_items|length }}</span>
+        </div>
+        <div class="summary-list" style="padding:12px;">
+          {% for item in pending_items %}
+          <div class="summary-row">
+            <div class="summary-thumb">
+              {% if item.item_image %}<img src="{{ item.item_image }}" alt="">{% else %}📦{% endif %}
+            </div>
+            <div>
+              <div class="summary-title">{{ item.item_title }}</div>
+              <div class="summary-meta">
+                {% for status, qty in item.statuses.items() %}
+                <span>{{ status }}: {{ qty }}</span>
                 {% endfor %}
-            </tbody>
-        </table>
+              </div>
+            </div>
+            <div class="summary-qty">{{ item.quantity }}</div>
+          </div>
+          {% else %}
+          <div class="empty-state">No pending items right now.</div>
+          {% endfor %}
+        </div>
+      </div>
 
+      <div class="section-card">
+        <div class="section-header">
+          <span style="font-size:14px;font-weight:700;color:#3a3b45;">Operational Notes</span>
+        </div>
+        <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;">
+          <div class="mini-block">
+            <div class="mini-label">What this page is for</div>
+            <div class="mini-value">Use this to see which products are stacking up across open Shopify orders and which pending orders are contributing to that demand.</div>
+          </div>
+          <div class="mini-block">
+            <div class="mini-label">Fastest next steps</div>
+            <div class="mini-value">Open the employee orders queue for packing/manufacturing status, or refresh the dashboard after booking and fulfillment updates from Shopify.</div>
+          </div>
+        </div>
+      </div>
     </div>
 
-
-</div>
-<div class="mb-3">
-    <button class="btn btn-warning" onclick="hideBooked()">Hide BOOKED</button>
-    <button class="btn btn-secondary" onclick="resetView()">Reset</button>
-</div>
-
-
-
-                        <div style="overflow-x:auto;" class="card-body">
-                            <div class="table-responsive">
-
-                                <table class="table table-bordered" id="dataTable" width="100%" cellspacing="0">
-    <thead>
-        <tr>
-            <th>Order#</th>
-            <th>Total</th>
-            <th>Total Items</th>
-            <th style="display: none;">Hidden</th>
-            <th style="display: none;">Hidden</th>
-        </tr>
-    </thead>
-    <tfoot>
-        <tr>
-            <th>Order#</th>
-            <th>Total</th>
-            <th>Total Items</th>
-            <th style="display: none;">Hidden</th>
-            <th style="display: none;">Hidden</th>
-        </tr>
-    </tfoot>
-    <tbody>
+    <div class="section-card">
+      <div class="section-header">
+        <span style="font-size:14px;font-weight:700;color:#3a3b45;">Pending Order Queue</span>
+        <span class="section-count">{{ all_orders|length }}</span>
+      </div>
+      <div class="order-list" style="padding:12px;">
         {% for order in all_orders %}
-            <tr>
-                <td>{{ order.order_via }} <br> <a href="{{order.order_link}}"><p>{{ order.order_id }}</p></a> <br>{{ order.date }}</td>
-                <td>{{ order.total_price }}</td>
-                <td>
-                    <table class="table table-sm nested-table">
-                        <thead>
-                            <tr>
-                                <th>Image</th>
-                                <th style="width: 30%;">Title</th>
-                                <th style="width: 5%;">Quantity</th>
-                                <th style="width: 20%;" >Tracking</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for item in order.items_list %}
-                                <tr>
-                                    <td><img src="{{ item.item_image }}" width="100" height="100"></td>
-                                    <td>{{ item.item_title }}</td>
-                                    <td>{{ item.quantity }}</td>
-                                    <td>
-                                        {% if item.tracking_number != 'N/A' %}
-                                            <a href="track/{{ item.tracking_number }}" target="_blank">{{ item.tracking_number }}</a>
-                                        {% else %}
-                                            N/A
-                                        {% endif %}
-                                        <br>
-                                        {{ item.status }}
-                                    </td>
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </td>
-                <td></td>
-                <td></td>
-            </tr>
+        <div class="order-card">
+          <div class="order-head">
+            <div style="flex:1;min-width:0;">
+              <a class="order-id" href="{{ order.order_link or '#' }}" target="_blank">#{{ order.order_id }}</a>
+              <div class="order-date">{{ order.date }}</div>
+              {% if order.tags %}
+              <div class="order-tags">
+                {% for tag in order.tags %}
+                <span class="tag-badge" style="{{ tag_style(tag) }}">{{ tag }}</span>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+            {{ status_badge(order.status) }}
+          </div>
+          <div class="order-body">
+            <div class="order-items">
+              {% for item in order.items_list %}
+              <div class="item-row">
+                {% if item.item_image %}<img src="{{ item.item_image }}" alt="">{% else %}<div style="width:44px;height:44px;border-radius:8px;background:#e3e6f0;display:flex;align-items:center;justify-content:center;">📦</div>{% endif %}
+                <div style="min-width:0;">
+                  <div class="item-title">{{ item.item_title }}</div>
+                  <div class="item-meta">
+                    {% if item.tracking_number and item.tracking_number != 'N/A' %}
+                    <a href="/track/{{ item.tracking_number }}" target="_blank" style="color:#4e73df;text-decoration:none;">{{ item.tracking_number }}</a>
+                    {% else %}
+                    No tracking yet
+                    {% endif %}
+                    · {{ item.status }}
+                    {% if item.applied_status %} · {{ item.applied_status }}{% endif %}
+                  </div>
+                </div>
+                <div class="item-qty">x{{ item.quantity }}</div>
+              </div>
+              {% endfor %}
+            </div>
+            <div class="order-side">
+              <div class="mini-block">
+                <div class="mini-label">Customer</div>
+                <div class="mini-value">
+                  {{ order.customer_name or 'No customer name' }}
+                  {% if order.customer_phone %}<br>{{ order.customer_phone }}{% endif %}
+                  {% if order.customer_address %}<br>{{ order.customer_address }}{% endif %}
+                  {% if order.customer_city %}<br>{{ order.customer_city }}{% endif %}
+                </div>
+              </div>
+              <div class="mini-block">
+                <div class="mini-label">Totals</div>
+                <div class="money-line"><span>Subtotal</span><strong>PKR {{ order.subtotal_price|format_number }}</strong></div>
+                {% if order.shipping_charges %}
+                <div class="money-line"><span>Shipping</span><strong>PKR {{ order.shipping_charges|format_number }}</strong></div>
+                {% endif %}
+                {% if order.total_discounts %}
+                <div class="money-line"><span>Discounts</span><strong>- PKR {{ order.total_discounts|format_number }}</strong></div>
+                {% endif %}
+                <div class="money-line"><span>Total</span><strong>PKR {{ order.total_price|format_number }}</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty-state">No pending Shopify orders right now.</div>
         {% endfor %}
-    </tbody>
-</table>
-
-
-                            </div>
-                        </div>
-                    </div>
- <div class="totals">
-    <p>Total Items: <span id="totalItems">0.00</span></p>
-    <p>Total Value: <span id="totalValue">0.00</span></p>
+      </div>
+    </div>
+  </div>
 </div>
-                </div>
-                <!-- /.container-fluid -->
-
-            </div>
-            <!-- End of Main Content -->
-
-            <!-- Footer -->
-            <footer class="sticky-footer bg-white">
-                <div class="container my-auto">
-                    <div class="copyright text-center my-auto">
-                        <span>Copyright &copy; Your Website 2020</span>
-                    </div>
-                </div>
-            </footer>
-            <!-- End of Footer -->
-
-        </div>
-        <!-- End of Content Wrapper -->
-
-    </div>
-    <!-- End of Page Wrapper -->
-
-    <!-- Scroll to Top Button-->
-    <a class="scroll-to-top rounded" href="#page-top">
-        <i class="fas fa-angle-up"></i>
-    </a>
-
-    <!-- Logout Modal-->
-    <div class="modal fade" id="logoutModal" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel"
-        aria-hidden="true">
-        <div class="modal-dialog" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="exampleModalLabel">Ready to Leave?</h5>
-                    <button class="close" type="button" data-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">×</span>
-                    </button>
-                </div>
-                <div class="modal-body">Select "Logout" below if you are ready to end your current session.</div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" type="button" data-dismiss="modal">Cancel</button>
-                    <a class="btn btn-primary" href="login.html">Logout</a>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Bootstrap core JavaScript-->
-    <script src="static/assets/vendor/jquery/jquery.min.js"></script>
-    <script src="static/assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
-
-    <!-- Core plugin JavaScript-->
-    <script src="static/assets/vendor/jquery-easing/jquery.easing.min.js"></script>
-
-    <!-- Custom scripts for all pages-->
-    <script src="static/assets/js/sb-admin-2.min.js"></script>
-
-    <!-- Page level plugins -->
-    <script src="static/assets/vendor/datatables/jquery.dataTables.min.js"></script>
-    <script src="static/assets/vendor/datatables/dataTables.bootstrap4.min.js"></script>
-
-    <!-- Page level custom scripts -->
-    <script src="static/assets/js/demo/datatables-demo.js"></script>
-        <script src="static/assets/js/demo/datatables-demo.js"></script>
-    <script src="static/assets/js/track.js"></script>
-
-<script>
-    $(document).ready(function() {
-        // Check if the table is already a DataTable and destroy it if necessary
-        if ($.fn.DataTable.isDataTable('#dataTable')) {
-            $('#dataTable').DataTable().destroy();
-        }
-
-        // Initialize the DataTable with desired settings
-        $('#dataTable').DataTable({
-            "columnDefs": [
-                { "searchable": false, "targets": [-1, 4] }  // Make the last column and the 5th column non-searchable
-            ]
-        });
-    });
-</script>
-<script>
-        $(document).ready(function() {
-            var currentUrl = window.location.pathname;
-            $('.nav-item a').each(function() {
-                var linkUrl = $(this).attr('href');
-                if (currentUrl === '/' + linkUrl) {
-                    $(this).parent().addClass('active');
-                }
-            });
-        });
-
-     var table = $('#dataTable').DataTable();
-
-function updateTotals() {
-    var filteredData = table.rows({ filter: 'applied' }).nodes(); // get DOM nodes
-    var totalItems = 0;
-    var totalValue = 0;
-
-    filteredData.each(function (row) {
-        // Get the total column value (e.g. Rs 13498.00)
-        var amount = parseFloat($(row).find('td:eq(1)').text().replace(/,/g, '')) || 0;
-        totalValue += amount;
-
-        // Now count quantities from the nested "Total Items" cell (3rd column, index 2)
-        $(row).find('td:eq(2) table tbody tr').each(function () {
-            var qtyText = $(this).find('td').eq(2).text().trim(); // Quantity is in 3rd column inside nested table
-            var qty = parseInt(qtyText) || 0;
-            totalItems += qty;
-        });
-    });
-
-    $('#totalItems').text(totalItems);
-    $('#totalValue').text(totalValue.toFixed(2));
-}
-
-    // Initial call
-    updateTotals();
-
-
-function hideBooked() {
-    document.querySelectorAll('tr[data-statuses]').forEach(row => {
-        const statusData = JSON.parse(row.getAttribute('data-statuses'));
-
-        let visibleQty = 0;
-        for (const [status, qty] of Object.entries(statusData)) {
-            if (status !== 'CONSIGNMENT BOOKED') {
-                visibleQty += qty;
-            }
-        }
-
-        const qtyCell = row.querySelector('.qty-cell');
-        if (qtyCell) qtyCell.textContent = visibleQty;
-
-        row.style.display = visibleQty === 0 ? 'none' : '';
-    });
-}
-
-function resetView() {
-    document.querySelectorAll('tr[data-statuses]').forEach(row => {
-        const statusData = JSON.parse(row.getAttribute('data-statuses'));
-
-        let totalQty = 0;
-        for (const qty of Object.values(statusData)) {
-            totalQty += qty;
-        }
-
-        const qtyCell = row.querySelector('.qty-cell');
-        if (qtyCell) qtyCell.textContent = totalQty;
-
-        row.style.display = '';
-    });
-}
-
-</script>
-
-
-
-
-
-
-
-</body>
-
-</html>
+{% endblock %}

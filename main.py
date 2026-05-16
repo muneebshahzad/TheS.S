@@ -1,877 +1,1687 @@
+import asyncio
+import base64
+import hashlib
+import hmac
+import json
+import os
 import smtplib
 import sys
 import threading
 import time
+from datetime import datetime
 from email.mime.text import MIMEText
-from flask import render_template
-import datetime
-import lazop
-import os
-import hmac
-import hashlib
-import base64
-import asyncio
+from urllib.parse import urlparse
+
 import aiohttp
-from flask import Flask
+import requests
 import shopify
+from flask import (
+    Flask,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    session,
+    url_for,
+)
+from markupsafe import Markup
+
+from db import delete_order_status, init_db, load_order_statuses, upsert_order_status
+from shopify_protected_data import (
+    create_oauth_state,
+    exchange_oauth_code_for_token,
+    fetch_protected_order_details,
+    get_graphql_endpoint,
+    get_graphql_token,
+    get_install_url,
+    get_protected_data_config_status,
+    get_shop_domain,
+    save_offline_token,
+    verify_oauth_hmac,
+)
+
 
 app = Flask(__name__)
-app.debug = True
-app.secret_key = os.getenv('APP_SECRET_KEY', 'default_secret_key')  # Use environment variable
-pre_loaded = 0
-order_details = []
-daraz_orders = []
-semaphore = asyncio.Semaphore(2)
+app.secret_key = os.getenv("APP_SECRET_KEY", "default_secret_key")
 
-@app.route('/send-email', methods=['POST'])
-def send_email():
-    data = request.get_json()
-    to_emails = data.get('to', [])
-    cc_emails = data.get('cc', [])
-    subject = data.get('subject', '')
-    body = data.get('body', '')
+EMPLOYEE_PORTAL_SESSION_KEY = "employee_portal_authenticated"
+ADMIN_PORTAL_SESSION_KEY = "admin_portal_authenticated"
+SHOPIFY_OAUTH_STATE_SESSION_KEY = "shopify_oauth_state"
+EMPLOYEE_PORTAL_PASSWORD = os.getenv("EMPLOYEE_PORTAL_PASSWORD", "@@@t")
+ADMIN_PORTAL_PASSWORD = os.getenv("ADMIN_PORTAL_PASSWORD", "security")
+
+order_details = []
+product_image_cache = {}
+semaphore = asyncio.Semaphore(2)
+RATE_LIMIT = 2
+LAST_REQUEST_TIME = 0.0
+
+_TAG_STYLES = {
+    "Call Courier": "background:#ede7f6;color:#4527a0",
+    "Order Confirmed": "background:#e8f5e9;color:#1b5e20",
+    "Fulfilment Not Set": "background:#fff8e1;color:#e65100",
+    "No Throw": "background:#fce4ec;color:#880e4f",
+    "Lahore": "background:#fff3cd;color:#8b5a00",
+}
+
+
+def normalize_scan_term(term):
+    return (term or "").strip().lower().replace("#", "")
+
+
+def is_lahore_city(city):
+    normalized = (city or "").strip().lower()
+    return "lahore" in normalized or "lhr" in normalized
+
+
+def is_undelivered_status(status):
+    normalized = (status or "").strip().upper()
+    if not normalized:
+        return False
+    delivered_like = {"DELIVERED", "BOOKED", "UN-BOOKED", "UN-FULFILLED", "UNFULFILLED", "CANCELLED"}
+    if normalized in delivered_like:
+        return False
+    return any(
+        keyword in normalized
+        for keyword in ("OUT FOR", "RETURN", "REFUS", "CALL NOT", "HOLD", "UNTRACEABLE", "ATTEMPT", "DELAY")
+    )
+
+
+def split_customer_name(name):
+    parts = [part for part in str(name or "").strip().split() if part]
+    if not parts:
+        return "", "Customer"
+    if len(parts) == 1:
+        return parts[0], "Customer"
+    return parts[0], " ".join(parts[1:])
+
+
+def parse_money(value, default=0.0):
+    try:
+        return round(float(value or default), 2)
+    except (TypeError, ValueError):
+        return round(float(default), 2)
+
+
+def parse_date_for_sort(value):
+    if not value:
+        return datetime.min
+    raw = str(value).replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S %z", "%b %d, %Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+    return datetime.min
+
+
+@app.template_filter("parse_date")
+def parse_date_filter(value):
+    return parse_date_for_sort(value)
+
+
+@app.template_filter("format_number")
+def format_number(value):
+    try:
+        return f"{int(float(value)):,}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+@app.template_global()
+def tag_style(label):
+    return _TAG_STYLES.get(label, "background:#e8eaf6;color:#283593")
+
+
+@app.template_global()
+def status_badge(status):
+    status = status or ""
+    upper = status.upper()
+    if "DELIVERED" in upper:
+        bg, color, dot = "#d4f5e9", "#0f6848", "#1cc88a"
+    elif "RETURN" in upper or "CANCEL" in upper:
+        bg, color, dot = "#fce8e6", "#8b1a10", "#e74a3b"
+    elif status == "Booked":
+        bg, color, dot = "#dde4fb", "#2346a8", "#4e73df"
+    elif status == "Un-Booked":
+        bg, color, dot = "#ebebed", "#4a4b55", "#858796"
+    elif "OUT FOR" in upper or "DISPATCH" in upper or "TRANSIT" in upper:
+        bg, color, dot = "#fef8e4", "#7a5c00", "#f6c23e"
+    elif "CONFIRM" in upper:
+        bg, color, dot = "#d4f5e9", "#0f6848", "#1cc88a"
+    elif "CALL NOT" in upper:
+        bg, color, dot = "#e8f8fb", "#0a5c6e", "#36b9cc"
+    else:
+        bg, color, dot = "#e8f8fb", "#0a5c6e", "#36b9cc"
+
+    return Markup(
+        f'<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;'
+        f'border-radius:99px;font-size:11px;font-weight:600;background:{bg};color:{color};white-space:nowrap;">'
+        f'<span style="width:6px;height:6px;border-radius:50%;background:{dot};flex-shrink:0;"></span>'
+        f'{status or "—"}</span>'
+    )
+
+
+@app.context_processor
+def inject_now():
+    return {
+        "now": datetime.now(),
+        "skip_base_password_prompt": bool(session.get(ADMIN_PORTAL_SESSION_KEY)),
+        "embedded_mode": request.args.get("embedded") == "1",
+    }
+
+
+def employee_portal_is_authenticated():
+    return bool(session.get(EMPLOYEE_PORTAL_SESSION_KEY) or session.get(ADMIN_PORTAL_SESSION_KEY))
+
+
+def admin_portal_is_authenticated():
+    return bool(session.get(ADMIN_PORTAL_SESSION_KEY))
+
+
+def employee_portal_safe_next_url(candidate):
+    if candidate and str(candidate).startswith("/employee_portal"):
+        return candidate
+    return url_for("employee_portal")
+
+
+def setup_shopify():
+    shop_url = (os.getenv("SHOP_URL") or "").strip()
+    token = (os.getenv("PASSWORD") or "").strip()
+    api_key = (os.getenv("API_KEY") or "").strip()
+    if not shop_url or not token:
+        print("SHOP_URL or PASSWORD missing; Shopify client not configured.")
+        return
 
     try:
-        # SMTP server configuration
-        smtp_server = 'smtp.gmail.com'
-        smtp_port = 587
-        smtp_user = os.getenv('SMTP_USER')  # Use environment variable
-        smtp_password = os.getenv('SMTP_PASSWORD')  # Use environment variable
-
-        # Create the message
-        msg = MIMEText(body)
-        msg['From'] = smtp_user
-        msg['To'] = ', '.join(to_emails)
-        msg['Cc'] = ', '.join(cc_emails)
-        msg['Subject'] = subject
-
-        # Connect to the SMTP server and send email
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
-        server.login(smtp_user, smtp_password)
-        server.sendmail(smtp_user, to_emails + cc_emails, msg.as_string())
-        server.quit()
-
-        return jsonify({'message': 'Email sent successfully'}), 200
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        shopify.ShopifyResource.clear_session()
+    except Exception:
+        pass
+    if not shop_url.startswith("https://"):
+        shop_url = f"https://{shop_url.lstrip('/')}"
+    shopify.ShopifyResource.set_site(shop_url)
+    if api_key:
+        shopify.ShopifyResource.set_user(api_key)
+    shopify.ShopifyResource.set_password(token)
 
 
-def format_date(date_str):
-    # Parse the date string
-    date_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S %z")
-    # Format the date object to only show the date
-    return date_obj.strftime("%Y-%m-%d")
+def shopify_rest_base_url():
+    raw_shop_url = (os.getenv("SHOP_URL") or "").strip()
+    parsed = urlparse(raw_shop_url if "://" in raw_shop_url else f"https://{raw_shop_url}")
+    host = parsed.netloc or parsed.path
+    if not host:
+        raise RuntimeError("SHOP_URL is not configured.")
+    api_version = os.getenv("SHOPIFY_ADMIN_API_VERSION", "2026-04")
+    return f"https://{host}/admin/api/{api_version}"
 
 
-async def fetch_tracking_data(session, tracking_number):
-    if tracking_number.startswith("LE"):
-        # Leopard API
-        api_key = os.getenv('LEOPARD_API_KEY')
-        api_password = os.getenv('LEOPARD_PASSWORD')
-        url = f"https://merchantapi.leopardscourier.com/api/trackBookedPacket/?api_key={api_key}&api_password={api_password}&track_numbers={tracking_number}"
+def shopify_rest_headers():
+    token = (os.getenv("PASSWORD") or "").strip()
+    if not token:
+        raise RuntimeError("Shopify admin token is missing.")
+    return {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+async def fetch_tracking_data(session_obj, tracking_number):
+    if not tracking_number or tracking_number == "N/A":
+        return {}
+    if str(tracking_number).startswith("LE"):
+        api_key = os.getenv("LEOPARD_API_KEY")
+        api_password = os.getenv("LEOPARD_PASSWORD")
+        url = (
+            "https://merchantapi.leopardscourier.com/api/trackBookedPacket/"
+            f"?api_key={api_key}&api_password={api_password}&track_numbers={tracking_number}"
+        )
     else:
-        # CallCourier API
         url = f"https://cod.callcourier.com.pk/api/CallCourier/GetTackingHistory?cn={tracking_number}"
 
-    async with session.get(url) as response:
+    async with session_obj.get(url) as response:
         return await response.json()
 
 
-from flask import Flask, request, jsonify
-import requests
-import os
+def get_variant_image_and_title(product, line_item):
+    cache_key = (getattr(product, "id", None), getattr(line_item, "variant_id", None))
+    if cache_key in product_image_cache:
+        return product_image_cache[cache_key]
 
-app = Flask(__name__)
+    base_image = ""
+    if getattr(product, "image", None):
+        base_image = getattr(product.image, "src", "") or ""
+
+    variant_name = ""
+    image_src = base_image or "https://cdn.shopify.com/s/files/1/0936/0949/2789/files/7.png?v=1741033934"
+    images = list(getattr(product, "images", []) or [])
+    fetched_images = False
+
+    for variant in getattr(product, "variants", []) or []:
+        if getattr(variant, "id", None) != getattr(line_item, "variant_id", None):
+            continue
+        variant_name = "" if getattr(variant, "title", "") in {"", "Default Title"} else getattr(variant, "title", "")
+        variant_image_id = getattr(variant, "image_id", None)
+        if variant_image_id and not images and not fetched_images:
+            try:
+                images = list(shopify.Image.find(product_id=getattr(product, "id", None)) or [])
+            except Exception:
+                images = []
+            fetched_images = True
+        if variant_image_id and images:
+            for image in images:
+                if getattr(image, "id", None) == variant_image_id:
+                    image_src = getattr(image, "src", "") or image_src
+                    break
+                attached_variant_ids = getattr(image, "variant_ids", None) or []
+                if getattr(variant, "id", None) in attached_variant_ids:
+                    image_src = getattr(image, "src", "") or image_src
+                    break
+        break
+
+    product_image_cache[cache_key] = (image_src, variant_name)
+    return image_src, variant_name
 
 
-@app.route('/generate_loadsheet', methods=['POST'])
-def generate_loadsheet():
-    data = request.json
-    cn_numbers = data.get("cn_numbers", [])
+def summarize_tracking_result(tracking_number, data):
+    if not tracking_number or tracking_number == "N/A":
+        return {
+            "status": "Un-Booked",
+            "name": "",
+            "address": "",
+            "phone": "",
+            "city": "",
+        }
 
-    if not cn_numbers:
-        return jsonify({"error": "No CN numbers provided"}), 400
+    if str(tracking_number).startswith("LE"):
+        packet_list = (data or {}).get("packet_list") or []
+        if not packet_list:
+            return {"status": "Booked", "name": "", "address": "", "phone": "", "city": ""}
+        packet = packet_list[0]
+        tracking_details = packet.get("Tracking Detail") or []
+        final_status = packet.get("booked_packet_status") or "Booked"
+        if tracking_details:
+            last_tracking = tracking_details[-1]
+            final_status = last_tracking.get("Status") or final_status
+            reason = last_tracking.get("Reason") or ""
+            if reason and reason != "N/A":
+                final_status = f"{final_status} - {reason}"
+        if final_status in {"Pickup Request not Send", "Pickup Request Sent"}:
+            final_status = "Booked"
+        return {
+            "status": final_status,
+            "name": packet.get("consignment_name_eng") or "",
+            "address": packet.get("consignment_address") or "",
+            "phone": packet.get("consignment_phone") or "",
+            "city": packet.get("destination_city_name") or "",
+        }
 
-    api_key = os.getenv('LEOPARD_API_KEY')
-    api_password = os.getenv('LEOPARD_PASSWORD')
-    url = "https://merchantapi.leopardscourier.com/api/generateLoadSheet/"
-
-    payload = {
-        "api_key": api_key,
-        "api_password": api_password,
-        "cn_numbers": cn_numbers,
-        "courier_name": "1",
-        "courier_code": "1"
-    }
-
-    try:
-        response = requests.post(url, json=payload)
-        response_data = response.json()
-        print("Loadsheet Response:", response_data)  # ✅ Debugging: Print response
-        return jsonify(response_data)
-
-    except requests.exceptions.RequestException as e:
-        print("Error:", e)  # Log the error
-        return jsonify({"error": "Failed to connect to the API"}), 500
+    if isinstance(data, list) and data:
+        first = data[0]
+        last = data[-1]
+        status = last.get("ProcessDescForPortal") or "Booked"
+        return {
+            "status": status,
+            "name": first.get("ConsigneeName") or "",
+            "address": first.get("ConsigneeAddress") or "",
+            "phone": first.get("ContactNo") or "",
+            "city": first.get("ConsigneeCity") or "",
+        }
+    return {"status": "Booked", "name": "", "address": "", "phone": "", "city": ""}
 
 
-async def process_line_item(session, line_item, fulfillments):
-    if line_item.fulfillment_status is None and line_item.fulfillable_quantity == 0:
+async def process_line_item(session_obj, line_item, fulfillments):
+    if line_item.fulfillment_status is None and getattr(line_item, "fulfillable_quantity", 0) == 0:
         return []
 
     tracking_info = []
-    name = 'N/A'
-    address = 'N/A'
-    phone = 'N/A'
-    city = 'N/A'
 
     if line_item.fulfillment_status == "fulfilled":
         for fulfillment in fulfillments:
-            if fulfillment.status == "cancelled":
+            if getattr(fulfillment, "status", "") == "cancelled":
                 continue
-
-            for item in fulfillment.line_items:
-                if item.id == line_item.id:
-                    tracking_number = fulfillment.tracking_number
-                    try:
-                        data = await fetch_tracking_data(session, tracking_number)
-                    except Exception as e:
-                        print(f"Error fetching tracking data for {tracking_number}: {e}")
-                        data = None
-
-                    final_status = "N/A"
-
-                    try:
-                        if tracking_number and tracking_number.startswith("LE"):
-                            # Leopard Courier block
-                            if data and data.get('status') == 1 and not data.get('error'):
-                                packet_list = data.get('packet_list') or []
-                                if packet_list:
-                                    packet = packet_list[0]
-
-                                    # Safely get values with defaults
-                                    name = packet.get('consignment_name_eng') or 'N/A'
-                                    address = packet.get('consignment_address') or 'N/A'
-                                    phone = packet.get('consignment_phone') or 'N/A'
-                                    city = packet.get('destination_city_name') or 'N/A'
-
-                                    tracking_details = packet.get('Tracking Detail') or []
-                                    final_status = packet.get('booked_packet_status') or 'Booked'
-
-                                    if tracking_details:
-                                        last_tracking = tracking_details[-1]
-                                        final_status = last_tracking.get('Status') or final_status
-                                        reason = last_tracking.get('Reason') or ''
-
-                                        if reason and reason != 'N/A':
-                                            final_status += f" - {reason}"
-
-                                        keywords = ["Return", "hold", "UNTRACEABLE"]
-                                        for detail in tracking_details:
-                                            status = detail.get('Status') or ''
-                                            reason = detail.get('Reason') or ''
-
-                                            if any(kw in status for kw in keywords) or any(kw in reason for kw in keywords):
-                                                if reason and reason != "N/A":
-                                                    final_status = f"Being Return {reason}"
-                                                else:
-                                                    final_status = "Being Return"
-                                                if "Returned to shipper" in final_status:
-                                                    final_status = "RETURNED TO SHIPPER"
-                                                break
-
-                                    # Convert booking-related statuses
-                                    if final_status in ["Pickup Request not Send", "Pickup Request Sent"]:
-                                        final_status = "CONSIGNMENT BOOKED"
-                                else:
-                                    final_status = "Booked"
-                            else:
-                                final_status = "N/A"
-
-                        else:
-                            # CallCourier block
-                            if data and isinstance(data, list) and len(data) > 0:
-                                packet = data[0]
-
-                                name = packet.get('ConsigneeName') or 'N/A'
-                                address = packet.get('ConsigneeAddress') or 'N/A'
-                                phone = packet.get('ContactNo') or 'N/A'
-                                city = packet.get('ConsigneeCity') or 'N/A'
-
-                                final_status = data[-1].get('ProcessDescForPortal') or 'DELIVERED'
-                            else:
-                                final_status = "N/A"
-
-                    except Exception as e:
-                        print(f"Error processing tracking number {tracking_number}: {e}")
-                        final_status = "Tracking Error"
-
-                    tracking_info.append({
-                        'tracking_number': tracking_number,
-                        'status': final_status,
-                        'quantity': item.quantity,
-                        'name': name,
-                        'address': address,
-                        'city': city,
-                        'phone': phone,
-                    })
+            for item in getattr(fulfillment, "line_items", []) or []:
+                if getattr(item, "id", None) != getattr(line_item, "id", None):
+                    continue
+                tracking_number = getattr(fulfillment, "tracking_number", "") or "N/A"
+                try:
+                    data = await fetch_tracking_data(session_obj, tracking_number)
+                except Exception as error:
+                    print(f"Error fetching tracking for {tracking_number}: {error}")
+                    data = {}
+                summary = summarize_tracking_result(tracking_number, data)
+                tracking_info.append(
+                    {
+                        "tracking_number": tracking_number,
+                        "status": summary["status"],
+                        "quantity": getattr(item, "quantity", getattr(line_item, "quantity", 1)),
+                        "name": summary["name"],
+                        "address": summary["address"],
+                        "city": summary["city"],
+                        "phone": summary["phone"],
+                    }
+                )
 
     if tracking_info:
         return tracking_info
-    else:
-        return [{
+
+    return [
+        {
             "tracking_number": "N/A",
             "status": "Un-Booked",
-            "name": name,
-            "address": address,
-            "phone": phone,
-            "city": city,
-            "quantity": line_item.quantity
-        }]
+            "name": "",
+            "address": "",
+            "phone": "",
+            "city": "",
+            "quantity": getattr(line_item, "quantity", 1),
+        }
+    ]
 
 
-
-
-async def process_order(session, order):
+async def process_order(session_obj, order):
     global LAST_REQUEST_TIME
 
-    # Ensure we respect the rate limit
     elapsed_time = time.time() - LAST_REQUEST_TIME
     if elapsed_time < 1 / RATE_LIMIT:
         await asyncio.sleep((1 / RATE_LIMIT) - elapsed_time)
     LAST_REQUEST_TIME = time.time()
 
-    order_start_time = time.time()
-    input_datetime_str = order.created_at
-    parsed_datetime = datetime.fromisoformat(input_datetime_str[:-6])
-    formatted_datetime = parsed_datetime.strftime("%b %d, %Y")
-
+    created_at_raw = getattr(order, "created_at", "") or ""
+    created_at_display = created_at_raw
     try:
-        status = (order.fulfillment_status).title()
-    except:
-        status = "Un-fulfilled"
-    print(order)
-    tags = []
-    try:
-        name = order.billing_address.name
-    except AttributeError:
-        name = " "
-        print("Error retrieving name")
+        created_at_display = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00")).strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        pass
 
-    try:
-        address = order.billing_address.address1
-    except AttributeError:
-        address = " "
-        print("Error retrieving address")
+    fulfillment_status = getattr(order, "fulfillment_status", None)
+    order_status = fulfillment_status.title() if fulfillment_status else "Un-fulfilled"
 
-    try:
-        city = order.billing_address.city
-    except AttributeError:
-        city = " "
-        print("Error retrieving city")
-
-    try:
-        phone = order.billing_address.phone
-    except AttributeError:
-        phone = " "
-        print("Error retrieving phone")
-
+    billing = getattr(order, "billing_address", None)
+    shipping = getattr(order, "shipping_address", None)
     customer_details = {
-        "name": name,
-        "address": address,
-        "city": city,
-        "phone": phone
+        "name": getattr(billing, "name", None) or getattr(shipping, "name", None) or "",
+        "address": getattr(billing, "address1", None) or getattr(shipping, "address1", None) or "",
+        "city": getattr(billing, "city", None) or getattr(shipping, "city", None) or "",
+        "phone": getattr(billing, "phone", None) or getattr(shipping, "phone", None) or getattr(order, "phone", "") or "",
     }
+
     order_info = {
-        'order_link': "https://admin.shopify.com/store/psgv0a-qk/orders/" + str(order.id),
-        'order_id': order.name,
-        'tracking_id': 'N/A',
-        'created_at': formatted_datetime,
-        'total_price': order.total_price,
-        'line_items': [],
-        'financial_status': (order.financial_status).title(),
-        'fulfillment_status': status,
-        'customer_details': customer_details,
-        'tags' : [tag for tag in order.tags.split(", ")],
-        'id': order.id
+        "order_link": f"https://admin.shopify.com/store/{get_shop_domain().split('.')[0]}/orders/{order.id}",
+        "order_id": getattr(order, "name", ""),
+        "tracking_id": "N/A",
+        "created_at": created_at_display,
+        "total_price": parse_money(getattr(order, "total_price", 0)),
+        "subtotal_price": parse_money(getattr(order, "subtotal_price", 0)),
+        "shipping_charges": parse_money(getattr(order, "total_shipping_price_set", {}).get("shop_money", {}).get("amount", 0) if isinstance(getattr(order, "total_shipping_price_set", None), dict) else 0),
+        "total_discounts": parse_money(getattr(order, "total_discounts", 0)),
+        "line_items": [],
+        "financial_status": (getattr(order, "financial_status", "") or "").title(),
+        "fulfillment_status": order_status,
+        "customer_details": customer_details,
+        "tags": [tag for tag in (getattr(order, "tags", "") or "").split(", ") if tag],
+        "id": getattr(order, "id", None),
     }
-    print(order.tags)
 
-    tasks = []
-    for line_item in order.line_items:
-        tasks.append(process_line_item(session, line_item, order.fulfillments))
-
+    tasks = [process_line_item(session_obj, line_item, getattr(order, "fulfillments", [])) for line_item in getattr(order, "line_items", [])]
     results = await asyncio.gather(*tasks)
-    variant_name = ""
-    image_src = "https://cdn.shopify.com/s/files/1/0936/0949/2789/files/7.png?v=1741033934"
-    for tracking_info_list, line_item in zip(results, order.line_items):
+
+    for tracking_info_list, line_item in zip(results, getattr(order, "line_items", [])):
         if tracking_info_list is None:
             continue
+        variant_name = ""
+        image_src = "https://cdn.shopify.com/s/files/1/0936/0949/2789/files/7.png?v=1741033934"
+        if getattr(line_item, "product_id", None):
+            try:
+                product = shopify.Product.find(getattr(line_item, "product_id", None))
+                if product:
+                    image_src, variant_name = get_variant_image_and_title(product, line_item)
+            except Exception as error:
+                print(f"Could not fetch product image for {getattr(line_item, 'product_id', None)}: {error}")
 
-        if line_item.product_id is not None:
-            product = shopify.Product.find(line_item.product_id)
-            if product and product.variants:
-                for variant in product.variants:
-                    if variant.id == line_item.variant_id:
-                        if variant.image_id is not None:
-                            images = shopify.Image.find(image_id=variant.image_id, product_id=line_item.product_id)
-                            variant_name = line_item.variant_title
-                            for image in images:
-                                if image.id == variant.image_id:
-                                    image_src = image.src
-                        else:
-                            variant_name = ""
-                            image_src = product.image.src
-        else:
-            image_src = "https://cdn.shopify.com/s/files/1/0936/0949/2789/files/7.png?v=1741033934"
+        base_title = getattr(line_item, "title", "") or "Product"
+        product_title = base_title if not variant_name else f"{base_title} - {variant_name}"
+        unit_price = parse_money(getattr(line_item, "price", 0))
 
         for info in tracking_info_list:
-            order_info['line_items'].append({
-                'fulfillment_status': line_item.fulfillment_status,
-                'image_src': image_src,
-                'product_title': line_item.title + " - " + variant_name,
-                'quantity': info['quantity'],
-                'tracking_number': info['tracking_number'],
-                'status': info['status'],
-                'name': info.get('name', 'N/A'),
-                'address': info.get('address', 'N/A'),
-                'city': info.get('city', 'N/A'),
-                'phone': info.get('phone', 'N/A'),
-            })
-            order_info['status'] = info['status']
+            quantity = int(info["quantity"] or 0)
+            line_total = round(unit_price * quantity, 2)
+            order_info["line_items"].append(
+                {
+                    "fulfillment_status": getattr(line_item, "fulfillment_status", None),
+                    "image_src": image_src,
+                    "product_title": product_title,
+                    "quantity": quantity,
+                    "unit_price": unit_price,
+                    "line_total": line_total,
+                    "tracking_number": info["tracking_number"],
+                    "status": info["status"],
+                    "name": info.get("name", ""),
+                    "address": info.get("address", ""),
+                    "city": info.get("city", ""),
+                    "phone": info.get("phone", ""),
+                }
+            )
+            order_info["status"] = info["status"]
 
-    order_end_time = time.time()
-    print(f"Time taken to process order {order.order_number}: {order_end_time - order_start_time:.2f} seconds")
+    if not order_info["line_items"]:
+        order_info["status"] = "Un-Booked"
 
     return order_info
 
 
-
-@app.route('/apply_tag', methods=['POST'])
-def apply_tag():
-    data = request.json
-    order_id = data.get('order_id')
-    tag = data.get('tag')
-
-    # Get today's date in YYYY-MM-DD format
-    today_date = datetime.now().strftime('%Y-%m-%d')
-    tag_with_date = f"{tag.strip()} ({today_date})"
-
-    try:
-        # Fetch the order
-        order = shopify.Order.find(order_id)
-
-        # If the tag is "Returned", cancel the order
-        if tag.strip().lower() == "returned":
-            # Attempt to cancel the order
-            if order.cancel():
-                print("Order Cancelled")
-            else:
-                print("Order Cancellation Failed")
-        if tag.strip().lower() == "delivered":
-            if order.close():
-                print("Order Cloed")
-            else:
-                print("Order Closing Failed")
-
-        # Process existing tags
-        if order.tags:
-            tags = [t.strip() for t in order.tags.split(", ")]  # Remove excess spaces
-        else:
-            tags = []
-
-        # Remove a specific tag if needed (e.g., "Leopards Courier")
-        if "Leopards Courier" in tags:
-            tags.remove("Leopards Courier")
-
-        # Add new tag if it doesn't already exist
-        if tag_with_date not in tags:
-            tags.append(tag_with_date)
-
-        # Update the order with the new tags
-        order.tags = ", ".join(tags)
-
-        # Save the order
-        if order.save():
-            return jsonify({"success": True, "message": "Tag applied successfully."})
-        else:
-            return jsonify({"success": False, "error": "Failed to save order changes."})
-
-    except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
-RATE_LIMIT = 2  # 2 requests per second
-LAST_REQUEST_TIME = 0
-
-
 async def limited_request(coroutine):
-    """Ensure requests adhere to rate limits."""
     async with semaphore:
-        await asyncio.sleep(0.5)  # Enforce delay for Shopify rate limits (no more than 2 per second)
+        await asyncio.sleep(0.5)
         return await coroutine
 
 
-async def getShopifyOrders():
-    start_date = datetime(2024, 9, 1).isoformat()
-    order_details = []
-    total_start_time = time.time()
+def enrich_orders_with_protected_customer_data(orders):
+    if not orders:
+        return orders
+    protected_details, errors = fetch_protected_order_details(
+        [order.get("id") for order in orders if order.get("id")]
+    )
+    for error in errors:
+        print(f"Shopify protected data warning: {error}")
+    for order in orders:
+        order_id = str(order.get("id") or "")
+        if not order_id or order_id not in protected_details:
+            continue
+        details = protected_details[order_id]
+        customer = order.setdefault("customer_details", {})
+        customer["name"] = details.get("name") or customer.get("name", "")
+        customer["address"] = details.get("address") or customer.get("address", "")
+        customer["city"] = details.get("city") or customer.get("city", "")
+        customer["phone"] = details.get("phone") or customer.get("phone", "")
+        for item in order.get("line_items", []):
+            item["name"] = details.get("name") or item.get("name", "")
+            item["address"] = details.get("address") or item.get("address", "")
+            item["city"] = details.get("city") or item.get("city", "")
+            item["phone"] = details.get("phone") or item.get("phone", "")
+    return orders
+
+
+async def get_shopify_orders():
+    created_at_min = os.getenv("SHOPIFY_CREATED_AT_MIN", "2024-09-01T00:00:00+00:00")
+    collected = []
 
     try:
-        orders = shopify.Order.find(limit=250, order="created_at DESC", created_at_min=start_date)
-    except Exception as e:
-        print(f"Error fetching orders: {e}")
+        orders = shopify.Order.find(limit=250, order="created_at DESC", created_at_min=created_at_min)
+    except Exception as error:
+        print(f"Error fetching Shopify orders: {error}")
         return []
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession() as session_obj:
         while True:
-            tasks = [limited_request(process_order(session, order)) for order in orders]
+            tasks = [limited_request(process_order(session_obj, order)) for order in orders]
             results = await asyncio.gather(*tasks, return_exceptions=True)
-
             for result in results:
                 if isinstance(result, Exception):
-                    print(f"Error processing an order: {result}")
-                else:
-                    order_details.append(result)
-
+                    print(f"Error processing Shopify order: {result}")
+                    continue
+                collected.append(result)
             try:
                 if not orders.has_next_page():
                     break
-                break
-
-
                 orders = orders.next_page()
-
-            except Exception as e:
-                print(f"Error fetching next page: {e}")
+            except Exception as error:
+                print(f"Error loading next page: {error}")
                 break
 
-    total_end_time = time.time()
-    print(f"Processed {len(order_details)} orders in {total_end_time - total_start_time:.2f} seconds")
-    return order_details
+    return enrich_orders_with_protected_customer_data(collected)
 
 
+def reload_orders():
+    global order_details
+    try:
+        order_details = asyncio.run(get_shopify_orders())
+    except Exception as error:
+        print(f"Could not reload orders: {error}")
+
+
+def find_shopify_order_by_order_name(order_id):
+    normalized = normalize_scan_term(order_id)
+    for order in order_details:
+        if normalize_scan_term(order.get("order_id")) == normalized:
+            return order
+    return None
+
+
+def find_shopify_order_by_tracking_number(tracking_number):
+    normalized = normalize_scan_term(tracking_number)
+    if not normalized:
+        return None
+    for order in order_details:
+        for item in order.get("line_items", []):
+            if normalize_scan_term(item.get("tracking_number")) == normalized:
+                return order
+    return None
+
+
+def serialize_shopify_order_for_employee(order):
+    customer = order.get("customer_details") or {}
+    return {
+        "source": "shopify",
+        "shopify_id": order.get("id"),
+        "order_id": str(order.get("order_id", "")),
+        "status": order.get("status", ""),
+        "customer_name": customer.get("name", ""),
+        "customer_phone": customer.get("phone", ""),
+        "customer_city": customer.get("city", ""),
+        "total_price": order.get("total_price", 0),
+        "created_at": order.get("created_at", ""),
+        "items": [
+            {
+                "title": item.get("product_title", ""),
+                "quantity": item.get("quantity", 0),
+                "image": item.get("image_src", ""),
+                "tracking_number": item.get("tracking_number", "N/A"),
+                "status": item.get("status", ""),
+            }
+            for item in order.get("line_items", [])
+        ],
+    }
+
+
+def build_employee_portal_orders():
+    return [serialize_shopify_order_for_employee(order) for order in order_details]
+
+
+def build_pending_orders_mobile_data():
+    all_orders = []
+    statuses = load_order_statuses()
+
+    for shopify_order in order_details:
+        if any(tag.startswith("Dispatched") for tag in shopify_order.get("tags", [])):
+            continue
+        order_status = shopify_order.get("status", "")
+        if order_status not in {"Booked", "Un-Booked", "Drop Off at Express Center", "CONSIGNMENT BOOKED"}:
+            continue
+        filtered_tags = [tag.strip() for tag in shopify_order.get("tags", []) if tag and tag.strip() != "Leopards Courier"]
+        customer_city = ((shopify_order.get("customer_details") or {}).get("city") or "").strip()
+        items = []
+        for item in shopify_order.get("line_items", []):
+            track_num = item.get("tracking_number", "N/A")
+            key = f"{shopify_order['order_id']}:{track_num}"
+            items.append(
+                {
+                    "item_image": item.get("image_src", ""),
+                    "item_title": item.get("product_title", ""),
+                    "quantity": item.get("quantity", 0),
+                    "unit_price": item.get("unit_price", 0),
+                    "line_total": item.get("line_total", 0),
+                    "tracking_number": track_num,
+                    "status": item.get("status", ""),
+                    "applied_status": statuses.get(key, ""),
+                }
+            )
+        all_orders.append(
+            {
+                "order_via": "Shopify",
+                "shopify_id": shopify_order.get("id"),
+                "order_link": shopify_order.get("order_link"),
+                "order_id": shopify_order.get("order_id"),
+                "status": "Booked" if order_status == "CONSIGNMENT BOOKED" else order_status,
+                "tags": filtered_tags,
+                "customer_name": (shopify_order.get("customer_details") or {}).get("name", ""),
+                "customer_phone": (shopify_order.get("customer_details") or {}).get("phone", ""),
+                "customer_address": (shopify_order.get("customer_details") or {}).get("address", ""),
+                "customer_city": customer_city,
+                "is_lahore": is_lahore_city(customer_city),
+                "date": shopify_order.get("created_at", ""),
+                "items_list": items,
+                "subtotal_price": shopify_order.get("subtotal_price", 0),
+                "shipping_charges": shopify_order.get("shipping_charges", 0),
+                "total_discounts": shopify_order.get("total_discounts", 0),
+                "total_price": shopify_order.get("total_price", 0),
+            }
+        )
+
+    all_orders.sort(key=lambda order: parse_date_for_sort(order.get("date")), reverse=True)
+    return all_orders
+
+
+def build_pending_items_table_data():
+    pending_items = {}
+    all_orders = []
+    for order in build_pending_orders_mobile_data():
+        all_orders.append(order)
+        for item in order.get("items_list", []):
+            product_title = item["item_title"]
+            quantity = int(item.get("quantity") or 0)
+            item_image = item.get("item_image", "")
+            key = product_title
+            if key not in pending_items:
+                pending_items[key] = {
+                    "item_image": item_image,
+                    "item_title": product_title,
+                    "quantity": 0,
+                    "statuses": {},
+                }
+            pending_items[key]["quantity"] += quantity
+            status = item.get("status", "")
+            pending_items[key]["statuses"][status] = pending_items[key]["statuses"].get(status, 0) + quantity
+    pending_items_sorted = sorted(pending_items.values(), key=lambda item: item["quantity"], reverse=True)
+    return all_orders, pending_items_sorted, len(pending_items_sorted) // 2
+
+
+def build_employee_approval_items():
+    approvals = []
+    statuses = load_order_statuses()
+    approval_statuses = {"Delivered in Lahore", "Cancelled by Employee"}
+    for shopify_order in order_details:
+        customer = shopify_order.get("customer_details") or {}
+        for item in shopify_order.get("line_items", []):
+            tracking_number = item.get("tracking_number", "N/A")
+            key = f"{shopify_order['order_id']}:{tracking_number}"
+            applied_status = statuses.get(key, "")
+            if applied_status not in approval_statuses:
+                continue
+            approvals.append(
+                {
+                    "shopify_id": shopify_order.get("id"),
+                    "order_id": shopify_order.get("order_id"),
+                    "tracking_number": tracking_number,
+                    "requested_status": applied_status,
+                    "item_title": item.get("product_title", ""),
+                    "item_image": item.get("image_src", ""),
+                    "quantity": item.get("quantity", 0),
+                    "customer_name": customer.get("name") or item.get("name") or "",
+                    "customer_city": customer.get("city") or item.get("city") or "",
+                    "customer_phone": customer.get("phone") or item.get("phone") or "",
+                    "total_price": shopify_order.get("total_price", 0),
+                    "date": shopify_order.get("created_at", ""),
+                    "tags": shopify_order.get("tags", []),
+                }
+            )
+    approvals.sort(key=lambda item: parse_date_for_sort(item.get("date")), reverse=True)
+    return approvals
+
+
+def find_employee_portal_order(term):
+    normalized = normalize_scan_term(term)
+    if not normalized:
+        return None
+    for order in build_employee_portal_orders():
+        if normalize_scan_term(order.get("order_id")) == normalized:
+            return order
+        for item in order.get("items", []):
+            if normalize_scan_term(item.get("tracking_number")) == normalized:
+                return order
+    return None
+
+
+def apply_shopify_order_tag(order_id, tag, include_date=False):
+    order = shopify.Order.find(order_id)
+    tags = [t.strip() for t in order.tags.split(",")] if getattr(order, "tags", "") else []
+    clean_tag = tag.strip()
+    if include_date:
+        clean_tag = f"{clean_tag} ({datetime.now().strftime('%Y-%m-%d')})"
+    if clean_tag not in tags:
+        tags.append(clean_tag)
+    order.tags = ", ".join(tags)
+    return order.save()
+
+
+def mark_shopify_order_as_paid(order_id):
+    token = get_graphql_token()
+    endpoint = get_graphql_endpoint()
+    if not token or not endpoint:
+        raise RuntimeError("Shopify GraphQL payment auth is not configured.")
+
+    mutation = """
+    mutation MarkOrderAsPaid($input: OrderMarkAsPaidInput!) {
+      orderMarkAsPaid(input: $input) {
+        order {
+          id
+          displayFinancialStatus
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+    variables = {"input": {"id": f"gid://shopify/Order/{int(order_id)}"}}
+    response = requests.post(
+        endpoint,
+        headers={"Content-Type": "application/json", "X-Shopify-Access-Token": token},
+        json={"query": mutation, "variables": variables},
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    errors = payload.get("errors") or []
+    if errors:
+        raise RuntimeError("; ".join(error.get("message", "Unknown Shopify GraphQL error") for error in errors))
+    result = (payload.get("data") or {}).get("orderMarkAsPaid") or {}
+    user_errors = result.get("userErrors") or []
+    if user_errors:
+        raise RuntimeError("; ".join(error.get("message", "Unknown Shopify user error") for error in user_errors))
+    return result.get("order") or {}
+
+
+def capture_shopify_payment(order):
+    financial_status = ((getattr(order, "financial_status", "") or "")).lower()
+    if financial_status in {"paid", "partially_paid"}:
+        return []
+    response = requests.get(
+        f"{shopify_rest_base_url()}/orders/{order.id}/transactions.json",
+        headers=shopify_rest_headers(),
+        timeout=30,
+    )
+    response.raise_for_status()
+    transactions = response.json().get("transactions", [])
+    authorization = next(
+        (
+            transaction
+            for transaction in transactions
+            if transaction.get("kind") == "authorization" and transaction.get("status") == "success"
+        ),
+        None,
+    )
+    if not authorization:
+        return ["No capturable authorization transaction found."]
+    payload = {
+        "transaction": {
+            "kind": "capture",
+            "parent_id": authorization["id"],
+            "amount": str(getattr(order, "total_price", "")),
+            "currency": authorization.get("currency") or getattr(order, "currency", "PKR") or "PKR",
+        }
+    }
+    capture_response = requests.post(
+        f"{shopify_rest_base_url()}/orders/{order.id}/transactions.json",
+        headers=shopify_rest_headers(),
+        json=payload,
+        timeout=30,
+    )
+    capture_response.raise_for_status()
+    return []
+
+
+def fulfill_shopify_order(order):
+    fulfillment_status = ((getattr(order, "fulfillment_status", "") or "")).lower()
+    if fulfillment_status == "fulfilled":
+        return []
+    response = requests.get(
+        f"{shopify_rest_base_url()}/orders/{order.id}/fulfillment_orders.json",
+        headers=shopify_rest_headers(),
+        timeout=30,
+    )
+    response.raise_for_status()
+    fulfillment_orders = response.json().get("fulfillment_orders", [])
+    open_fulfillment_orders = [
+        {"fulfillment_order_id": fulfillment_order["id"]}
+        for fulfillment_order in fulfillment_orders
+        if fulfillment_order.get("status") not in {"closed", "cancelled", "incomplete"}
+    ]
+    if not open_fulfillment_orders:
+        return ["No open fulfillment orders found."]
+    payload = {
+        "fulfillment": {
+            "notify_customer": False,
+            "line_items_by_fulfillment_order": open_fulfillment_orders,
+        }
+    }
+    fulfillment_response = requests.post(
+        f"{shopify_rest_base_url()}/fulfillments.json",
+        headers=shopify_rest_headers(),
+        json=payload,
+        timeout=30,
+    )
+    fulfillment_response.raise_for_status()
+    return []
+
+
+def approve_shopify_delivery(order):
+    warnings = []
+    try:
+        mark_shopify_order_as_paid(order.id)
+    except Exception as error:
+        try:
+            warnings.extend(capture_shopify_payment(order))
+        except Exception as capture_error:
+            warnings.append(f"Could not mark order as paid: {error}")
+            warnings.append(f"Could not capture payment: {capture_error}")
+    try:
+        warnings.extend(fulfill_shopify_order(order))
+    except Exception as error:
+        warnings.append(f"Could not create fulfillment: {error}")
+    try:
+        result = order.close()
+        if result is False:
+            warnings.append("Shopify order close returned false.")
+    except Exception as error:
+        warnings.append(f"Could not close Shopify order: {error}")
+    try:
+        if apply_shopify_order_tag(order.id, "Delivered in Lahore Approved", include_date=True) is False:
+            warnings.append("Could not save approval tag.")
+    except Exception as error:
+        warnings.append(f"Could not save approval tag: {error}")
+    return warnings
+
+
+def approve_shopify_cancellation(order):
+    warnings = []
+    try:
+        result = order.cancel()
+        if result is False:
+            warnings.append("Shopify order cancel returned false.")
+    except Exception as error:
+        warnings.append(f"Could not cancel Shopify order: {error}")
+    try:
+        if apply_shopify_order_tag(order.id, "Cancelled by Employee", include_date=True) is False:
+            warnings.append("Could not save cancellation tag.")
+    except Exception as error:
+        warnings.append(f"Could not save cancellation tag: {error}")
+    return warnings
+
+
+def format_employee_order_note(payment_method, delivery_method, customer_phone, discount_amount, delivery_charges, advance_amount, custom_items, extra_notes=""):
+    lines = [
+        "Created from Sleek Space employee portal.",
+        f"Payment method: {payment_method or 'Not specified'}",
+        f"Delivery method: {delivery_method or 'Not specified'}",
+        f"Phone: {customer_phone or 'Not provided'}",
+    ]
+    if discount_amount:
+        lines.append(f"Discount amount: PKR {discount_amount}")
+    if delivery_charges:
+        lines.append(f"Delivery charges: PKR {delivery_charges}")
+    if advance_amount:
+        lines.append(f"Advance paid by customer: PKR {advance_amount}")
+    if custom_items:
+        lines.append("Custom items:")
+        for item in custom_items:
+            lines.append(
+                f"- {item.get('title', 'Custom item')} | Qty {item.get('quantity', 1)} | "
+                f"PKR {item.get('price', 0)} | Image {'Uploaded in portal' if item.get('image') else 'N/A'}"
+            )
+    if extra_notes:
+        lines.append(f"Notes: {extra_notes}")
+    return "\n".join(lines)
+
+
+def get_active_shopify_products(limit=120):
+    try:
+        products = shopify.Product.find(limit=limit, published_status="published")
+    except Exception as error:
+        print(f"Could not fetch Shopify products: {error}")
+        return []
+
+    results = []
+    for product in products:
+        if getattr(product, "status", "active") != "active":
+            continue
+        base_image = product.image.src if getattr(product, "image", None) else ""
+        product_images = list(getattr(product, "images", []) or [])
+        fetched_images = False
+        for variant in getattr(product, "variants", []) or []:
+            variant_title = getattr(variant, "title", "") or ""
+            display_title = product.title if variant_title in {"Default Title", ""} else f"{product.title} - {variant_title}"
+            variant_image = base_image
+            variant_image_id = getattr(variant, "image_id", None)
+            if variant_image_id and not product_images and not fetched_images:
+                try:
+                    product_images = list(shopify.Image.find(product_id=getattr(product, "id", None)) or [])
+                except Exception:
+                    product_images = []
+                fetched_images = True
+            if variant_image_id and product_images:
+                for image in product_images:
+                    if getattr(image, "id", None) == variant_image_id:
+                        variant_image = getattr(image, "src", "") or base_image
+                        break
+                    attached_variant_ids = getattr(image, "variant_ids", None) or []
+                    if getattr(variant, "id", None) in attached_variant_ids:
+                        variant_image = getattr(image, "src", "") or base_image
+                        break
+            results.append(
+                {
+                    "product_id": getattr(product, "id", None),
+                    "variant_id": getattr(variant, "id", None),
+                    "title": display_title,
+                    "product_title": getattr(product, "title", ""),
+                    "variant_title": variant_title,
+                    "price": float(getattr(variant, "price", 0) or 0),
+                    "image": variant_image,
+                    "sku": getattr(variant, "sku", "") or "",
+                }
+            )
+    return results
+
+
+def build_employee_invoice_payload(order_name, customer_name, phone, city, address, payment_method, delivery_method, catalog_items, custom_items, discount_amount, delivery_charges, advance_amount):
+    items = []
+    subtotal = 0.0
+
+    for item in catalog_items:
+        quantity = int(item.get("quantity") or 1)
+        unit_price = parse_money(item.get("price"))
+        line_total = round(unit_price * quantity, 2)
+        subtotal += line_total
+        items.append(
+            {
+                "title": item.get("title") or "Product",
+                "quantity": quantity,
+                "image": item.get("image") or "",
+                "unit_price": unit_price,
+                "line_total": line_total,
+            }
+        )
+
+    for item in custom_items:
+        quantity = int(item.get("quantity") or 1)
+        unit_price = parse_money(item.get("price"))
+        line_total = round(unit_price * quantity, 2)
+        subtotal += line_total
+        items.append(
+            {
+                "title": item.get("title") or "Custom product",
+                "quantity": quantity,
+                "image": item.get("image") or "",
+                "unit_price": unit_price,
+                "line_total": line_total,
+            }
+        )
+
+    total = round(subtotal - discount_amount + delivery_charges, 2)
+    balance_due = round(max(total - advance_amount, 0), 2)
+    return {
+        "order_id": order_name,
+        "customer_name": customer_name,
+        "customer_phone": phone,
+        "customer_city": city,
+        "customer_address": address,
+        "status": "Created",
+        "summary_lines": [
+            "Shopify order",
+            f"Payment: {payment_method or 'Not specified'}",
+            f"Delivery: {delivery_method or 'Not specified'}",
+        ],
+        "items": items,
+        "totals": {
+            "subtotal": round(subtotal, 2),
+            "discount": round(discount_amount, 2),
+            "delivery_charges": round(delivery_charges, 2),
+            "total": round(total, 2),
+            "advance_paid": round(advance_amount, 2),
+            "balance_due": round(balance_due, 2),
+        },
+    }
+
+
+def create_shopify_employee_order(payload):
+    customer_name = (payload.get("customer_name") or "").strip()
+    phone = (payload.get("phone") or "").strip()
+    city = (payload.get("city") or "").strip()
+    address = (payload.get("address") or "").strip()
+    discount_amount = parse_money(payload.get("discount_amount"))
+    delivery_charges = parse_money(payload.get("delivery_charges"))
+    payment_method = (payload.get("payment_method") or "").strip()
+    delivery_method = (payload.get("delivery_method") or "").strip()
+    advance_amount = parse_money(payload.get("advance_amount"))
+    catalog_items = payload.get("catalog_items") or []
+    custom_items = payload.get("custom_items") or []
+    extra_notes = (payload.get("notes") or "").strip()
+
+    if not customer_name:
+        raise ValueError("Customer name is required.")
+    if not phone:
+        raise ValueError("Phone number is required.")
+    if payment_method.lower() == "partial" and advance_amount <= 0:
+        raise ValueError("Enter the advance paid amount for partial payment.")
+
+    first_name, last_name = split_customer_name(customer_name)
+    line_items = []
+
+    for item in catalog_items:
+        variant_id = item.get("variant_id")
+        quantity = int(item.get("quantity") or 1)
+        if not variant_id or quantity < 1:
+            continue
+        line_item = {"variant_id": int(variant_id), "quantity": quantity}
+        override_price = parse_money(item.get("price"))
+        if override_price > 0:
+            line_item["original_unit_price"] = override_price
+        line_items.append(line_item)
+
+    normalized_custom_items = []
+    for item in custom_items:
+        title = (item.get("title") or "").strip()
+        if not title:
+            continue
+        price = parse_money(item.get("price"))
+        quantity = int(item.get("quantity") or 1)
+        normalized_custom_items.append(
+            {
+                "title": title,
+                "price": price,
+                "quantity": quantity,
+                "image": (item.get("image") or "").strip(),
+            }
+        )
+        line_items.append(
+            {"title": title, "original_unit_price": price, "quantity": quantity}
+        )
+
+    if not line_items:
+        raise ValueError("At least one product is required.")
+
+    estimated_total = 0.0
+    for item in catalog_items:
+        estimated_total += parse_money(item.get("price")) * int(item.get("quantity") or 1)
+    for item in normalized_custom_items:
+        estimated_total += parse_money(item.get("price")) * int(item.get("quantity") or 1)
+    estimated_total = round(estimated_total - discount_amount + delivery_charges, 2)
+    if advance_amount > estimated_total:
+        raise ValueError("Advance paid cannot be greater than the order total.")
+
+    note = format_employee_order_note(
+        payment_method=payment_method,
+        delivery_method=delivery_method,
+        customer_phone=phone,
+        discount_amount=discount_amount,
+        delivery_charges=delivery_charges,
+        advance_amount=advance_amount,
+        custom_items=normalized_custom_items,
+        extra_notes=extra_notes,
+    )
+
+    draft_order = shopify.DraftOrder()
+    draft_order.line_items = line_items
+    draft_order.note = note
+    draft_order.tags = "Employee Portal"
+    draft_order.use_customer_default_address = False
+    draft_order.shipping_address = {
+        "first_name": first_name,
+        "last_name": last_name or "Customer",
+        "phone": phone,
+        "address1": address,
+        "city": city,
+        "country": "Pakistan",
+    }
+    draft_order.billing_address = draft_order.shipping_address
+    draft_order.customer = {
+        "first_name": first_name,
+        "last_name": last_name or "Customer",
+        "phone": phone,
+    }
+
+    if discount_amount > 0:
+        draft_order.applied_discount = {
+            "description": "Employee portal discount",
+            "value_type": "fixed_amount",
+            "value": discount_amount,
+            "amount": discount_amount,
+            "title": "Employee portal discount",
+        }
+
+    if delivery_charges > 0:
+        draft_order.shipping_line = {
+            "title": "Delivery Charges",
+            "price": delivery_charges,
+            "custom": True,
+        }
+
+    if not draft_order.save():
+        raise RuntimeError(json.dumps(getattr(draft_order, "errors", {}) or {"error": "Could not save draft order"}))
+
+    complete_params = {}
+    if payment_method.lower() == "partial":
+        complete_params["payment_pending"] = True
+    try:
+        draft_order.complete(complete_params)
+    except Exception as error:
+        raise RuntimeError(f"Shopify could not complete the employee order: {error or getattr(draft_order, 'errors', None) or 'Unknown completion error'}")
+
+    try:
+        refreshed_draft_order = shopify.DraftOrder.find(draft_order.id)
+    except Exception:
+        refreshed_draft_order = draft_order
+
+    order_id = getattr(refreshed_draft_order, "order_id", None) or getattr(draft_order, "order_id", None)
+    order_name = getattr(refreshed_draft_order, "name", "") or getattr(draft_order, "name", "") or ""
+    if not order_id:
+        raise RuntimeError("Shopify created the draft, but the completed order ID did not come back. Please check Draft Orders in Shopify.")
+
+    if payment_method.lower() == "full":
+        try:
+            mark_shopify_order_as_paid(order_id)
+        except Exception as error:
+            print(f"Could not immediately mark employee order {order_id} as paid: {error}")
+
+    invoice_payload = build_employee_invoice_payload(
+        order_name=order_name,
+        customer_name=customer_name,
+        phone=phone,
+        city=city,
+        address=address,
+        payment_method=payment_method,
+        delivery_method=delivery_method,
+        catalog_items=catalog_items,
+        custom_items=normalized_custom_items,
+        discount_amount=discount_amount,
+        delivery_charges=delivery_charges,
+        advance_amount=advance_amount if payment_method.lower() == "partial" else 0,
+    )
+    return {
+        "draft_order_id": getattr(draft_order, "id", None),
+        "order_id": order_id,
+        "order_name": order_name,
+        "invoice": invoice_payload,
+    }
+
+
+def verify_shopify_webhook(req):
+    shopify_hmac = req.headers.get("X-Shopify-Hmac-Sha256")
+    data = req.get_data()
+    secret = os.getenv("SHOPIFY_WEBHOOK_SECRET")
+    if not secret:
+        raise ValueError("SHOPIFY_WEBHOOK_SECRET is not set.")
+    digest = hmac.new(secret.encode("utf-8"), data, hashlib.sha256).digest()
+    computed_hmac = base64.b64encode(digest).decode("utf-8")
+    return hmac.compare_digest(computed_hmac, shopify_hmac or "")
+
+
+def build_admin_mobile_sections():
+    return [
+        {"id": "dashboard", "label": "Dashboard", "icon": "🏠", "src": "/?embedded=1"},
+        {"id": "scanner", "label": "Scanner", "icon": "🔍", "src": "/employee_portal"},
+        {"id": "employee-orders", "label": "Orders", "icon": "🧾", "src": "/employee_portal/orders"},
+        {"id": "pending", "label": "Pending", "icon": "📋", "src": "/pending?embedded=1"},
+        {"id": "undelivered", "label": "Undelivered", "icon": "🚚", "src": "/undelivered?embedded=1"},
+    ]
+
+
+@app.route("/send-email", methods=["POST"])
+def send_email():
+    data = request.get_json() or {}
+    to_emails = data.get("to", [])
+    cc_emails = data.get("cc", [])
+    subject = data.get("subject", "")
+    body = data.get("body", "")
+    try:
+        smtp_server = "smtp.gmail.com"
+        smtp_port = 587
+        smtp_user = os.getenv("SMTP_USER")
+        smtp_password = os.getenv("SMTP_PASSWORD")
+        msg = MIMEText(body)
+        msg["From"] = smtp_user
+        msg["To"] = ", ".join(to_emails)
+        msg["Cc"] = ", ".join(cc_emails)
+        msg["Subject"] = subject
+
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.sendmail(smtp_user, to_emails + cc_emails, msg.as_string())
+        server.quit()
+        return jsonify({"message": "Email sent successfully"})
+    except Exception as error:
+        return jsonify({"error": str(error)}), 500
+
+
+@app.route("/generate_loadsheet", methods=["POST"])
+def generate_loadsheet():
+    data = request.get_json() or {}
+    cn_numbers = data.get("cn_numbers", [])
+    if not cn_numbers:
+        return jsonify({"error": "No CN numbers provided"}), 400
+
+    payload = {
+        "api_key": os.getenv("LEOPARD_API_KEY"),
+        "api_password": os.getenv("LEOPARD_PASSWORD"),
+        "cn_numbers": cn_numbers,
+        "courier_name": "1",
+        "courier_code": "1",
+    }
+    try:
+        response = requests.post(
+            "https://merchantapi.leopardscourier.com/api/generateLoadSheet/",
+            json=payload,
+            timeout=30,
+        )
+        return jsonify(response.json())
+    except requests.RequestException as error:
+        return jsonify({"error": f"Failed to connect to the API: {error}"}), 500
+
+
+@app.route("/apply_tag", methods=["POST"])
+def apply_tag():
+    data = request.get_json() or {}
+    order_id = data.get("order_id")
+    tag = (data.get("tag") or "").strip()
+    if not order_id or not tag:
+        return jsonify({"success": False, "error": "order_id and tag are required."}), 400
+    try:
+        order = shopify.Order.find(order_id)
+        if tag.lower() == "returned":
+            try:
+                order.cancel()
+            except Exception:
+                pass
+        if tag.lower() == "delivered":
+            try:
+                order.close()
+            except Exception:
+                pass
+        if apply_shopify_order_tag(order_id, tag, include_date=True):
+            return jsonify({"success": True, "message": "Tag applied successfully."})
+        return jsonify({"success": False, "error": "Failed to save order changes."}), 500
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 500
 
 
 @app.route("/")
 def tracking():
-    global order_details, pre_loaded, daraz_orders
-    return render_template("track.html", order_details=order_details, darazOrders=daraz_orders)
+    return render_template(
+        "track.html",
+        order_details=order_details,
+        darazOrders=[],
+        employee_approvals=build_employee_approval_items(),
+    )
 
 
-def get_daraz_orders(statuses):
-    try:
-        access_token = '50000902021Yejq5rSzhGiOp0hRUGDxjt12fb1602qewR3toNX4APiKiju3bxu'
-        client = lazop.LazopClient('https://api.daraz.pk/rest', '501554', 'nrP3XFN7ChZL53cXyVED1yj4iGZZtlcD')
-
-        all_orders = []
-
-        for status in statuses:
-            request = lazop.LazopRequest('/orders/get', 'GET')
-            request.add_api_param('sort_direction', 'DESC')
-            request.add_api_param('update_before', '2025-02-10T16:00:00+08:00')
-            request.add_api_param('offset', '0')
-            request.add_api_param('created_before', '2025-02-10T16:00:00+08:00')
-            request.add_api_param('created_after', '2017-02-10T09:00:00+08:00')
-            request.add_api_param('limit', '50')
-            request.add_api_param('update_after', '2017-02-10T09:00:00+08:00')
-            request.add_api_param('sort_by', 'updated_at')
-            request.add_api_param('status', status)
-            request.add_api_param('access_token', access_token)
-
-            response = client.execute(request)
-            darazOrders = response.body.get('data', {}).get('orders', [])
-
-            for order in darazOrders:
-                order_id = order.get('order_id', 'Unknown')
-
-                item_request = lazop.LazopRequest('/order/items/get', 'GET')
-                item_request.add_api_param('order_id', order_id)
-                item_request.add_api_param('access_token', access_token)
-
-                item_response = client.execute(item_request)
-                items = item_response.body.get('data', [])
-
-                item_details = []
-                for item in items:
-                    tracking_num = item.get('tracking_code', 'Unknown')
-
-                    tracking_req = lazop.LazopRequest('/logistic/order/trace', 'GET')
-                    tracking_req.add_api_param('order_id', order_id)
-                    tracking_req.add_api_param('access_token', access_token)
-                    tracking_response = client.execute(tracking_req)
-
-                    tracking_data = tracking_response.body.get('result', {})
-                    packages = tracking_data.get('data', [{}])[0].get('package_detail_info_list', [])
-
-                    track_status = "N/A"
-                    for package in packages:
-                        if package.get("tracking_number") == tracking_num:
-                            track_status = package.get('logistic_detail_info_list', [{}])[-1].get('title', "N/A")
-                            break
-                    product_title = f"{item.get('name', 'Unknown')} {item.get('variation', 'N/A')}"
-                    if "Color family:" in product_title:
-                        product_info, color_info = product_title.split("Color family:", 1)
-                        product_title = f"{product_info.strip()} - {color_info.strip()}"
-
-                    item_detail = {
-                        'item_image': item.get('product_main_image', 'N/A'),
-                        'item_title': product_title,
-                        'quantity': 1,
-                        'tracking_number': item.get('tracking_code', 'N/A'),
-                        'status': track_status
-                    }
-                    item_details.append(item_detail)
-
-                filtered_order = {
-                    'order_id': f"{order.get('order_id', 'Unknown')}",
-                    'customer': {
-                        'name': f"{order.get('customer_first_name', 'Unknown')} {order.get('customer_last_name', 'Unknown')}",
-                        'address': order.get('address_shipping', {}).get('address', 'N/A'),
-                        'phone': order.get('address_shipping', {}).get('phone', 'N/A')
-                    },
-                    'status': status.replace('_', ' ').title(),
-                    'date': format_date(order.get('created_at', 'N/A')),
-                    'total_price': order.get('price', '0.00'),
-                    'items_list': item_details,
-                    'tracking_id': 'N/A',
-                }
-                all_orders.append(filtered_order)
-
-        return all_orders
-    except Exception as e:
-        print(f"Error fetching darazOrders: {e}")
-        return []
-
-
-@app.route('/daraz')
-def daraz():
-    statuses = ['shipped', 'pending', 'ready_to_ship']
-    darazOrders = get_daraz_orders(statuses)
-    return render_template('daraz.html', darazOrders=darazOrders)
-
-
-@app.route('/refresh', methods=['POST'])
+@app.route("/refresh", methods=["POST"])
 def refresh_data():
-    global order_details
     try:
-        order_details = asyncio.run(getShopifyOrders())
-        return render_template("track.html", order_details=order_details)
-    except Exception as e:
-        print(f"Error refreshing data: {e}")
-        return jsonify({'message': 'Failed to refresh data'}), 500
+        reload_orders()
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest" or request.is_json:
+            return jsonify({"message": "Data refreshed successfully"})
+        return render_template("track.html", order_details=order_details, darazOrders=[], employee_approvals=build_employee_approval_items())
+    except Exception as error:
+        return jsonify({"message": f"Failed to refresh data: {error}"}), 500
 
 
-def run_async(func, *args, **kwargs):
-    return asyncio.run(func(*args, **kwargs))
+@app.route("/track/<tracking_num>")
+def display_tracking(tracking_num):
+    async def run_lookup():
+        async with aiohttp.ClientSession() as session_obj:
+            return await fetch_tracking_data(session_obj, tracking_num)
+
+    data = asyncio.run(run_lookup())
+    matched_order = find_shopify_order_by_tracking_number(tracking_num)
+    return render_template("trackingdata.html", data=data, tracking_number=tracking_num, matched_order=matched_order)
 
 
-@app.route('/track/<tracking_num>')
-def displayTracking(tracking_num):
-    print(f"Tracking Number: {tracking_num}")  # Debug line
-
-    async def async_func():
-        async with aiohttp.ClientSession() as session:
-            return await fetch_tracking_data(session, tracking_num)
-
-    data = run_async(async_func)
-
-    return render_template('trackingdata.html', data=data)
-
-
-from flask import request, jsonify
-from datetime import datetime
-
-
-async def fetch_order_details():
-    # Run the function in the background
-    global order_details
-    order_details = await getShopifyOrders()
-
-
-@app.route('/pending')
+@app.route("/pending")
 def pending_orders():
-    all_orders = []
-    pending_items_dict = {}  # Dictionary to track quantities of each unique item
-
-    global daraz_orders, order_details
+    all_orders, pending_items, half = build_pending_items_table_data()
+    return render_template("pending.html", all_orders=all_orders, pending_items=pending_items, half=half)
 
 
-    for daraz_order in daraz_orders:
-        if daraz_order['status'] in ['Ready To Ship', 'Pending']:
-            daraz_order_data = {
-                'order_via': 'Daraz',
-                'order_id': daraz_order['order_id'],
-                'status': daraz_order['status'],
-                'tracking_number': daraz_order['items_list'][0]['tracking_number'],
-                'date': daraz_order['date'],
-                'items_list': daraz_order['items_list'],
-                'total_price':daraz_order['total_price']
-            }
-            all_orders.append(daraz_order_data)
-
-            for item in daraz_order['items_list']:
-                product_title = item['item_title']
-                quantity = item['quantity']
-                item_image = item['item_image']
-
-                if product_title in pending_items_dict:
-                    pending_items_dict[product_title]['quantity'] += quantity
-                else:
-                    pending_items_dict[product_title] = {
-                        'item_image': item_image,
-                        'item_title': product_title,
-                        'quantity': quantity
-                    }
-
-    # Process Shopify orders with the specified statuses
-    for shopify_order in order_details:
-        # Skip orders with tags starting with "Dispatched"
-        if any(tag.startswith("Dispatched") for tag in shopify_order.get('tags', [])):
-            continue
-
-        if shopify_order['status'] in ['CONSIGNMENT BOOKED', 'Un-Booked']:
-            shopify_items_list = [
-                {
-                    'item_image': item['image_src'],
-                    'item_title': item['product_title'],
-                    'quantity': item['quantity'],
-                    'tracking_number': item['tracking_number'],
-                    'status': item['status']
-                }
-                for item in shopify_order['line_items']
-            ]
-
-            shopify_order_data = {
-                'order_via': 'Shopify',
-                'order_id': shopify_order['order_id'],
-                'status': shopify_order['status'],
-                'tracking_number': shopify_order['tracking_id'],
-                'date': shopify_order['created_at'],
-                'items_list': shopify_items_list,
-                'total_price': shopify_order['total_price'],
-                'order_link' : shopify_order['order_link']
-            }
-            all_orders.append(shopify_order_data)
-
-            # Count quantities for each item in the Shopify order
-            for item in shopify_items_list:
-                if item['status'] in ['CONSIGNMENT BOOKED', 'Un-Booked']:
-                    product_title = item['item_title']
-                    quantity = item['quantity']
-                    item_image = item['item_image']
-                    status = item['status']
-
-                    key = item['item_title']
-                    if key not in pending_items_dict:
-                        pending_items_dict[key] = {
-                            'item_image': item_image,
-                            'item_title': product_title,
-                            'quantity': 0,
-                            'statuses': {}
-                        }
-
-                    pending_items_dict[key]['quantity'] += quantity
-
-                    if item['status'] in pending_items_dict[key]['statuses']:
-                        pending_items_dict[key]['statuses'][item['status']] += quantity
-                    else:
-                        pending_items_dict[key]['statuses'][item['status']] = quantity
-
-    pending_items = list(pending_items_dict.values())
-    pending_items_sorted = sorted(pending_items, key=lambda x: x['quantity'], reverse=True)
-
-    # Split the list into two halves
-    half = len(pending_items_sorted) // 2
-
-    return render_template('pending.html', all_orders=all_orders, pending_items=pending_items_sorted, half=half)
+@app.route("/orders")
+def pending_orders_mobile():
+    return render_template("orders.html", all_orders=build_pending_orders_mobile_data(), employee_portal_mode=False)
 
 
-@app.route('/undelivered')
+@app.route("/undelivered")
 def undelivered():
-    global order_details, pre_loaded, daraz_orders
-    return render_template("undelivered.html", order_details=order_details, darazOrders=daraz_orders)
+    undelivered_orders = [order for order in order_details if is_undelivered_status(order.get("status"))]
+    return render_template("undelivered.html", order_details=undelivered_orders, darazOrders=[])
 
 
-def verify_shopify_webhook(request):
-    """
-    Verify the webhook using HMAC with the shared secret.
-    """
-    shopify_hmac = request.headers.get('X-Shopify-Hmac-Sha256')
-    data = request.get_data()  # Raw request body (bytes)
-
-    # Retrieve the secret from environment variables
-    secret = os.getenv('SHOPIFY_WEBHOOK_SECRET')
-
-    # Check that the secret is set. If not, raise an error.
-    if secret is None:
-        raise ValueError("SHOPIFY_WEBHOOK_SECRET is not set. Please configure the environment variable.")
-
-    # Compute the HMAC digest and base64 encode it.
-    digest = hmac.new(
-        secret.encode('utf-8'),
-        data,
-        hashlib.sha256
-    ).digest()
-    computed_hmac = base64.b64encode(digest).decode('utf-8')
-
-    # Compare the computed HMAC with the one sent by Shopify.
-    return hmac.compare_digest(computed_hmac, shopify_hmac)
+@app.route("/shopify/protected-data/status")
+def protected_data_status():
+    return jsonify(get_protected_data_config_status())
 
 
-@app.route('/shopify/webhook/order_updated', methods=['POST'])
+@app.route("/shopify/install")
+def shopify_install():
+    state = create_oauth_state()
+    session[SHOPIFY_OAUTH_STATE_SESSION_KEY] = state
+    return redirect(get_install_url(state))
+
+
+@app.route("/shopify/callback")
+def shopify_callback():
+    shop = (request.args.get("shop") or "").strip()
+    code = (request.args.get("code") or "").strip()
+    state = (request.args.get("state") or "").strip()
+    saved_state = session.get(SHOPIFY_OAUTH_STATE_SESSION_KEY, "")
+    hmac_valid = verify_oauth_hmac(request.query_string)
+
+    if state != saved_state:
+        return jsonify({"success": False, "error": "Invalid Shopify callback state"}), 400
+    if not hmac_valid and shop != get_shop_domain():
+        return jsonify({"success": False, "error": "Invalid Shopify callback signature"}), 400
+    if not shop or not code:
+        return jsonify({"success": False, "error": "Missing Shopify callback parameters"}), 400
+
+    try:
+        payload = exchange_oauth_code_for_token(shop, code)
+        save_offline_token(shop, payload)
+        session.pop(SHOPIFY_OAUTH_STATE_SESSION_KEY, None)
+        reload_orders()
+        return redirect("/shopify/protected-data/status?connected=1")
+    except Exception as error:
+        return jsonify({"success": False, "error": f"Shopify token exchange failed: {error}"}), 500
+
+
+@app.route("/shopify/webhook/order_updated", methods=["POST"])
 def shopify_order_updated():
     global order_details
     try:
-        # Verify the webhook request is from Shopify
         if not verify_shopify_webhook(request):
-            return jsonify({'error': 'Invalid webhook signature'}), 401
+            return jsonify({"error": "Invalid webhook signature"}), 401
 
         order_data = request.get_json(silent=True)
-
         if not order_data:
-            print("Empty payload received. Ignoring.")
-            return jsonify({'message': 'Empty payload received. Ignored.'}), 200
+            return jsonify({"message": "Empty payload received. Ignored."}), 200
 
-        order_id = order_data.get('id')
+        order_id = order_data.get("id")
         if not order_id:
-            return jsonify({'error': 'No order id found in payload'}), 400
+            return jsonify({"error": "No order id found in payload"}), 400
 
-        # Handle order cancellation
-        if order_data.get('cancelled_at'):
-            print(f"Order {order_id} is cancelled. Removing from order_details.")
-            order_details = [o for o in order_details if o.get('id') != order_id]
-            return jsonify({
-                'success': True,
-                'message': f'Order {order_id} cancelled and removed from order_details'
-            }), 200
+        if order_data.get("cancelled_at"):
+            order_details = [order for order in order_details if order.get("id") != order_id]
+            return jsonify({"success": True, "message": f"Order {order_id} cancelled and removed"}), 200
 
-        print(f"Received webhook for order ID: {order_id}")
-
-        # Fetch the complete order from Shopify
         order = shopify.Order.find(order_id)
-        if not order:
-            return jsonify({'error': f'Order {order_id} not found'}), 404
 
-        # Process the order update asynchronously.
         async def update_order():
-            async with aiohttp.ClientSession() as session:
-                updated_order_info = await process_order(session, order)
-                return updated_order_info
+            async with aiohttp.ClientSession() as session_obj:
+                return await process_order(session_obj, order)
 
         updated_order_info = asyncio.run(update_order())
+        enrich_orders_with_protected_customer_data([updated_order_info])
 
-        # Update or append to global order_details
-        updated = False
-        for idx, existing_order in enumerate(order_details):
-            if existing_order.get('id') == updated_order_info.get('id'):
-                order_details[idx] = updated_order_info
-                updated = True
+        for index, existing_order in enumerate(order_details):
+            if existing_order.get("id") == updated_order_info.get("id"):
+                order_details[index] = updated_order_info
                 break
-        if not updated:
+        else:
             order_details.append(updated_order_info)
-
-        print("Updated order_details:", order_details)
-
-        return jsonify({
-            'success': True,
-            'message': f'Order {order_id} processed successfully',
-            'order': updated_order_info
-        }), 200
-
-    except Exception as e:
-        print(f"Webhook processing error: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({"success": True, "message": f"Order {order_id} processed successfully"})
+    except Exception as error:
+        print(f"Webhook processing error: {error}")
+        return jsonify({"success": False, "error": str(error)}), 500
 
 
-from flask import request, render_template, redirect, url_for
-
-
-@app.route('/scan', methods=['GET', 'POST'])
+@app.route("/scan", methods=["GET", "POST"])
 def search():
-    search_term = (request.args.get('term') or request.form.get('search_term') or "").split(',')[0].strip()
+    search_term = (request.args.get("term") or request.form.get("search_term") or "").split(",")[0].strip()
     if not search_term:
-        return render_template('scan.html')
+        return render_template("scan.html")
 
-    order_found = None
-
-    for order in order_details:
-        if order.get('order_id') == search_term or order.get('tracking_id') == search_term:
-            order_found = order
-            break
-        for item in order.get('line_items', []):
-            if item.get('tracking_number') == search_term:
-                order_found = order
-                break
+    order_found = find_employee_portal_order(search_term)
+    if request.method == "POST":
         if order_found:
-            break
-
-    if request.method == 'POST':
-        return render_template('scan.html', search_term=search_term, order_found=order_found)
+            order_found = {
+                "line_items": [
+                    {"product_title": item.get("title"), "quantity": item.get("quantity"), "image_src": item.get("image")}
+                    for item in order_found.get("items", [])
+                ]
+            }
+        return render_template("scan.html", search_term=search_term, order_found=order_found)
 
     return jsonify(order_found if order_found else {"error": "Order not found"}), 200 if order_found else 404
 
 
-@app.route('/dispatch', methods=['GET'])
+@app.route("/dispatch", methods=["GET"])
 def dispatch():
-    # Fetch orders for dispatch
-    dispatch_orders = []
-    for order in order_details:
-        # Add filtering logic if necessary
-        dispatch_orders.append(order)
-    return jsonify(dispatch_orders)
+    return jsonify(build_employee_portal_orders())
 
 
-@app.route('/return', methods=['GET'])
+@app.route("/return", methods=["GET"])
 def return_orders():
-    # Fetch orders for return
-    return_orders = []
-    for order in order_details:
-        # Add filtering logic if necessary
-        return_orders.append(order)
-    return jsonify(return_orders)
+    return jsonify(build_employee_portal_orders())
 
 
-shop_url = os.getenv('SHOP_URL')
-api_key = os.getenv('API_KEY')
-password = os.getenv('PASSWORD')
-shopify.ShopifyResource.set_site(shop_url)
-shopify.ShopifyResource.set_user(api_key)
-shopify.ShopifyResource.set_password(password)
-statuses = ['shipped', 'pending', 'ready_to_ship']
-daraz_orders = get_daraz_orders(statuses)
+@app.route("/update_status", methods=["POST"])
+def update_status():
+    data = request.get_json() or {}
+    order_id = str(data.get("order_id"))
+    tracking_number = str(data.get("tracking_number", "N/A"))
+    status = str(data.get("status") or "")
+    key = f"{order_id}:{tracking_number}"
+    upsert_order_status(key, status)
+    response_message = f"Status updated to {status} for {order_id} ({tracking_number})"
 
-order_details = asyncio.run(getShopifyOrders())
+    if status == "Delivered in Lahore":
+        matching_order = find_shopify_order_by_order_name(order_id)
+        if matching_order and matching_order.get("id"):
+            try:
+                if apply_shopify_order_tag(matching_order["id"], "Delivered in Lahore"):
+                    local_tags = list(matching_order.get("tags") or [])
+                    if "Delivered in Lahore" not in local_tags:
+                        local_tags.append("Delivered in Lahore")
+                    matching_order["tags"] = local_tags
+                    response_message = (
+                        f"Status updated to {status} for {order_id} ({tracking_number}). "
+                        "Shopify tag applied: Delivered in Lahore."
+                    )
+            except Exception as error:
+                print(f"Could not apply Lahore tag: {error}")
+
+    return jsonify({"message": response_message})
+
+
+@app.route("/employee_status/approve", methods=["POST"])
+def approve_employee_status():
+    data = request.get_json() or {}
+    order_id = str(data.get("order_id") or "")
+    tracking_number = str(data.get("tracking_number") or "N/A")
+    requested_status = str(data.get("requested_status") or "").strip()
+    key = f"{order_id}:{tracking_number}"
+
+    if requested_status not in {"Delivered in Lahore", "Cancelled by Employee"}:
+        return jsonify({"success": False, "error": "Unsupported employee approval status."}), 400
+
+    matching_order = find_shopify_order_by_order_name(order_id)
+    if not matching_order or not matching_order.get("id"):
+        return jsonify({"success": False, "error": "Shopify order not found."}), 404
+
+    try:
+        order = shopify.Order.find(matching_order["id"])
+        warnings = []
+        if requested_status == "Delivered in Lahore":
+            warnings = approve_shopify_delivery(order)
+            matching_order["financial_status"] = "Paid"
+            matching_order["fulfillment_status"] = "Fulfilled"
+            matching_order["status"] = "Delivered"
+            local_tags = [tag for tag in (matching_order.get("tags") or [])]
+            if "Delivered in Lahore Approved" not in local_tags:
+                local_tags.append("Delivered in Lahore Approved")
+            matching_order["tags"] = local_tags
+        else:
+            warnings = approve_shopify_cancellation(order)
+            matching_order["status"] = "Cancelled"
+            local_tags = [tag for tag in (matching_order.get("tags") or [])]
+            if "Cancelled by Employee" not in local_tags:
+                local_tags.append("Cancelled by Employee")
+            matching_order["tags"] = local_tags
+        delete_order_status(key)
+        message = f"Approved {requested_status} for {order_id}."
+        if warnings:
+            message = f"{message} Warnings: {' '.join(warnings)}"
+        return jsonify({"success": True, "message": message, "warnings": warnings})
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 500
+
+
+@app.route("/employee_portal", methods=["GET", "POST"])
+def employee_portal():
+    next_url = employee_portal_safe_next_url(request.values.get("next"))
+    if request.method == "POST":
+        submitted_password = (request.form.get("password") or "").strip()
+        if submitted_password == EMPLOYEE_PORTAL_PASSWORD:
+            session[EMPLOYEE_PORTAL_SESSION_KEY] = True
+            return redirect(next_url)
+        return render_template("employee_portal.html", view="login", login_error="Wrong password. Try again.", next_url=next_url), 401
+    if not employee_portal_is_authenticated():
+        return render_template("employee_portal.html", view="login", login_error="", next_url=next_url)
+    return render_template("employee_portal.html", view="portal", employee_orders=build_employee_portal_orders())
+
+
+@app.route("/employee_portal/orders")
+def employee_portal_orders():
+    if not employee_portal_is_authenticated():
+        return redirect(url_for("employee_portal", next="/employee_portal/orders"))
+    return render_template("orders.html", all_orders=build_pending_orders_mobile_data(), employee_portal_mode=True)
+
+
+@app.route("/employee_portal/products")
+def employee_portal_products():
+    if not employee_portal_is_authenticated():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    return jsonify({"success": True, "products": get_active_shopify_products()})
+
+
+@app.route("/employee_portal/create-order", methods=["POST"])
+def employee_portal_create_order():
+    if not employee_portal_is_authenticated():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    data = request.get_json() or {}
+    try:
+        result = create_shopify_employee_order(data)
+        reload_orders()
+        return jsonify(
+            {
+                "success": True,
+                "draft_order_id": result.get("draft_order_id"),
+                "order_id": result.get("order_id"),
+                "order_name": result.get("order_name"),
+                "invoice": result.get("invoice"),
+            }
+        )
+    except Exception as error:
+        print(f"Employee order create failed: {error}")
+        return jsonify({"success": False, "error": str(error)}), 400
+
+
+@app.route("/employee_portal/logout", methods=["POST"])
+def employee_portal_logout():
+    session.pop(EMPLOYEE_PORTAL_SESSION_KEY, None)
+    return redirect(url_for("employee_portal"))
+
+
+@app.route("/employee_portal/updates")
+def employee_portal_updates():
+    if not employee_portal_is_authenticated():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    orders = build_employee_portal_orders()
+    summaries = [
+        {
+            "id": f"{order.get('source')}:{order.get('order_id')}",
+            "order_id": order.get("order_id"),
+            "source": order.get("source"),
+            "created_at": order.get("created_at"),
+        }
+        for order in orders
+    ]
+    summaries.sort(key=lambda item: parse_date_for_sort(item.get("created_at")), reverse=True)
+    return jsonify(
+        {
+            "success": True,
+            "count": len(summaries),
+            "order_ids": [item["id"] for item in summaries],
+            "latest": summaries[:6],
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+    )
+
+
+@app.route("/employee_portal-manifest.webmanifest")
+def employee_portal_manifest():
+    return send_from_directory("static", "employee-portal.webmanifest", mimetype="application/manifest+json")
+
+
+@app.route("/employee_portal-sw.js")
+def employee_portal_service_worker():
+    return send_from_directory("static", "employee-portal-sw.js", mimetype="application/javascript")
+
+
+@app.route("/employee_portal/report", methods=["POST"])
+def employee_portal_report():
+    if not employee_portal_is_authenticated():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    data = request.get_json() or {}
+    mode = (data.get("mode") or "").strip().lower()
+    scanned_orders = data.get("orders") or []
+    if mode not in {"dispatch", "return"}:
+        return jsonify({"success": False, "error": "Invalid report mode."}), 400
+    if not scanned_orders:
+        return jsonify({"success": False, "error": "No scanned orders provided."}), 400
+    tag_name = "Dispatched" if mode == "dispatch" else "Return Received"
+    tagged_count = 0
+    seen_shopify_ids = set()
+    for entry in scanned_orders:
+        if entry.get("source") != "shopify":
+            continue
+        shopify_id = entry.get("shopify_id")
+        if not shopify_id or shopify_id in seen_shopify_ids:
+            continue
+        seen_shopify_ids.add(shopify_id)
+        if apply_shopify_order_tag(shopify_id, tag_name, include_date=True):
+            tagged_count += 1
+    return jsonify({"success": True, "tagged_count": tagged_count, "skipped_count": len(scanned_orders) - tagged_count, "tag_name": tag_name})
+
+
+@app.route("/admin_portal", methods=["GET", "POST"])
+def admin_portal():
+    selected = (request.values.get("section") or "dashboard").strip().lower()
+    sections = build_admin_mobile_sections()
+    section_ids = {section["id"] for section in sections}
+    if selected not in section_ids:
+        selected = "dashboard"
+
+    if request.method == "POST":
+        submitted_password = (request.form.get("password") or "").strip()
+        if submitted_password == ADMIN_PORTAL_PASSWORD:
+            session[ADMIN_PORTAL_SESSION_KEY] = True
+            return redirect(url_for("admin_portal", section=selected))
+        return render_template("admin_portal.html", view="login", login_error="Wrong password. Try again.", sections=sections, selected_section=selected), 401
+
+    if not admin_portal_is_authenticated():
+        return render_template("admin_portal.html", view="login", login_error="", sections=sections, selected_section=selected)
+
+    return render_template("admin_portal.html", view="portal", sections=sections, selected_section=selected, employee_approvals=build_employee_approval_items())
+
+
+@app.route("/admin_portal/logout", methods=["POST"])
+def admin_portal_logout():
+    session.pop(ADMIN_PORTAL_SESSION_KEY, None)
+    return redirect(url_for("admin_portal"))
+
+
+@app.route("/admin_portal-manifest.webmanifest")
+def admin_portal_manifest():
+    return send_from_directory("static", "admin-portal.webmanifest", mimetype="application/manifest+json")
+
+
+@app.route("/admin_portal-sw.js")
+def admin_portal_service_worker():
+    return send_from_directory("static", "admin-portal-sw.js", mimetype="application/javascript")
+
 
 def restart_program():
-    """Restarts the current Python script."""
     print("Restarting the program...")
-    os.execv(sys.executable, ['python'] + sys.argv)  # Restart script
+    os.execv(sys.executable, ["python"] + sys.argv)
+
 
 def check_restart_times():
-    """Checks the time and restarts the script if needed."""
-    target_times = ["10:00", "20:00", "02:00"]  # 10 AM, 8 PM, 2 AM GMT+5
-
+    target_times = ["10:00", "20:00", "02:00"]
     while True:
-        now = datetime.now().strftime("%H:%M")
-
-        if now in target_times:
+        if datetime.now().strftime("%H:%M") in target_times:
             restart_program()
-
         time.sleep(30)
 
-if __name__ == "__main__":
-    # Load environment variables
-    shop_url = os.getenv('SHOP_URL')
-    api_key = os.getenv('API_KEY')
-    password = os.getenv('PASSWORD')
 
-    # Start the time checker in a separate thread
+setup_shopify()
+init_db()
+reload_orders()
+
+
+if __name__ == "__main__":
     restart_thread = threading.Thread(target=check_restart_times, daemon=True)
     restart_thread.start()
-
-    # Start Flask app
     app.run(host="0.0.0.0", port=5001, debug=True)

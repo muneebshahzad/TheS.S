@@ -4,3 +4,4 @@ aiohttp~=3.9.5
 Flask~=3.0.3
 ShopifyAPI
 gunicorn
+psycopg2-binary

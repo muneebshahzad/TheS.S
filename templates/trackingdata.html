@@ -1,165 +1,203 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tracking Information</title>
-    <!-- Bootstrap CSS -->
-    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        .container {
-            margin-top: 30px;
-        }
-        .tracking-number-bar {
-            margin-bottom: 30px;
-        }
-        .timeline {
-            position: relative;
-            padding: 0;
-            margin: 0;
-            list-style: none;
-        }
-        .timeline:before {
-            content: '';
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            width: 4px;
-            background: #007bff;
-            left: 50%;
-            margin-left: -2px;
-        }
-        .timeline-item {
-            position: relative;
-            margin: 0 0 30px 0;
-            padding-left: 50px;
-        }
-        .timeline-item:before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 50%;
-            width: 10px;
-            height: 10px;
-            background: #007bff;
-            border-radius: 50%;
-            margin-left: -5px;
-        }
-        .timeline-item .timeline-content {
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 5px;
-        }
-        .timeline-item .timeline-content p {
-            margin: 0;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Sleek Space – Tracking {{ tracking_number }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@500&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:'DM Sans',sans-serif; background:#f6f8fc; color:#2d2e36; }
+    .page { min-height:100vh; display:flex; flex-direction:column; }
+    .topbar { background:#102a56; color:#fff; padding:14px 18px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    .brand { font-weight:700; font-size:15px; }
+    .search-wrap { margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .search-form { display:flex; align-items:center; gap:8px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14); border-radius:12px; padding:6px 8px; }
+    .search-form input { width:220px; border:none; outline:none; background:transparent; color:#fff; font-size:13px; }
+    .search-form input::placeholder { color:rgba(255,255,255,0.72); }
+    .search-form button, .back-link { border:none; border-radius:10px; padding:8px 12px; background:#fff; color:#102a56; font-size:12px; font-weight:700; text-decoration:none; cursor:pointer; }
+    .content { padding:18px; display:grid; grid-template-columns:1.3fr .9fr; gap:18px; align-items:start; }
+    .card { background:#fff; border:1px solid #e3e6f0; border-radius:16px; box-shadow:0 1px 4px rgba(0,0,0,0.04); overflow:hidden; }
+    .card-head { padding:16px 18px; border-bottom:1px solid #eef0f5; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .eyebrow { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#858796; }
+    .mono { font-family:'DM Mono',monospace; }
+    .hero-id { font-size:28px; font-weight:800; color:#102a56; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:999px; font-size:11px; font-weight:700; }
+    .pill.green { background:#d4f5e9; color:#0f6848; }
+    .pill.yellow { background:#fff3cd; color:#8b5a00; }
+    .pill.red { background:#fde8e6; color:#b12727; }
+    .pill.blue { background:#dde4fb; color:#2346a8; }
+    .summary { padding:18px; display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:12px; }
+    .summary-box { padding:12px 14px; border:1px solid #edf0f5; border-radius:12px; background:#f9fbff; }
+    .summary-label { font-size:10px; color:#858796; text-transform:uppercase; letter-spacing:.06em; font-weight:700; margin-bottom:6px; }
+    .summary-value { font-size:14px; font-weight:700; color:#2d2e36; line-height:1.4; }
+    .timeline { padding:0 18px 18px; display:flex; flex-direction:column; gap:12px; }
+    .step { display:grid; grid-template-columns:28px 1fr; gap:12px; align-items:start; }
+    .step-dot { width:28px; height:28px; border-radius:50%; background:#dde4fb; color:#2346a8; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; }
+    .step-card { border:1px solid #edf0f5; border-radius:12px; padding:12px 14px; background:#fff; }
+    .step-title { font-size:13px; font-weight:700; color:#2d2e36; margin-bottom:4px; }
+    .step-meta { font-size:11px; color:#858796; line-height:1.5; }
+    .aside { display:flex; flex-direction:column; gap:18px; }
+    .customer, .items, .totals { padding:16px 18px; }
+    .section-title { font-size:13px; font-weight:800; color:#102a56; margin-bottom:12px; }
+    .customer-line { font-size:12px; color:#2d2e36; line-height:1.6; }
+    .item-row { display:grid; grid-template-columns:52px 1fr auto; gap:10px; align-items:center; padding:9px 0; border-top:1px solid #f0f2f7; }
+    .item-row:first-child { border-top:none; padding-top:0; }
+    .item-thumb { width:52px; height:52px; border-radius:10px; overflow:hidden; background:#f2f4f8; display:flex; align-items:center; justify-content:center; }
+    .item-thumb img { width:100%; height:100%; object-fit:cover; }
+    .item-title { font-size:12px; font-weight:700; color:#2d2e36; }
+    .item-sub { font-size:10px; color:#858796; margin-top:3px; }
+    .item-price { font-size:12px; font-weight:700; color:#102a56; text-align:right; }
+    .total-line { display:flex; justify-content:space-between; gap:10px; font-size:12px; color:#6f7280; margin-top:8px; }
+    .total-line strong { color:#2d2e36; }
+    .error-box { padding:30px 22px; text-align:center; color:#858796; font-size:14px; }
+    @media (max-width: 900px) {
+      .content { grid-template-columns:1fr; }
+      .summary { grid-template-columns:1fr; }
+    }
+    @media (max-width: 600px) {
+      .topbar { padding:12px 14px; }
+      .content { padding:12px; gap:12px; }
+      .search-wrap { margin-left:0; width:100%; }
+      .search-form { width:100%; }
+      .search-form input { width:100%; min-width:0; }
+      .hero-id { font-size:24px; }
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Tracking Number Input Bar -->
-        <div class="tracking-number-bar text-center">
-            <h1 class="mb-4">Order Tracking</h1>
-            <form action="/track" method="get" id="trackingForm">
-    <div class="input-group">
-        <input type="text" class="form-control" placeholder="Enter Tracking Number" name="trackingNum" required>
-        <div class="input-group-append">
-            <button class="btn btn-primary" type="submit">Track</button>
-        </div>
+  {% set is_leopard = data.packet_list is defined %}
+  {% set leopard_packet = data.packet_list[0] if is_leopard and data.packet_list else None %}
+  {% set is_callcourier = (data is sequence and data is not string and data|length > 0 and data[0] is defined and data[0].ConsignmentNo is defined) %}
+  {% set current_status = leopard_packet.booked_packet_status if leopard_packet else (data[-1].ProcessDescForPortal if is_callcourier else '') %}
+  {% set status_upper = (current_status or '')|upper %}
+  {% set status_class = 'yellow' %}
+  {% if 'DELIVERED' in status_upper %}{% set status_class = 'green' %}{% elif 'RETURN' in status_upper or 'REFUS' in status_upper %}{% set status_class = 'red' %}{% elif 'BOOKED' in status_upper %}{% set status_class = 'blue' %}{% endif %}
+
+  <div class="page">
+    <div class="topbar">
+      <span class="brand">The Sleek Space Tracking</span>
+      <div class="search-wrap">
+        <a class="back-link" href="/">Dashboard</a>
+        <form class="search-form" action="/track" method="get" onsubmit="event.preventDefault(); const value=this.elements.trackingNum.value.trim(); if(value){ window.location.href='/track/' + encodeURIComponent(value); }">
+          <input type="text" name="trackingNum" placeholder="Enter tracking number" value="{{ tracking_number }}">
+          <button type="submit">Track</button>
+        </form>
+      </div>
     </div>
-</form>
+
+    <div class="content">
+      <div class="card">
+        <div class="card-head">
+          <span class="eyebrow">Shipment Status</span>
+          <div style="flex:1"></div>
+          {% if current_status %}
+          <span class="pill {{ status_class }}">{{ current_status }}</span>
+          {% endif %}
         </div>
-        {% if data.packet_list is defined %}
-    {% if data.status != 0 %}
-    <!-- Leopard Courier Tracking Information -->
-    <div class="tracking-information">
-        <h2>Tracking Information for {{ data.packet_list[0].track_number }}</h2>
-        <div class="card mb-4">
-            <div class="card-body">
-                <p><strong>Booking Date:</strong> {{ data.packet_list[0].booking_date }}</p>
-                <p><strong>Current Status:</strong> {{ data.packet_list[0].booked_packet_status }}</p>
-                <p><strong>Product:</strong> {{ data.packet_list[0].special_instructions }}</p>
+
+        {% if is_leopard and leopard_packet %}
+        <div style="padding:18px 18px 6px;">
+          <div class="hero-id mono">{{ leopard_packet.track_number }}</div>
+        </div>
+        <div class="summary">
+          <div class="summary-box"><div class="summary-label">Booked On</div><div class="summary-value">{{ leopard_packet.booking_date or '—' }}</div></div>
+          <div class="summary-box"><div class="summary-label">Customer</div><div class="summary-value">{{ leopard_packet.consignment_name_eng or '—' }}</div></div>
+          <div class="summary-box"><div class="summary-label">City</div><div class="summary-value">{{ leopard_packet.destination_city_name or '—' }}</div></div>
+        </div>
+        <div class="timeline">
+          {% for detail in leopard_packet['Tracking Detail']|reverse %}
+          <div class="step">
+            <div class="step-dot">{{ loop.index }}</div>
+            <div class="step-card">
+              <div class="step-title">{{ detail.Status }}</div>
+              <div class="step-meta">{{ detail.Activity_Date }} {{ detail.Activity_Time }}</div>
+              {% if detail.Reason and detail.Reason != 'N/A' %}
+              <div class="step-meta">Reason: {{ detail.Reason }}</div>
+              {% endif %}
             </div>
+          </div>
+          {% endfor %}
         </div>
-
-        <!-- Tracking Details -->
-        <h2>Tracking Details</h2>
-        <ul class="timeline">
-            {% for detail in data.packet_list[0]['Tracking Detail']|reverse %}
-            <li class="timeline-item">
-                <div class="timeline-content">
-                    <p>{{ detail.Status }} - {{ detail.Activity_Date }} {{ detail.Activity_Time }}</p>
-                    {% if detail.Reason and detail.Reason != 'N/A' %}
-                    <p><strong>Reason:</strong> "{{ detail.Reason }}"</p>
-                    {% endif %}
-                </div>
-            </li>
-            {% endfor %}
-        </ul>
-    </div>
-    {% else %}
-    <!-- Leopard API Error -->
-    <div class="container mt-5">
-        <div class="alert alert-danger">
-            <h4 class="alert-heading">Error</h4>
-            <p>No Details Found!</p>
+        {% elif is_callcourier %}
+        <div style="padding:18px 18px 6px;">
+          <div class="hero-id mono">{{ data[0].ConsignmentNo or tracking_number }}</div>
         </div>
-    </div>
-    {% endif %}
-
-{% elif data[0] is defined %}
-    <!-- CallCourier Tracking Information -->
-    <div class="tracking-information">
-        <h2>Tracking Information for {{ data[0].ConsignmentNo }}</h2>
-        <div class="card mb-4">
-            <div class="card-body">
-                <p><strong>Booking Date:</strong> {{ data[0].TransactionDate }}</p>
-                <p><strong>Current Status:</strong> {{ data[-1].ProcessDescForPortal }}</p>
-                <p><strong>Customer:</strong> {{ data[0].ConsigneeName }} - {{ data[0].ConsigneeCity }}</p>
+        <div class="summary">
+          <div class="summary-box"><div class="summary-label">Booked On</div><div class="summary-value">{{ data[0].TransactionDate or '—' }}</div></div>
+          <div class="summary-box"><div class="summary-label">Customer</div><div class="summary-value">{{ data[0].ConsigneeName or '—' }}</div></div>
+          <div class="summary-box"><div class="summary-label">City</div><div class="summary-value">{{ data[0].ConsigneeCity or '—' }}</div></div>
+        </div>
+        <div class="timeline">
+          {% for detail in data|reverse %}
+          <div class="step">
+            <div class="step-dot">{{ loop.index }}</div>
+            <div class="step-card">
+              <div class="step-title">{{ detail.ProcessDescForPortal or detail.ProcessDesc or 'Tracking update' }}</div>
+              <div class="step-meta">{{ detail.TransactionDate or '—' }}</div>
+              {% if detail.ReasonDesc and detail.ReasonDesc != 'OK' %}
+              <div class="step-meta">Reason: {{ detail.ReasonDesc }}</div>
+              {% endif %}
             </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="error-box">
+          No tracking details were found for <strong>{{ tracking_number }}</strong>.
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="aside">
+        {% if matched_order %}
+        {% set customer = matched_order.customer_details or {} %}
+        <div class="card customer">
+          <div class="section-title">Order Context</div>
+          <div class="customer-line"><strong>Order:</strong> {{ matched_order.order_id }}</div>
+          <div class="customer-line"><strong>Customer:</strong> {{ customer.name or 'No customer name' }}</div>
+          {% if customer.phone %}<div class="customer-line"><strong>Phone:</strong> {{ customer.phone }}</div>{% endif %}
+          {% if customer.address %}<div class="customer-line"><strong>Address:</strong> {{ customer.address }}</div>{% endif %}
+          {% if customer.city %}<div class="customer-line"><strong>City:</strong> {{ customer.city }}</div>{% endif %}
+          <div class="customer-line"><strong>Status:</strong> {{ matched_order.status }}</div>
+          <div class="customer-line"><strong>Payment:</strong> {{ matched_order.financial_status or 'Pending' }}</div>
+          {% if matched_order.order_link %}<div class="customer-line"><a href="{{ matched_order.order_link }}" target="_blank" style="color:#4e73df;text-decoration:none;">Open in Shopify</a></div>{% endif %}
         </div>
 
-        <!-- Tracking Details -->
-        <h2>Tracking Details</h2>
-        <ul class="timeline">
-            {% for detail in data|reverse %}
-            <li class="timeline-item">
-                <div class="timeline-content">
-                    <p>{{ detail.ProcessDescForPortal }} - {{ detail.TransactionDate }}</p>
-                    {% if detail.ReasonDesc and detail.ReasonDesc != 'OK' %}
-                    <p><strong>Reason:</strong> "{{ detail.ReasonDesc }}"</p>
-                    {% endif %}
-                </div>
-            </li>
-            {% endfor %}
-        </ul>
-    </div>
-
-{% elif data.Message is defined %}
-    <!-- CallCourier Error -->
-    <div class="container mt-5">
-        <div class="alert alert-danger">
-            <h4 class="alert-heading">Error</h4>
-            <p>No Details Found!</p>
+        <div class="card items">
+          <div class="section-title">Items</div>
+          {% for item in matched_order.line_items %}
+          <div class="item-row">
+            <div class="item-thumb">{% if item.image_src %}<img src="{{ item.image_src }}" alt="">{% else %}📦{% endif %}</div>
+            <div style="min-width:0;">
+              <div class="item-title">{{ item.product_title }}</div>
+              <div class="item-sub">Qty {{ item.quantity }}{% if item.tracking_number and item.tracking_number != 'N/A' %} · {{ item.tracking_number }}{% endif %}</div>
+            </div>
+            <div class="item-price">PKR {{ item.line_total|format_number }}</div>
+          </div>
+          {% endfor %}
         </div>
+
+        <div class="card totals">
+          <div class="section-title">Totals</div>
+          <div class="total-line"><span>Subtotal</span><strong>PKR {{ matched_order.subtotal_price|format_number }}</strong></div>
+          {% if matched_order.shipping_charges %}
+          <div class="total-line"><span>Shipping</span><strong>PKR {{ matched_order.shipping_charges|format_number }}</strong></div>
+          {% endif %}
+          {% if matched_order.total_discounts %}
+          <div class="total-line"><span>Discount</span><strong>- PKR {{ matched_order.total_discounts|format_number }}</strong></div>
+          {% endif %}
+          <div class="total-line"><span>Total</span><strong>PKR {{ matched_order.total_price|format_number }}</strong></div>
+        </div>
+        {% else %}
+        <div class="card customer">
+          <div class="section-title">Order Context</div>
+          <div class="customer-line">This tracking number is not currently matched to a loaded Shopify order in the dashboard.</div>
+        </div>
+        {% endif %}
+      </div>
     </div>
-{% endif %}
-
-    </div>
-
-    <!-- Bootstrap JS and dependencies -->
-    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.3/dist/umd/popper.min.js"></script>
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
-
-<script>
-    document.getElementById('trackingForm').onsubmit = function(event) {
-        event.preventDefault();
-        var trackingNumber = document.querySelector('input[name="trackingNum"]').value;
-        window.location.href = '/track/' + encodeURIComponent(trackingNumber);
-    };
-</script>
+  </div>
 </body>
-
-
 </html>
