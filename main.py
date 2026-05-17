@@ -89,6 +89,36 @@ def is_undelivered_status(status):
     )
 
 
+def normalize_status_bucket(status):
+    raw = (status or "Un-Booked").strip()
+    upper = raw.upper()
+    if "DELIVERED" in upper:
+        return "Delivered"
+    if "OUT FOR DELIVERY" in upper:
+        return "Out For Delivery"
+    if "RETURNED TO SHIPPER" in upper:
+        return "RETURNED TO SHIPPER"
+    if "BEING RETURN" in upper:
+        return "Being Return"
+    if upper == "BOOKED" or "CONSIGNMENT BOOKED" in upper or "PICKED FROM SHIPPER" in upper:
+        return "Booked"
+    if upper in {"UN-BOOKED", "UNBOOKED"}:
+        return "Un-Booked"
+    return raw
+
+
+def should_keep_order_in_active_list(order_info, order=None):
+    if not order_info:
+        return False
+    if order is not None:
+        if getattr(order, "cancelled_at", None) or getattr(order, "closed_at", None):
+            return False
+    normalized_status = normalize_status_bucket(order_info.get("status"))
+    if normalized_status in {"Delivered", "Cancelled"}:
+        return False
+    return True
+
+
 def split_customer_name(name):
     parts = [part for part in str(name or "").strip().split() if part]
     if not parts:
@@ -547,6 +577,8 @@ async def get_shopify_orders():
             for result in results:
                 if isinstance(result, Exception):
                     print(f"Error processing Shopify order: {result}")
+                    continue
+                if not should_keep_order_in_active_list(result):
                     continue
                 collected.append(result)
             try:
@@ -1406,9 +1438,9 @@ def shopify_order_updated():
         if not order_id:
             return jsonify({"error": "No order id found in payload"}), 400
 
-        if order_data.get("cancelled_at"):
+        if order_data.get("cancelled_at") or order_data.get("closed_at"):
             order_details = [order for order in order_details if order.get("id") != order_id]
-            return jsonify({"success": True, "message": f"Order {order_id} cancelled and removed"}), 200
+            return jsonify({"success": True, "message": f"Order {order_id} closed and removed"}), 200
 
         order = shopify.Order.find(order_id)
 
@@ -1418,6 +1450,10 @@ def shopify_order_updated():
 
         updated_order_info = asyncio.run(update_order())
         enrich_orders_with_protected_customer_data([updated_order_info])
+
+        if not should_keep_order_in_active_list(updated_order_info, order):
+            order_details = [existing_order for existing_order in order_details if existing_order.get("id") != updated_order_info.get("id")]
+            return jsonify({"success": True, "message": f"Order {order_id} no longer belongs in active orders and was removed."})
 
         for index, existing_order in enumerate(order_details):
             if existing_order.get("id") == updated_order_info.get("id"):
@@ -1512,20 +1548,10 @@ def approve_employee_status():
         warnings = []
         if requested_status == "Delivered in Lahore":
             warnings = approve_shopify_delivery(order)
-            matching_order["financial_status"] = "Paid"
-            matching_order["fulfillment_status"] = "Fulfilled"
-            matching_order["status"] = "Delivered"
-            local_tags = [tag for tag in (matching_order.get("tags") or [])]
-            if "Delivered in Lahore Approved" not in local_tags:
-                local_tags.append("Delivered in Lahore Approved")
-            matching_order["tags"] = local_tags
+            order_details[:] = [existing_order for existing_order in order_details if existing_order.get("id") != matching_order.get("id")]
         else:
             warnings = approve_shopify_cancellation(order)
-            matching_order["status"] = "Cancelled"
-            local_tags = [tag for tag in (matching_order.get("tags") or [])]
-            if "Cancelled by Employee" not in local_tags:
-                local_tags.append("Cancelled by Employee")
-            matching_order["tags"] = local_tags
+            order_details[:] = [existing_order for existing_order in order_details if existing_order.get("id") != matching_order.get("id")]
         delete_order_status(key)
         message = f"Approved {requested_status} for {order_id}."
         if warnings:
