@@ -605,7 +605,7 @@ async def get_shopify_orders():
         orders = shopify.Order.find(limit=250, order="created_at DESC", created_at_min=created_at_min, status="open")
     except Exception as error:
         print(f"Error fetching Shopify orders: {error}")
-        return []
+        return None
 
     async with aiohttp.ClientSession() as session_obj:
         while True:
@@ -632,9 +632,16 @@ async def get_shopify_orders():
 def reload_orders():
     global order_details
     try:
-        order_details = sort_orders_newest_first(asyncio.run(get_shopify_orders()))
+        setup_shopify()
+        fetched_orders = asyncio.run(get_shopify_orders())
+        if fetched_orders is None:
+            print("Keeping existing order cache because Shopify fetch failed.")
+            return False
+        order_details = sort_orders_newest_first(fetched_orders)
+        return True
     except Exception as error:
         print(f"Could not reload orders: {error}")
+        return False
 
 
 def find_shopify_order_by_order_name(order_id):
@@ -1482,6 +1489,7 @@ def _handle_shopify_order_webhook():
             order_details = [order for order in order_details if order.get("id") != order_id]
             return jsonify({"success": True, "message": f"Order {order_id} closed and removed"}), 200
 
+        setup_shopify()
         order = shopify.Order.find(order_id)
 
         async def update_order():
@@ -1779,8 +1787,8 @@ def check_restart_times():
         time.sleep(30)
 
 
-setup_shopify()
 init_db()
+setup_shopify()
 reload_orders()
 
 
