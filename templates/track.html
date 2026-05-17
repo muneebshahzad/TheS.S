@@ -506,11 +506,25 @@
 const ORDER_DATA = {{ order_details | tojson }};
 
 // ── Stats strip ──
+function normalizeStatusBucket(status) {
+  const raw = (status || 'Un-Booked').trim();
+  const upper = raw.toUpperCase();
+
+  if (upper.includes('DELIVERED')) return 'Delivered';
+  if (upper.includes('OUT FOR DELIVERY')) return 'Out For Delivery';
+  if (upper.includes('RETURNED TO SHIPPER')) return 'RETURNED TO SHIPPER';
+  if (upper.includes('BEING RETURN')) return 'Being Return';
+  if (upper === 'BOOKED' || upper.includes('CONSIGNMENT BOOKED') || upper.includes('PICKED FROM SHIPPER')) return 'Booked';
+  if (upper === 'UN-BOOKED' || upper === 'UNBOOKED') return 'Un-Booked';
+
+  return raw;
+}
+
 function renderStats() {
   const counts = {}, totals = {};
   let grandTotal = 0;
   ORDER_DATA.forEach(o => {
-    const s = o.status || 'Un-Booked';
+    const s = normalizeStatusBucket(o.status);
     counts[s] = (counts[s] || 0) + 1;
     totals[s] = (totals[s] || 0) + Number(o.total_price || 0);
     grandTotal += Number(o.total_price || 0);
@@ -563,8 +577,8 @@ function renderStats() {
 }
 
 // ── Bottom bar ──
-let ofdCount = ORDER_DATA.filter(o => o.status === 'Out For Delivery').length;
-let rtsCount = ORDER_DATA.filter(o => o.status === 'RETURNED TO SHIPPER').length;
+let ofdCount = ORDER_DATA.filter(o => normalizeStatusBucket(o.status) === 'Out For Delivery').length;
+let rtsCount = ORDER_DATA.filter(o => normalizeStatusBucket(o.status) === 'RETURNED TO SHIPPER').length;
 
 function updateBottomBar() {
   const btnD = document.getElementById('btnDeliver');
