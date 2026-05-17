@@ -269,6 +269,43 @@ def shopify_rest_headers():
     }
 
 
+def ensure_required_shopify_webhooks():
+    base_url = shopify_rest_base_url()
+    headers = shopify_rest_headers()
+    app_base_url = (os.getenv("SHOPIFY_APP_BASE_URL") or "").rstrip("/")
+    if not app_base_url:
+        raise RuntimeError("SHOPIFY_APP_BASE_URL is not configured.")
+
+    desired = {
+        "orders/create": f"{app_base_url}/shopify/webhook/order_created",
+        "orders/updated": f"{app_base_url}/shopify/webhook/order_updated",
+    }
+
+    response = requests.get(f"{base_url}/webhooks.json", headers=headers, timeout=20)
+    response.raise_for_status()
+    existing_hooks = response.json().get("webhooks", []) or []
+    existing_pairs = {
+        (
+            str((hook or {}).get("topic") or "").strip().lower(),
+            str((hook or {}).get("address") or "").strip().rstrip("/"),
+        )
+        for hook in existing_hooks
+    }
+
+    for topic, address in desired.items():
+        if (topic.lower(), address.rstrip("/")) in existing_pairs:
+            continue
+        payload = {
+            "webhook": {
+                "topic": topic,
+                "address": address,
+                "format": "json",
+            }
+        }
+        create_response = requests.post(f"{base_url}/webhooks.json", headers=headers, json=payload, timeout=20)
+        create_response.raise_for_status()
+
+
 async def fetch_tracking_data(session_obj, tracking_number):
     if not tracking_number or tracking_number == "N/A":
         return {}
@@ -1416,6 +1453,10 @@ def shopify_callback():
         payload = exchange_oauth_code_for_token(shop, code)
         save_offline_token(shop, payload)
         setup_shopify()
+        try:
+            ensure_required_shopify_webhooks()
+        except Exception as webhook_error:
+            print(f"Warning: could not ensure Shopify webhooks: {webhook_error}")
         session.pop(SHOPIFY_OAUTH_STATE_SESSION_KEY, None)
         reload_orders()
         return redirect("/shopify/protected-data/status?connected=1")

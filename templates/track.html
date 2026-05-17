@@ -226,7 +226,7 @@
 
     <!-- Filter pills + Refresh -->
     <div class="filter-strip">
-      {% for f in ['All','Booked','Un-Booked','Delivered','Out For Delivery','Being Return','RETURNED TO SHIPPER'] %}
+      {% for f in ['All','Booked','Un-Booked','Out For Delivery','Being Return','RETURNED TO SHIPPER'] %}
       <button class="fpill {% if loop.first %}active{% endif %}" data-filter="{{ f }}" onclick="setFilter(this)">{{ f }}</button>
       {% endfor %}
       <button class="refresh-btn" id="refreshTrackingBtn" onclick="refreshTracking()">
@@ -505,6 +505,18 @@
 <script>
 const ORDER_DATA = {{ order_details | tojson }};
 
+const STATUS_QUERY_ALIASES = {
+  'booked': 'Booked',
+  'unbooked': 'Un-Booked',
+  'un-booked': 'Un-Booked',
+  'out for delivery': 'Out For Delivery',
+  'ofd': 'Out For Delivery',
+  'being return': 'Being Return',
+  'returned to shipper': 'RETURNED TO SHIPPER',
+  'rts': 'RETURNED TO SHIPPER',
+  'delivered': 'Delivered',
+};
+
 // ── Stats strip ──
 function normalizeStatusBucket(status) {
   const raw = (status || 'Un-Booked').trim();
@@ -518,6 +530,11 @@ function normalizeStatusBucket(status) {
   if (upper === 'UN-BOOKED' || upper === 'UNBOOKED') return 'Un-Booked';
 
   return raw;
+}
+
+function getStatusQueryBucket(query) {
+  const normalized = (query || '').trim().toLowerCase();
+  return STATUS_QUERY_ALIASES[normalized] || '';
 }
 
 function renderStats() {
@@ -556,11 +573,6 @@ function renderStats() {
       <span class="stat-lbl">Out For Del.</span>
     </div>
     <div class="stat">
-      <span class="stat-val" style="color:#1cc88a">${counts['Delivered']||0}</span>
-      <span class="stat-pkr">Rs ${fmt(totals['Delivered']||0)}</span>
-      <span class="stat-lbl">Delivered</span>
-    </div>
-    <div class="stat">
       <span class="stat-val" style="color:#e74a3b">${retCnt}</span>
       <span class="stat-pkr">Rs ${fmt(retAmt)}</span>
       <span class="stat-lbl">Returned</span>
@@ -582,16 +594,21 @@ let rtsCount = 0;
 
 function getVisibleOrders() {
   const q = document.getElementById('orderSearch').value.toLowerCase();
+  const statusQueryBucket = getStatusQueryBucket(q);
+  const effectiveFilter = statusQueryBucket || currentFilter;
   return ORDER_DATA.filter((order) => {
     const status = normalizeStatusBucket(order.status);
     const search = [
       order.order_id || '',
       (order.customer_details || {}).name || '',
       (order.customer_details || {}).city || '',
+      (order.customer_details || {}).phone || '',
+      (order.customer_details || {}).address || '',
+      ...(order.tags || []),
       ...((order.line_items || []).map((item) => `${item.product_title || ''} ${item.tracking_number || ''}`)),
     ].join(' ').toLowerCase();
-    const matchFilter = currentFilter === 'All' || status === currentFilter;
-    const matchSearch = !q || search.includes(q);
+    const matchFilter = effectiveFilter === 'All' || status === effectiveFilter;
+    const matchSearch = !q || (statusQueryBucket ? status === statusQueryBucket : search.includes(q));
     return matchFilter && matchSearch;
   });
 }
@@ -601,13 +618,18 @@ function updateBottomBar() {
   const btnR = document.getElementById('btnReturn');
   const bar  = document.getElementById('bottomBar');
   const visibleOrders = getVisibleOrders();
+  const q = document.getElementById('orderSearch').value.toLowerCase();
+  const statusQueryBucket = getStatusQueryBucket(q);
+  const effectiveFilter = statusQueryBucket || currentFilter;
   ofdCount = visibleOrders.filter(o => normalizeStatusBucket(o.status) === 'Out For Delivery').length;
   rtsCount = visibleOrders.filter(o => normalizeStatusBucket(o.status) === 'RETURNED TO SHIPPER').length;
   document.getElementById('deliverLabel').textContent = `Mark All Delivered (${ofdCount} Orders)`;
   document.getElementById('returnLabel').textContent  = `Mark All Returned (${rtsCount} Orders)`;
-  btnD.style.display = ofdCount > 0 ? 'flex' : 'none';
-  btnR.style.display = rtsCount > 0 ? 'flex' : 'none';
-  bar.classList.toggle('visible', ofdCount > 0 || rtsCount > 0);
+  const showDeliver = effectiveFilter === 'Out For Delivery' && ofdCount > 0;
+  const showReturn = effectiveFilter === 'RETURNED TO SHIPPER' && rtsCount > 0;
+  btnD.style.display = showDeliver ? 'flex' : 'none';
+  btnR.style.display = showReturn ? 'flex' : 'none';
+  bar.classList.toggle('visible', showDeliver || showReturn);
 }
 
 // ── Filter + Search ──
@@ -627,13 +649,16 @@ function filterOrders() {
 }
 
 function applyFilterSearch() {
+  currentFilter = document.querySelector('.fpill.active')?.dataset.filter || 'All';
   const q = document.getElementById('orderSearch').value.toLowerCase();
+  const statusQueryBucket = getStatusQueryBucket(q);
+  const effectiveFilter = statusQueryBucket || currentFilter;
   let visible = 0;
   document.querySelectorAll('#shopifyOrderList .card').forEach(card => {
     const status = normalizeStatusBucket(card.dataset.status || '');
-    const search = `${card.dataset.search || ''} ${status}`.toLowerCase();
-    const matchFilter = currentFilter === 'All' || status === currentFilter;
-    const matchSearch = !q || search.includes(q);
+    const search = `${card.dataset.search || ''}`.toLowerCase();
+    const matchFilter = effectiveFilter === 'All' || status === effectiveFilter;
+    const matchSearch = !q || (statusQueryBucket ? status === statusQueryBucket : search.includes(q));
     const show = matchFilter && matchSearch;
     card.style.display = show ? '' : 'none';
     if (show) visible++;
