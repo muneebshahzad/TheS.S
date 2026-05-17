@@ -522,6 +522,14 @@ def enrich_orders_with_protected_customer_data(orders):
     return orders
 
 
+def sort_orders_newest_first(orders):
+    return sorted(
+        orders or [],
+        key=lambda order: parse_date_for_sort(order.get("created_at")),
+        reverse=True,
+    )
+
+
 async def get_shopify_orders():
     created_at_min = os.getenv("SHOPIFY_CREATED_AT_MIN", "2024-09-01T00:00:00+00:00")
     collected = []
@@ -549,13 +557,13 @@ async def get_shopify_orders():
                 print(f"Error loading next page: {error}")
                 break
 
-    return enrich_orders_with_protected_customer_data(collected)
+    return sort_orders_newest_first(enrich_orders_with_protected_customer_data(collected))
 
 
 def reload_orders():
     global order_details
     try:
-        order_details = asyncio.run(get_shopify_orders())
+        order_details = sort_orders_newest_first(asyncio.run(get_shopify_orders()))
     except Exception as error:
         print(f"Could not reload orders: {error}")
 
@@ -1414,9 +1422,11 @@ def shopify_order_updated():
         for index, existing_order in enumerate(order_details):
             if existing_order.get("id") == updated_order_info.get("id"):
                 order_details[index] = updated_order_info
+                order_details[:] = sort_orders_newest_first(order_details)
                 break
         else:
             order_details.append(updated_order_info)
+            order_details[:] = sort_orders_newest_first(order_details)
         return jsonify({"success": True, "message": f"Order {order_id} processed successfully"})
     except Exception as error:
         print(f"Webhook processing error: {error}")
