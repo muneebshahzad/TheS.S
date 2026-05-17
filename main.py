@@ -1423,8 +1423,7 @@ def shopify_callback():
         return jsonify({"success": False, "error": f"Shopify token exchange failed: {error}"}), 500
 
 
-@app.route("/shopify/webhook/order_updated", methods=["POST"])
-def shopify_order_updated():
+def _handle_shopify_order_webhook():
     global order_details
     try:
         if not verify_shopify_webhook(request):
@@ -1467,6 +1466,16 @@ def shopify_order_updated():
     except Exception as error:
         print(f"Webhook processing error: {error}")
         return jsonify({"success": False, "error": str(error)}), 500
+
+
+@app.route("/shopify/webhook/order_created", methods=["POST"])
+def shopify_order_created():
+    return _handle_shopify_order_webhook()
+
+
+@app.route("/shopify/webhook/order_updated", methods=["POST"])
+def shopify_order_updated():
+    return _handle_shopify_order_webhook()
 
 
 @app.route("/scan", methods=["GET", "POST"])
