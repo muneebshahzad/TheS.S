@@ -611,9 +611,9 @@ function applyFilterSearch() {
   const q = document.getElementById('orderSearch').value.toLowerCase();
   let visible = 0;
   document.querySelectorAll('#shopifyOrderList .card').forEach(card => {
-    const status = card.dataset.status || '';
+    const status = normalizeStatusBucket(card.dataset.status || '');
     const search = card.dataset.search || '';
-    const matchFilter = currentFilter === 'All' || status === currentFilter || status.includes(currentFilter);
+    const matchFilter = currentFilter === 'All' || status === currentFilter;
     const matchSearch = !q || search.toLowerCase().includes(q);
     const show = matchFilter && matchSearch;
     card.style.display = show ? '' : 'none';
