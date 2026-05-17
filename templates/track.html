@@ -299,7 +299,7 @@
 
       <div class="card" id="order-card-{{ order.id }}"
            data-status="{{ s }}"
-           data-search="{{ order.order_id }} {{ name }} {{ city }} {% for i in order.line_items %}{{ i.product_title }} {{ i.tracking_number }} {% endfor %}">
+           data-search="{{ order.order_id }} {{ s }} {{ order.financial_status or 'Pending' }} {{ name }} {{ city }} {{ phone }} {{ addr }} {% for tag in order.tags %}{{ tag }} {% endfor %}{% for i in order.line_items %}{{ i.product_title }} {{ i.tracking_number }} {% endfor %}">
 
         <!-- Header: checkbox | order# | date | status | amount -->
         <div class="card-head">
@@ -611,7 +611,7 @@ function updateBottomBar() {
 }
 
 // ── Filter + Search ──
-let currentFilter = 'All';
+let currentFilter = document.querySelector('.fpill.active')?.dataset.filter || 'All';
 
 function setFilter(btn) {
   document.querySelectorAll('.fpill').forEach(p => p.classList.remove('active'));
@@ -631,9 +631,9 @@ function applyFilterSearch() {
   let visible = 0;
   document.querySelectorAll('#shopifyOrderList .card').forEach(card => {
     const status = normalizeStatusBucket(card.dataset.status || '');
-    const search = card.dataset.search || '';
+    const search = `${card.dataset.search || ''} ${status}`.toLowerCase();
     const matchFilter = currentFilter === 'All' || status === currentFilter;
-    const matchSearch = !q || search.toLowerCase().includes(q);
+    const matchSearch = !q || search.includes(q);
     const show = matchFilter && matchSearch;
     card.style.display = show ? '' : 'none';
     if (show) visible++;
