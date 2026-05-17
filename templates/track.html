@@ -577,13 +577,32 @@ function renderStats() {
 }
 
 // ── Bottom bar ──
-let ofdCount = ORDER_DATA.filter(o => normalizeStatusBucket(o.status) === 'Out For Delivery').length;
-let rtsCount = ORDER_DATA.filter(o => normalizeStatusBucket(o.status) === 'RETURNED TO SHIPPER').length;
+let ofdCount = 0;
+let rtsCount = 0;
+
+function getVisibleOrders() {
+  const q = document.getElementById('orderSearch').value.toLowerCase();
+  return ORDER_DATA.filter((order) => {
+    const status = normalizeStatusBucket(order.status);
+    const search = [
+      order.order_id || '',
+      (order.customer_details || {}).name || '',
+      (order.customer_details || {}).city || '',
+      ...((order.line_items || []).map((item) => `${item.product_title || ''} ${item.tracking_number || ''}`)),
+    ].join(' ').toLowerCase();
+    const matchFilter = currentFilter === 'All' || status === currentFilter;
+    const matchSearch = !q || search.includes(q);
+    return matchFilter && matchSearch;
+  });
+}
 
 function updateBottomBar() {
   const btnD = document.getElementById('btnDeliver');
   const btnR = document.getElementById('btnReturn');
   const bar  = document.getElementById('bottomBar');
+  const visibleOrders = getVisibleOrders();
+  ofdCount = visibleOrders.filter(o => normalizeStatusBucket(o.status) === 'Out For Delivery').length;
+  rtsCount = visibleOrders.filter(o => normalizeStatusBucket(o.status) === 'RETURNED TO SHIPPER').length;
   document.getElementById('deliverLabel').textContent = `Mark All Delivered (${ofdCount} Orders)`;
   document.getElementById('returnLabel').textContent  = `Mark All Returned (${rtsCount} Orders)`;
   btnD.style.display = ofdCount > 0 ? 'flex' : 'none';
@@ -620,6 +639,7 @@ function applyFilterSearch() {
     if (show) visible++;
   });
   document.getElementById('shopifyCount').textContent = visible;
+  updateBottomBar();
 }
 
 // ── Mark single order ──
@@ -717,7 +737,7 @@ async function bulkMark(tag) {
 async function applyDeliveredToAll() {
   const btn = document.getElementById('btnDeliver');
   const lbl = document.getElementById('deliverLabel');
-  const toDeliver = ORDER_DATA.filter(o => o.status === 'Out For Delivery');
+  const toDeliver = getVisibleOrders().filter(o => normalizeStatusBucket(o.status) === 'Out For Delivery');
   if (!toDeliver.length) return;
   btn.disabled = true;
   for (let i = 0; i < toDeliver.length; i++) {
@@ -728,7 +748,6 @@ async function applyDeliveredToAll() {
     await new Promise(r => setTimeout(r, 600));
   }
   showToast(`Applied "Delivered" to ${toDeliver.length} orders`);
-  ofdCount = 0;
   updateBottomBar();
   btn.disabled = false;
 }
@@ -737,7 +756,7 @@ async function applyDeliveredToAll() {
 async function applyReturnedToAll() {
   const btn = document.getElementById('btnReturn');
   const lbl = document.getElementById('returnLabel');
-  const toReturn = ORDER_DATA.filter(o => o.status === 'RETURNED TO SHIPPER');
+  const toReturn = getVisibleOrders().filter(o => normalizeStatusBucket(o.status) === 'RETURNED TO SHIPPER');
   if (!toReturn.length) return;
   btn.disabled = true;
   for (let i = 0; i < toReturn.length; i++) {
@@ -748,7 +767,6 @@ async function applyReturnedToAll() {
     await new Promise(r => setTimeout(r, 600));
   }
   showToast(`Applied "Returned" to ${toReturn.length} orders`);
-  rtsCount = 0;
   updateBottomBar();
   btn.disabled = false;
 }
