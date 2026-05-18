@@ -10,7 +10,7 @@
   .stats-grid { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; }
   .section-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; align-items:start; }
   .summary-list, .order-list { display:flex; flex-direction:column; gap:10px; }
-  .summary-row { display:grid; grid-template-columns:56px 1fr auto; gap:12px; align-items:center; padding:10px 12px; border:1px solid #e3e6f0; border-radius:10px; background:#fff; }
+  .summary-row { display:grid; grid-template-columns:56px 1fr auto auto; gap:12px; align-items:center; padding:10px 12px; border:1px solid #e3e6f0; border-radius:10px; background:#fff; }
   .summary-thumb { width:56px; height:56px; border-radius:10px; overflow:hidden; background:#f2f4f8; display:flex; align-items:center; justify-content:center; }
   .summary-thumb img { width:100%; height:100%; object-fit:cover; }
   .summary-title { font-size:13px; font-weight:700; color:#2d2e36; margin-bottom:4px; }
@@ -23,11 +23,28 @@
   .order-tags { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
   .order-body { border-top:1px solid #eef0f6; padding:12px 14px; display:grid; grid-template-columns:1.1fr .9fr; gap:14px; }
   .order-items { display:flex; flex-direction:column; gap:8px; }
-  .item-row { display:grid; grid-template-columns:44px 1fr auto; gap:10px; align-items:center; padding:8px 10px; border:1px solid #e8eaef; border-radius:9px; background:#f8f9fc; }
+  .item-row { display:grid; grid-template-columns:44px 1fr auto auto; gap:10px; align-items:center; padding:8px 10px; border:1px solid #e8eaef; border-radius:9px; background:#f8f9fc; }
   .item-row img { width:44px; height:44px; border-radius:8px; object-fit:cover; }
   .item-title { font-size:12px; font-weight:600; color:#2d2e36; }
   .item-meta { font-size:10px; color:#858796; margin-top:2px; }
   .item-qty { font-size:11px; font-weight:700; color:#4e73df; white-space:nowrap; }
+  .quick-add-btn { width:34px; height:34px; border-radius:10px; border:1px solid #d7dceb; background:#fff; color:#4e73df; font-size:20px; line-height:1; font-weight:700; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all .15s; }
+  .quick-add-btn:hover { background:#eef3ff; border-color:#b8c7f0; }
+  .vendor-panel { padding:14px 16px; display:flex; flex-direction:column; gap:12px; min-height:420px; }
+  .vendor-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .vendor-count { display:inline-flex; align-items:center; justify-content:center; min-width:24px; height:24px; padding:0 8px; border-radius:999px; background:#eef3ff; color:#4e73df; font-size:11px; font-weight:700; }
+  .vendor-clear { border:none; background:none; color:#858796; font-size:11px; font-weight:700; cursor:pointer; padding:0; }
+  .vendor-list { display:flex; flex-direction:column; gap:10px; }
+  .vendor-item { border:1px solid #e3e6f0; border-radius:12px; background:#fff; padding:12px; display:grid; grid-template-columns:52px 1fr auto; gap:10px; align-items:start; }
+  .vendor-thumb { width:52px; height:52px; border-radius:10px; overflow:hidden; background:#f2f4f8; display:flex; align-items:center; justify-content:center; }
+  .vendor-thumb img { width:100%; height:100%; object-fit:cover; }
+  .vendor-fields { display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .vendor-input { width:100%; border:1px solid #dce2ee; border-radius:9px; padding:8px 10px; font-size:12px; font-family:'DM Sans', sans-serif; color:#2d2e36; background:#fff; }
+  .vendor-qty-wrap { display:flex; align-items:center; gap:8px; }
+  .vendor-qty-label { font-size:10px; color:#858796; font-weight:700; letter-spacing:.05em; text-transform:uppercase; }
+  .vendor-remove { width:30px; height:30px; border-radius:9px; border:1px solid #f1d0cb; background:#fff4f2; color:#c0392b; font-size:16px; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .vendor-empty { flex:1; border:1px dashed #d6dbea; border-radius:14px; background:#fafbfe; color:#858796; font-size:13px; display:flex; align-items:center; justify-content:center; text-align:center; padding:20px; min-height:220px; }
+  .vendor-note { font-size:11px; color:#858796; line-height:1.5; }
   .order-side { display:flex; flex-direction:column; gap:10px; }
   .mini-block { padding:10px 12px; border:1px solid #e8eaef; border-radius:10px; background:#fff; }
   .mini-label { font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#858796; margin-bottom:6px; }
@@ -42,8 +59,11 @@
     .pending-topbar { padding:0 14px; }
     .pending-scroll { padding:12px; }
     .stats-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
-    .summary-row { grid-template-columns:48px 1fr auto; gap:10px; }
+    .summary-row { grid-template-columns:48px 1fr auto auto; gap:10px; }
     .summary-thumb { width:48px; height:48px; }
+    .item-row { grid-template-columns:44px 1fr auto auto; }
+    .vendor-item { grid-template-columns:48px 1fr; }
+    .vendor-remove { grid-column: 1 / -1; justify-self:end; }
   }
 </style>
 
@@ -83,6 +103,16 @@
               </div>
             </div>
             <div class="summary-qty">{{ item.quantity }}</div>
+            <button
+              class="quick-add-btn"
+              type="button"
+              data-key="{{ item.item_title ~ '|' ~ (item.item_image or '') }}"
+              data-title="{{ item.item_title }}"
+              data-quantity="{{ item.quantity|int }}"
+              data-image="{{ item.item_image or '' }}"
+              onclick="addVendorItemFromButton(this)"
+              title="Add to vendor list"
+            >+</button>
           </div>
           {% else %}
           <div class="empty-state">No pending items right now.</div>
@@ -92,16 +122,22 @@
 
       <div class="section-card">
         <div class="section-header">
-          <span style="font-size:14px;font-weight:700;color:#3a3b45;">Operational Notes</span>
+          <span style="font-size:14px;font-weight:700;color:#3a3b45;">Vendor List</span>
         </div>
-        <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;">
-          <div class="mini-block">
-            <div class="mini-label">What this page is for</div>
-            <div class="mini-value">Use this to see which products are stacking up across open Shopify orders and which pending orders are contributing to that demand.</div>
+        <div class="vendor-panel">
+          <div class="vendor-top">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:13px;font-weight:700;color:#3a3b45;">Selected items</span>
+              <span class="vendor-count" id="vendorCount">0</span>
+            </div>
+            <button class="vendor-clear" type="button" onclick="clearVendorList()">Clear all</button>
           </div>
-          <div class="mini-block">
-            <div class="mini-label">Fastest next steps</div>
-            <div class="mini-value">Open the employee orders queue for packing/manufacturing status, or refresh the dashboard after booking and fulfillment updates from Shopify.</div>
+          <div class="vendor-list" id="vendorList"></div>
+          <div class="vendor-empty" id="vendorEmpty">
+            Click the <strong style="margin:0 4px;">+</strong> beside any item to build your vendor list here.
+          </div>
+          <div class="vendor-note">
+            This list is only for you in this browser. You can rename products, tweak quantities, and it will stay after refresh.
           </div>
         </div>
       </div>
@@ -147,6 +183,16 @@
                   </div>
                 </div>
                 <div class="item-qty">x{{ item.quantity }}</div>
+                <button
+                  class="quick-add-btn"
+                  type="button"
+                  data-key="{{ order.order_id ~ '|' ~ item.item_title ~ '|' ~ (item.tracking_number or '') ~ '|' ~ loop.index0 }}"
+                  data-title="{{ item.item_title }}"
+                  data-quantity="{{ item.quantity|int }}"
+                  data-image="{{ item.item_image or '' }}"
+                  onclick="addVendorItemFromButton(this)"
+                  title="Add to vendor list"
+                >+</button>
               </div>
               {% endfor %}
             </div>
@@ -181,4 +227,129 @@
     </div>
   </div>
 </div>
+
+<script>
+  const vendorStorageKey = 'sleekspace_vendor_list_v1';
+  let vendorItems = [];
+
+  function loadVendorItems() {
+    try {
+      vendorItems = JSON.parse(localStorage.getItem(vendorStorageKey) || '[]');
+      if (!Array.isArray(vendorItems)) vendorItems = [];
+    } catch (error) {
+      vendorItems = [];
+    }
+  }
+
+  function saveVendorItems() {
+    localStorage.setItem(vendorStorageKey, JSON.stringify(vendorItems));
+  }
+
+  function addVendorItem(item) {
+    const normalizedKey = String(item.key || item.title || '').trim();
+    const existing = vendorItems.find((entry) => entry.key === normalizedKey);
+    if (existing) {
+      existing.quantity = Number(existing.quantity || 0) + Number(item.quantity || 1);
+    } else {
+      vendorItems.push({
+        key: normalizedKey,
+        title: String(item.title || 'Vendor item'),
+        quantity: Number(item.quantity || 1),
+        image: String(item.image || ''),
+      });
+    }
+    saveVendorItems();
+    renderVendorItems();
+  }
+
+  function addVendorItemFromButton(button) {
+    addVendorItem({
+      key: button.dataset.key || button.dataset.title || '',
+      title: button.dataset.title || 'Vendor item',
+      quantity: Number(button.dataset.quantity || 1),
+      image: button.dataset.image || '',
+    });
+  }
+
+  function updateVendorTitle(index, value) {
+    if (!vendorItems[index]) return;
+    vendorItems[index].title = value;
+    saveVendorItems();
+  }
+
+  function updateVendorQuantity(index, value) {
+    if (!vendorItems[index]) return;
+    const parsed = Math.max(1, parseInt(value || '1', 10) || 1);
+    vendorItems[index].quantity = parsed;
+    saveVendorItems();
+    renderVendorItems();
+  }
+
+  function removeVendorItem(index) {
+    vendorItems.splice(index, 1);
+    saveVendorItems();
+    renderVendorItems();
+  }
+
+  function clearVendorList() {
+    vendorItems = [];
+    saveVendorItems();
+    renderVendorItems();
+  }
+
+  function renderVendorItems() {
+    const list = document.getElementById('vendorList');
+    const empty = document.getElementById('vendorEmpty');
+    const count = document.getElementById('vendorCount');
+    if (!list || !empty || !count) return;
+
+    count.textContent = vendorItems.length;
+    if (!vendorItems.length) {
+      list.innerHTML = '';
+      empty.style.display = 'flex';
+      return;
+    }
+
+    empty.style.display = 'none';
+    list.innerHTML = vendorItems.map((item, index) => `
+      <div class="vendor-item">
+        <div class="vendor-thumb">${item.image ? `<img src="${item.image}" alt="">` : '📦'}</div>
+        <div class="vendor-fields">
+          <input
+            class="vendor-input"
+            type="text"
+            value="${escapeHtml(item.title || '')}"
+            oninput="updateVendorTitle(${index}, this.value)"
+            placeholder="Product name"
+          />
+          <div class="vendor-qty-wrap">
+            <span class="vendor-qty-label">Qty</span>
+            <input
+              class="vendor-input"
+              style="max-width:90px;"
+              type="number"
+              min="1"
+              step="1"
+              value="${Number(item.quantity || 1)}"
+              oninput="updateVendorQuantity(${index}, this.value)"
+            />
+          </div>
+        </div>
+        <button class="vendor-remove" type="button" onclick="removeVendorItem(${index})">×</button>
+      </div>
+    `).join('');
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  loadVendorItems();
+  renderVendorItems();
+</script>
 {% endblock %}
