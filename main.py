@@ -110,11 +110,9 @@ def normalize_status_bucket(status):
 def should_keep_order_in_active_list(order_info, order=None):
     if not order_info:
         return False
-    if order is not None:
-        if getattr(order, "cancelled_at", None) or getattr(order, "closed_at", None):
-            return False
-    normalized_status = normalize_status_bucket(order_info.get("status"))
-    if normalized_status in {"Delivered", "Cancelled"}:
+    if order is not None and (getattr(order, "cancelled_at", None) or getattr(order, "closed_at", None)):
+        return False
+    if order_info.get("cancelled_at") or order_info.get("closed_at"):
         return False
     return True
 
@@ -508,6 +506,8 @@ async def process_order(session_obj, order):
         "customer_details": customer_details,
         "tags": [tag for tag in (getattr(order, "tags", "") or "").split(", ") if tag],
         "id": getattr(order, "id", None),
+        "cancelled_at": getattr(order, "cancelled_at", None),
+        "closed_at": getattr(order, "closed_at", None),
     }
 
     tasks = [process_line_item(session_obj, line_item, getattr(order, "fulfillments", [])) for line_item in getattr(order, "line_items", [])]
@@ -597,34 +597,71 @@ def sort_orders_newest_first(orders):
     )
 
 
-async def get_shopify_orders():
-    created_at_min = os.getenv("SHOPIFY_CREATED_AT_MIN", "2024-09-01T00:00:00+00:00")
+def get_shopify_created_at_min():
+    raw_value = (os.getenv("SHOPIFY_CREATED_AT_MIN") or "2024-09-01T00:00:00+00:00").strip()
+    try:
+        return datetime.fromisoformat(raw_value.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        print(f"Invalid SHOPIFY_CREATED_AT_MIN '{raw_value}', using 2024-09-01T00:00:00+00:00.")
+        return "2024-09-01T00:00:00+00:00"
+
+
+def get_shopify_fetch_status():
+    return (os.getenv("SHOPIFY_ORDER_FETCH_STATUS") or "any").strip().lower() or "any"
+
+
+def fetch_all_shopify_orders(created_at_min, fetch_status):
     collected = []
 
     try:
-        orders = shopify.Order.find(limit=250, order="created_at DESC", created_at_min=created_at_min, status="open")
+        orders = shopify.Order.find(
+            limit=250,
+            order="created_at DESC",
+            created_at_min=created_at_min,
+            status=fetch_status,
+        )
     except Exception as error:
         print(f"Error fetching Shopify orders: {error}")
         return None
 
-    async with aiohttp.ClientSession() as session_obj:
-        while True:
-            tasks = [limited_request(process_order(session_obj, order)) for order in orders]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    print(f"Error processing Shopify order: {result}")
-                    continue
-                if not should_keep_order_in_active_list(result):
-                    continue
-                collected.append(result)
-            try:
-                if not orders.has_next_page():
-                    break
-                orders = orders.next_page()
-            except Exception as error:
-                print(f"Error loading next page: {error}")
+    page_count = 0
+    while True:
+        page_orders = list(orders)
+        page_count += 1
+        collected.extend(page_orders)
+        try:
+            if not orders.has_next_page():
                 break
+            orders = orders.next_page()
+        except Exception as error:
+            print(f"Error loading next page: {error}")
+            break
+
+    print(
+        f"Fetched {len(collected)} Shopify orders across {page_count} page(s) "
+        f"with status={fetch_status}, created_at_min={created_at_min}."
+    )
+    return collected
+
+
+async def get_shopify_orders(force_status=None):
+    created_at_min = get_shopify_created_at_min()
+    fetch_status = (force_status or get_shopify_fetch_status() or "any").strip().lower() or "any"
+    fetched_orders = fetch_all_shopify_orders(created_at_min, fetch_status)
+    if fetched_orders is None:
+        return None
+
+    collected = []
+    async with aiohttp.ClientSession() as session_obj:
+        tasks = [limited_request(process_order(session_obj, order)) for order in fetched_orders]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                print(f"Error processing Shopify order: {result}")
+                continue
+            if not should_keep_order_in_active_list(result):
+                continue
+            collected.append(result)
 
     return sort_orders_newest_first(enrich_orders_with_protected_customer_data(collected))
 
@@ -633,7 +670,7 @@ def reload_orders():
     global order_details
     try:
         setup_shopify()
-        fetched_orders = asyncio.run(get_shopify_orders())
+        fetched_orders = asyncio.run(get_shopify_orders(force_status="any"))
         if fetched_orders is None:
             print("Keeping existing order cache because Shopify fetch failed.")
             return False
