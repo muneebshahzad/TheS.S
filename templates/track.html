@@ -92,6 +92,7 @@
   .sb-booked    { background: #ddeeff; color: #1a6bbd; }
   .sb-unbooked  { background: #ececec; color: #666; }
   .sb-delivered { background: #d9f7eb; color: #0e7a53; }
+  .sb-partial   { background: #fff3cd; color: #8b5a00; }
   .sb-ofd       { background: #fff3cd; color: #7a5c00; }
   .sb-return    { background: #fde8e6; color: #c0392b; }
 
@@ -294,6 +295,7 @@
       {% if s == 'Booked' %}{% set badge_cls = 'sb-booked' %}{% set dot_col = '#4e73df' %}
       {% elif s == 'Un-Booked' %}{% set badge_cls = 'sb-unbooked' %}{% set dot_col = '#aaa' %}
       {% elif s == 'Delivered' %}{% set badge_cls = 'sb-delivered' %}{% set dot_col = '#1cc88a' %}
+      {% elif s == 'Partially Delivered' %}{% set badge_cls = 'sb-partial' %}{% set dot_col = '#f6c23e' %}
       {% elif s == 'Out For Delivery' %}{% set badge_cls = 'sb-ofd' %}{% set dot_col = '#f6c23e' %}
       {% else %}{% set badge_cls = 'sb-return' %}{% set dot_col = '#e74a3b' %}{% endif %}
 
@@ -509,6 +511,8 @@ const STATUS_QUERY_ALIASES = {
   'booked': 'Booked',
   'unbooked': 'Un-Booked',
   'un-booked': 'Un-Booked',
+  'partially delivered': 'Partially Delivered',
+  'partial': 'Partially Delivered',
   'out for delivery': 'Out For Delivery',
   'ofd': 'Out For Delivery',
   'being return': 'Being Return',
@@ -522,6 +526,7 @@ function normalizeStatusBucket(status) {
   const raw = (status || 'Un-Booked').trim();
   const upper = raw.toUpperCase();
 
+  if (upper.includes('PARTIALLY DELIVERED')) return 'Partially Delivered';
   if (upper.includes('DELIVERED')) return 'Delivered';
   if (upper.includes('OUT FOR DELIVERY')) return 'Out For Delivery';
   if (upper.includes('RETURNED TO SHIPPER')) return 'RETURNED TO SHIPPER';

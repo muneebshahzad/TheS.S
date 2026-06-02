@@ -27,7 +27,14 @@ from flask import (
 )
 from markupsafe import Markup
 
-from db import delete_order_status, init_db, load_order_statuses, upsert_order_status
+from db import (
+    delete_order_status,
+    get_app_setting,
+    init_db,
+    load_order_statuses,
+    set_app_setting,
+    upsert_order_status,
+)
 from shopify_protected_data import (
     create_oauth_state,
     exchange_oauth_code_for_token,
@@ -57,6 +64,7 @@ product_image_cache = {}
 semaphore = asyncio.Semaphore(2)
 RATE_LIMIT = 2
 LAST_REQUEST_TIME = 0.0
+PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
 
 _TAG_STYLES = {
     "Call Courier": "background:#ede7f6;color:#4527a0",
@@ -92,6 +100,8 @@ def is_undelivered_status(status):
 def normalize_status_bucket(status):
     raw = (status or "Un-Booked").strip()
     upper = raw.upper()
+    if "PARTIALLY DELIVERED" in upper:
+        return "Partially Delivered"
     if "DELIVERED" in upper:
         return "Delivered"
     if "OUT FOR DELIVERY" in upper:
@@ -149,6 +159,56 @@ def parse_date_for_sort(value):
     return datetime.min
 
 
+def load_product_cost_overrides():
+    raw = get_app_setting(PRODUCT_COSTS_SETTING_KEY, "{}")
+    try:
+        data = json.loads(raw or "{}")
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_product_cost_overrides(overrides):
+    return set_app_setting(PRODUCT_COSTS_SETTING_KEY, json.dumps(overrides or {}))
+
+
+def product_cost_key(product_id=None, variant_id=None, title=""):
+    if variant_id:
+        return f"variant:{variant_id}"
+    if product_id:
+        return f"product:{product_id}"
+    return f"title:{str(title or '').strip().lower()}"
+
+
+def get_cost_override_for_item(overrides, product_id=None, variant_id=None, title=""):
+    for key in (
+        product_cost_key(product_id=product_id, variant_id=variant_id, title=title),
+        product_cost_key(product_id=product_id, title=title),
+        product_cost_key(title=title),
+    ):
+        entry = overrides.get(key)
+        if isinstance(entry, dict):
+            return parse_money(entry.get("cost", 0))
+    return 0.0
+
+
+def set_cost_override(overrides, *, product_id=None, variant_id=None, title="", price=None, cost=None):
+    key = product_cost_key(product_id=product_id, variant_id=variant_id, title=title)
+    payload = overrides.get(key, {}) if isinstance(overrides.get(key), dict) else {}
+    payload.update(
+        {
+            "product_id": product_id,
+            "variant_id": variant_id,
+            "title": title,
+            "price": parse_money(price, 0) if price is not None else parse_money(payload.get("price", 0)),
+            "cost": parse_money(cost, 0) if cost is not None else parse_money(payload.get("cost", 0)),
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+    )
+    overrides[key] = payload
+    return overrides
+
+
 @app.template_filter("parse_date")
 def parse_date_filter(value):
     return parse_date_for_sort(value)
@@ -171,7 +231,9 @@ def tag_style(label):
 def status_badge(status):
     status = status or ""
     upper = status.upper()
-    if "DELIVERED" in upper:
+    if "PARTIALLY DELIVERED" in upper:
+        bg, color, dot = "#fff0d9", "#8b5a00", "#f6c23e"
+    elif "DELIVERED" in upper:
         bg, color, dot = "#d4f5e9", "#0f6848", "#1cc88a"
     elif "RETURN" in upper or "CANCEL" in upper:
         bg, color, dot = "#fce8e6", "#8b1a10", "#e74a3b"
@@ -194,6 +256,59 @@ def status_badge(status):
         f'<span style="width:6px;height:6px;border-radius:50%;background:{dot};flex-shrink:0;"></span>'
         f'{status or "—"}</span>'
     )
+
+
+PENDING_LINE_ITEM_STATUSES = {
+    "Booked",
+    "Un-Booked",
+    "Out For Delivery",
+    "Drop Off at Express Center",
+    "CONSIGNMENT BOOKED",
+    "Picked From Shipper",
+    "Call Not Attended",
+    "Delay",
+    "Hold",
+    "Untraceable",
+    "Attempt to deliver",
+    "Ready To Ship",
+    "Packed by seller / warehouse",
+}
+
+PAID_FINANCIAL_STATUSES = {"paid", "partially paid", "partially_paid", "partially-paid"}
+
+
+def is_pending_line_item_status(status):
+    normalized = normalize_status_bucket(status)
+    if normalized == "Delivered":
+        return False
+    if normalized in {"RETURNED TO SHIPPER", "Being Return"}:
+        return False
+    return normalized in PENDING_LINE_ITEM_STATUSES or normalized not in {"Delivered", "RETURNED TO SHIPPER", "Being Return"}
+
+
+def aggregate_order_status(line_items):
+    if not line_items:
+        return "Un-Booked"
+
+    normalized_statuses = [normalize_status_bucket(item.get("status")) for item in line_items]
+    delivered_count = sum(1 for status in normalized_statuses if status == "Delivered")
+    pending_statuses = [status for status in normalized_statuses if is_pending_line_item_status(status)]
+
+    if delivered_count and pending_statuses:
+        return "Partially Delivered"
+    if delivered_count and delivered_count == len(normalized_statuses):
+        return "Delivered"
+    if any(status == "Out For Delivery" for status in normalized_statuses):
+        return "Out For Delivery"
+    if any(status == "RETURNED TO SHIPPER" for status in normalized_statuses):
+        return "RETURNED TO SHIPPER"
+    if any(status == "Being Return" for status in normalized_statuses):
+        return "Being Return"
+    if any(status == "Booked" for status in normalized_statuses):
+        return "Booked"
+    if any(status == "Un-Booked" for status in normalized_statuses):
+        return "Un-Booked"
+    return normalized_statuses[-1] if normalized_statuses else "Un-Booked"
 
 
 @app.context_processor
@@ -466,6 +581,7 @@ async def process_line_item(session_obj, line_item, fulfillments):
 
 async def process_order(session_obj, order):
     global LAST_REQUEST_TIME
+    cost_overrides = load_product_cost_overrides()
 
     elapsed_time = time.time() - LAST_REQUEST_TIME
     if elapsed_time < 1 / RATE_LIMIT:
@@ -529,18 +645,29 @@ async def process_order(session_obj, order):
         base_title = getattr(line_item, "title", "") or "Product"
         product_title = base_title if not variant_name else f"{base_title} - {variant_name}"
         unit_price = parse_money(getattr(line_item, "price", 0))
+        unit_cost = get_cost_override_for_item(
+            cost_overrides,
+            product_id=getattr(line_item, "product_id", None),
+            variant_id=getattr(line_item, "variant_id", None),
+            title=product_title,
+        )
 
         for info in tracking_info_list:
             quantity = int(info["quantity"] or 0)
             line_total = round(unit_price * quantity, 2)
+            line_cost_total = round(unit_cost * quantity, 2)
             order_info["line_items"].append(
                 {
                     "fulfillment_status": getattr(line_item, "fulfillment_status", None),
                     "image_src": image_src,
                     "product_title": product_title,
+                    "product_id": getattr(line_item, "product_id", None),
+                    "variant_id": getattr(line_item, "variant_id", None),
                     "quantity": quantity,
                     "unit_price": unit_price,
+                    "unit_cost": unit_cost,
                     "line_total": line_total,
+                    "line_cost_total": line_cost_total,
                     "tracking_number": info["tracking_number"],
                     "status": info["status"],
                     "name": info.get("name", ""),
@@ -549,10 +676,7 @@ async def process_order(session_obj, order):
                     "phone": info.get("phone", ""),
                 }
             )
-            order_info["status"] = info["status"]
-
-    if not order_info["line_items"]:
-        order_info["status"] = "Un-Booked"
+    order_info["status"] = aggregate_order_status(order_info["line_items"])
 
     return order_info
 
@@ -737,33 +861,42 @@ def build_pending_orders_mobile_data():
         if any(tag.startswith("Dispatched") for tag in shopify_order.get("tags", [])):
             continue
         order_status = shopify_order.get("status", "")
-        if order_status not in {"Booked", "Un-Booked", "Drop Off at Express Center", "CONSIGNMENT BOOKED"}:
-            continue
         filtered_tags = [tag.strip() for tag in shopify_order.get("tags", []) if tag and tag.strip() != "Leopards Courier"]
         customer_city = ((shopify_order.get("customer_details") or {}).get("city") or "").strip()
         items = []
         for item in shopify_order.get("line_items", []):
+            item_status = normalize_status_bucket(item.get("status", ""))
+            if not is_pending_line_item_status(item_status):
+                continue
             track_num = item.get("tracking_number", "N/A")
             key = f"{shopify_order['order_id']}:{track_num}"
             items.append(
                 {
                     "item_image": item.get("image_src", ""),
                     "item_title": item.get("product_title", ""),
+                    "product_id": item.get("product_id"),
+                    "variant_id": item.get("variant_id"),
                     "quantity": item.get("quantity", 0),
                     "unit_price": item.get("unit_price", 0),
+                    "unit_cost": item.get("unit_cost", 0),
                     "line_total": item.get("line_total", 0),
+                    "line_cost_total": item.get("line_cost_total", 0),
                     "tracking_number": track_num,
-                    "status": item.get("status", ""),
+                    "status": item_status,
                     "applied_status": statuses.get(key, ""),
                 }
             )
+        if not items:
+            continue
+        pending_total_price = round(sum(parse_money(item.get("line_total", 0)) for item in items), 2)
+        pending_total_cost = round(sum(parse_money(item.get("line_cost_total", 0)) for item in items), 2)
         all_orders.append(
             {
                 "order_via": "Shopify",
                 "shopify_id": shopify_order.get("id"),
                 "order_link": shopify_order.get("order_link"),
                 "order_id": shopify_order.get("order_id"),
-                "status": "Booked" if order_status == "CONSIGNMENT BOOKED" else order_status,
+                "status": normalize_status_bucket(order_status),
                 "tags": filtered_tags,
                 "customer_name": (shopify_order.get("customer_details") or {}).get("name", ""),
                 "customer_phone": (shopify_order.get("customer_details") or {}).get("phone", ""),
@@ -772,10 +905,13 @@ def build_pending_orders_mobile_data():
                 "is_lahore": is_lahore_city(customer_city),
                 "date": shopify_order.get("created_at", ""),
                 "items_list": items,
+                "financial_status": shopify_order.get("financial_status", ""),
                 "subtotal_price": shopify_order.get("subtotal_price", 0),
                 "shipping_charges": shopify_order.get("shipping_charges", 0),
                 "total_discounts": shopify_order.get("total_discounts", 0),
                 "total_price": shopify_order.get("total_price", 0),
+                "pending_total_price": pending_total_price,
+                "pending_total_cost": pending_total_cost,
             }
         )
 
@@ -786,8 +922,19 @@ def build_pending_orders_mobile_data():
 def build_pending_items_table_data():
     pending_items = {}
     all_orders = []
+    paid_pending_value = 0.0
+    unpaid_pending_value = 0.0
+    total_items_cost = 0.0
     for order in build_pending_orders_mobile_data():
         all_orders.append(order)
+        financial_status = str(order.get("financial_status", "") or "").strip().lower()
+        pending_value = parse_money(order.get("pending_total_price", 0))
+        pending_cost = parse_money(order.get("pending_total_cost", 0))
+        total_items_cost += pending_cost
+        if financial_status in PAID_FINANCIAL_STATUSES:
+            paid_pending_value += pending_value
+        else:
+            unpaid_pending_value += pending_value
         for item in order.get("items_list", []):
             product_title = item["item_title"]
             quantity = int(item.get("quantity") or 0)
@@ -797,14 +944,30 @@ def build_pending_items_table_data():
                 pending_items[key] = {
                     "item_image": item_image,
                     "item_title": product_title,
+                    "product_id": item.get("product_id"),
+                    "variant_id": item.get("variant_id"),
+                    "unit_price": parse_money(item.get("unit_price", 0)),
+                    "unit_cost": parse_money(item.get("unit_cost", 0)),
                     "quantity": 0,
+                    "total_price": 0.0,
+                    "total_cost": 0.0,
                     "statuses": {},
                 }
             pending_items[key]["quantity"] += quantity
+            pending_items[key]["total_price"] += parse_money(item.get("line_total", 0))
+            pending_items[key]["total_cost"] += parse_money(item.get("line_cost_total", 0))
             status = item.get("status", "")
             pending_items[key]["statuses"][status] = pending_items[key]["statuses"].get(status, 0) + quantity
     pending_items_sorted = sorted(pending_items.values(), key=lambda item: item["quantity"], reverse=True)
-    return all_orders, pending_items_sorted, len(pending_items_sorted) // 2
+    for item in pending_items_sorted:
+        item["total_price"] = round(parse_money(item.get("total_price", 0)), 2)
+        item["total_cost"] = round(parse_money(item.get("total_cost", 0)), 2)
+    summary = {
+        "paid_pending_value": round(paid_pending_value, 2),
+        "unpaid_pending_value": round(unpaid_pending_value, 2),
+        "total_items_cost": round(total_items_cost, 2),
+    }
+    return all_orders, pending_items_sorted, summary
 
 
 def build_employee_approval_items():
@@ -1047,6 +1210,7 @@ def format_employee_order_note(payment_method, delivery_method, customer_phone, 
 
 
 def get_active_shopify_products(limit=120):
+    cost_overrides = load_product_cost_overrides()
     try:
         products = shopify.Product.find(limit=limit, published_status="published")
     except Exception as error:
@@ -1088,11 +1252,36 @@ def get_active_shopify_products(limit=120):
                     "product_title": getattr(product, "title", ""),
                     "variant_title": variant_title,
                     "price": float(getattr(variant, "price", 0) or 0),
+                    "cost": get_cost_override_for_item(
+                        cost_overrides,
+                        product_id=getattr(product, "id", None),
+                        variant_id=getattr(variant, "id", None),
+                        title=display_title,
+                    ),
                     "image": variant_image,
                     "sku": getattr(variant, "sku", "") or "",
                 }
             )
     return results
+
+
+def build_product_cost_rows(limit=200):
+    rows = []
+    for product in get_active_shopify_products(limit=limit):
+        rows.append(
+            {
+                "product_id": product.get("product_id"),
+                "variant_id": product.get("variant_id"),
+                "title": product.get("title", ""),
+                "product_title": product.get("product_title", ""),
+                "variant_title": product.get("variant_title", ""),
+                "sku": product.get("sku", ""),
+                "image": product.get("image", ""),
+                "price": parse_money(product.get("price", 0)),
+                "cost": parse_money(product.get("cost", 0)),
+            }
+        )
+    return sorted(rows, key=lambda row: str(row.get("title", "")).lower())
 
 
 def build_employee_invoice_payload(order_name, customer_name, phone, city, address, payment_method, delivery_method, catalog_items, custom_items, discount_amount, delivery_charges, advance_amount):
@@ -1451,8 +1640,52 @@ def display_tracking(tracking_num):
 
 @app.route("/pending")
 def pending_orders():
-    all_orders, pending_items, half = build_pending_items_table_data()
-    return render_template("pending.html", all_orders=all_orders, pending_items=pending_items, half=half)
+    all_orders, pending_items, summary = build_pending_items_table_data()
+    return render_template("pending.html", all_orders=all_orders, pending_items=pending_items, summary=summary)
+
+
+@app.route("/product-costs")
+def product_costs():
+    return render_template("product_costs.html", products=build_product_cost_rows())
+
+
+@app.route("/product-costs/update", methods=["POST"])
+def update_product_costs():
+    data = request.get_json() or {}
+    product_id = data.get("product_id")
+    variant_id = data.get("variant_id")
+    title = (data.get("title") or "").strip()
+    submitted_price = parse_money(data.get("price", 0))
+    original_price = parse_money(data.get("original_price", submitted_price))
+    submitted_cost = parse_money(data.get("cost", 0))
+
+    if not variant_id and not product_id and not title:
+        return jsonify({"success": False, "error": "Product identity is required."}), 400
+
+    try:
+        if variant_id and round(original_price, 2) != round(submitted_price, 2):
+            current_product = None
+            current_product = shopify.Variant.find(int(variant_id))
+            current_product.price = submitted_price
+            if not current_product.save():
+                raise RuntimeError("Shopify price update failed.")
+
+        overrides = load_product_cost_overrides()
+        set_cost_override(
+            overrides,
+            product_id=product_id,
+            variant_id=variant_id,
+            title=title,
+            price=submitted_price,
+            cost=submitted_cost,
+        )
+        if not save_product_cost_overrides(overrides):
+            raise RuntimeError("Could not save cost override.")
+
+        reload_orders()
+        return jsonify({"success": True, "price": submitted_price, "cost": submitted_cost})
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 500
 
 
 @app.route("/orders")

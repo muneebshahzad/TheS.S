@@ -1,0 +1,193 @@
+{% extends 'base.html' %}
+{% block title %}The Sleek Space – Product Costs{% endblock %}
+
+{% block content %}
+<style>
+  .pc-shell { display:flex; flex-direction:column; height:100%; overflow:hidden; }
+  .pc-topbar { height:52px; background:#fff; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; padding:0 20px; gap:12px; flex-shrink:0; }
+  .pc-title { font-size:16px; font-weight:700; color:#3a3b45; }
+  .pc-scroll { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:16px; }
+  .pc-card { background:#fff; border:1px solid #e3e6f0; border-radius:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
+  .pc-head { padding:14px 20px; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .pc-table-wrap { overflow:auto; }
+  .pc-table { width:100%; border-collapse:collapse; min-width:980px; }
+  .pc-table th, .pc-table td { padding:12px 14px; border-bottom:1px solid #eef0f6; text-align:left; vertical-align:middle; }
+  .pc-table th { background:#f8f9fc; font-size:11px; font-weight:700; color:#858796; text-transform:uppercase; letter-spacing:.05em; }
+  .pc-table tbody tr:hover { background:#fafbff; }
+  .pc-thumb { width:52px; height:52px; border-radius:10px; overflow:hidden; background:#f2f4f8; display:flex; align-items:center; justify-content:center; }
+  .pc-thumb img { width:100%; height:100%; object-fit:cover; }
+  .pc-name { font-size:13px; font-weight:700; color:#2d2e36; }
+  .pc-meta { font-size:11px; color:#858796; margin-top:4px; }
+  .pc-money { font-family:'DM Mono', monospace; font-size:13px; font-weight:700; color:#2d2e36; }
+  .pc-input { width:120px; border:1px solid #dce2ee; border-radius:8px; padding:8px 10px; font-size:12px; font-family:'DM Sans', sans-serif; color:#2d2e36; background:#fff; }
+  .pc-input[readonly] { background:#f8f9fc; color:#858796; cursor:pointer; }
+  .pc-actions { display:flex; gap:8px; align-items:center; }
+  .pc-btn { border-radius:8px; padding:8px 12px; font-size:11px; font-weight:700; cursor:pointer; font-family:'DM Sans', sans-serif; border:1px solid #dce2ee; background:#fff; color:#3a3b45; }
+  .pc-btn.primary { border-color:#4e73df; background:#4e73df; color:#fff; }
+  .pc-btn.success { border-color:#1cc88a; background:#1cc88a; color:#fff; }
+  .pc-btn[hidden] { display:none !important; }
+  .pc-status { font-size:11px; color:#858796; }
+  @media (max-width: 767px) {
+    .pc-topbar { padding:0 14px; }
+    .pc-scroll { padding:12px; }
+  }
+</style>
+
+<div class="pc-shell">
+  <div class="pc-topbar">
+    <span class="pc-title">Product Costs</span>
+    <div style="flex:1"></div>
+    <span style="font-size:11px;color:#858796;">{{ products|length }} product{{ '' if products|length == 1 else 's' }}</span>
+  </div>
+
+  <div class="pc-scroll">
+    <div class="pc-card">
+      <div class="pc-head">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#3a3b45;">Product price and cost control</div>
+          <div style="font-size:11px;color:#858796;margin-top:4px;">Rows stay read-only until you click edit. Only saved rows trigger updates.</div>
+        </div>
+      </div>
+      <div class="pc-table-wrap">
+        <table class="pc-table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>SKU</th>
+              <th>Shopify Price</th>
+              <th>Cost</th>
+              <th>Total</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for product in products %}
+            <tr data-row-index="{{ loop.index0 }}" data-product-id="{{ product.product_id or '' }}" data-variant-id="{{ product.variant_id or '' }}" data-title="{{ product.title }}">
+              <td>
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <div class="pc-thumb">{% if product.image %}<img src="{{ product.image }}" alt="">{% else %}📦{% endif %}</div>
+                  <div>
+                    <div class="pc-name">{{ product.title }}</div>
+                    <div class="pc-meta">{{ product.product_title }}{% if product.variant_title and product.variant_title != 'Default Title' %} · {{ product.variant_title }}{% endif %}</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="pc-status">{{ product.sku or '—' }}</span></td>
+              <td>
+                <input
+                  class="pc-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value="{{ product.price }}"
+                  data-field="price"
+                  data-original="{{ product.price }}"
+                  readonly
+                />
+              </td>
+              <td>
+                <input
+                  class="pc-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value="{{ product.cost }}"
+                  data-field="cost"
+                  data-original="{{ product.cost }}"
+                  readonly
+                />
+              </td>
+              <td><span class="pc-money" data-total>PKR {{ product.cost|format_number }}</span></td>
+              <td>
+                <div class="pc-actions">
+                  <button class="pc-btn" data-edit onclick="toggleProductRow({{ loop.index0 }}, true)">Edit</button>
+                  <button class="pc-btn" data-cancel hidden onclick="toggleProductRow({{ loop.index0 }}, false)">Cancel</button>
+                  <button class="pc-btn success" data-save hidden onclick="saveProductRow({{ loop.index0 }})">Save</button>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function toggleProductRow(index, editable) {
+  const row = document.querySelector(`[data-row-index="${index}"]`);
+  if (!row) return;
+  row.querySelectorAll('.pc-input').forEach((input) => {
+    input.readOnly = !editable;
+  });
+  row.querySelector('[data-edit]').hidden = editable;
+  row.querySelector('[data-cancel]').hidden = !editable;
+  row.querySelector('[data-save]').hidden = !editable;
+  if (!editable) {
+    row.querySelectorAll('.pc-input').forEach((input) => {
+      input.value = input.dataset.original || '0';
+    });
+    updateProductRowTotal(index);
+  } else {
+    const firstInput = row.querySelector('.pc-input');
+    if (firstInput) firstInput.focus();
+  }
+}
+
+function updateProductRowTotal(index) {
+  const row = document.querySelector(`[data-row-index="${index}"]`);
+  if (!row) return;
+  const cost = Number(row.querySelector('[data-field="cost"]')?.value || 0);
+  const total = row.querySelector('[data-total]');
+  if (total) total.textContent = `PKR ${cost.toLocaleString('en-PK')}`;
+}
+
+async function saveProductRow(index) {
+  const row = document.querySelector(`[data-row-index="${index}"]`);
+  if (!row) return;
+  const priceInput = row.querySelector('[data-field="price"]');
+  const costInput = row.querySelector('[data-field="cost"]');
+  const payload = {
+    product_id: row.dataset.productId || null,
+    variant_id: row.dataset.variantId || null,
+    title: row.dataset.title || '',
+    price: Number(priceInput?.value || 0),
+    original_price: Number(priceInput?.dataset.original || 0),
+    cost: Number(costInput?.value || 0),
+  };
+  const changed = Number(priceInput?.dataset.original || 0) !== payload.price || Number(costInput?.dataset.original || 0) !== payload.cost;
+  if (!changed) {
+    toggleProductRow(index, false);
+    return;
+  }
+  try {
+    const response = await fetch('/product-costs/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json();
+    if (!result.success) {
+      showToast(result.error || 'Update failed');
+      return;
+    }
+    priceInput.dataset.original = String(result.price);
+    costInput.dataset.original = String(result.cost);
+    toggleProductRow(index, false);
+    updateProductRowTotal(index);
+    showToast('Product pricing updated');
+  } catch (error) {
+    showToast('Could not update product pricing');
+  }
+}
+
+document.addEventListener('input', (event) => {
+  const row = event.target.closest('[data-row-index]');
+  if (!row || !event.target.classList.contains('pc-input')) return;
+  updateProductRowTotal(row.dataset.rowIndex);
+});
+</script>
+{% endblock %}
