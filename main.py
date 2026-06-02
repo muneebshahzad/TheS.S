@@ -280,11 +280,7 @@ PAID_FINANCIAL_STATUSES = {"paid", "partially paid", "partially_paid", "partiall
 
 def is_pending_line_item_status(status):
     normalized = normalize_status_bucket(status)
-    if normalized == "Delivered":
-        return False
-    if normalized in {"RETURNED TO SHIPPER", "Being Return"}:
-        return False
-    return normalized in PENDING_LINE_ITEM_STATUSES or normalized not in {"Delivered", "RETURNED TO SHIPPER", "Being Return"}
+    return normalized in {"Booked", "Un-Booked"}
 
 
 def aggregate_order_status(line_items):
