@@ -3,10 +3,10 @@
 
 {% block content %}
 <style>
-  .pc-shell { display:flex; flex-direction:column; height:100%; overflow:hidden; }
+  .pc-shell { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; }
   .pc-topbar { height:52px; background:#fff; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; padding:0 20px; gap:12px; flex-shrink:0; }
   .pc-title { font-size:16px; font-weight:700; color:#3a3b45; }
-  .pc-scroll { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:16px; }
+  .pc-scroll { flex:1; min-height:0; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:16px; }
   .pc-card { background:#fff; border:1px solid #e3e6f0; border-radius:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
   .pc-head { padding:14px 20px; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .pc-table-wrap { overflow:auto; }
@@ -62,7 +62,7 @@
           </thead>
           <tbody>
             {% for product in products %}
-            <tr data-row-index="{{ loop.index0 }}" data-product-id="{{ product.product_id or '' }}" data-variant-id="{{ product.variant_id or '' }}" data-title="{{ product.title }}">
+            <tr data-row-index="{{ loop.index0 }}" data-product-id="{{ product.product_id or '' }}" data-variant-id="{{ product.variant_id or '' }}" data-inventory-item-id="{{ product.inventory_item_id or '' }}" data-title="{{ product.title }}">
               <td>
                 <div style="display:flex;align-items:center;gap:12px;">
                   <div class="pc-thumb">{% if product.image %}<img src="{{ product.image }}" alt="">{% else %}📦{% endif %}</div>
@@ -153,6 +153,7 @@ async function saveProductRow(index) {
   const payload = {
     product_id: row.dataset.productId || null,
     variant_id: row.dataset.variantId || null,
+    inventory_item_id: row.dataset.inventoryItemId || null,
     title: row.dataset.title || '',
     price: Number(priceInput?.value || 0),
     original_price: Number(priceInput?.dataset.original || 0),

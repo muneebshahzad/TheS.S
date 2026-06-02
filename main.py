@@ -65,6 +65,7 @@ semaphore = asyncio.Semaphore(2)
 RATE_LIMIT = 2
 LAST_REQUEST_TIME = 0.0
 PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
+inventory_item_cost_cache = {}
 
 _TAG_STYLES = {
     "Call Courier": "background:#ede7f6;color:#4527a0",
@@ -382,6 +383,48 @@ def shopify_rest_headers():
     }
 
 
+def fetch_shopify_inventory_item_costs(inventory_item_ids):
+    ids = [str(item_id).strip() for item_id in (inventory_item_ids or []) if str(item_id).strip()]
+    if not ids:
+        return {}
+    uncached_ids = [item_id for item_id in ids if item_id not in inventory_item_cost_cache]
+    if uncached_ids:
+        base_url = shopify_rest_base_url()
+        headers = shopify_rest_headers()
+        for offset in range(0, len(uncached_ids), 50):
+            batch = uncached_ids[offset : offset + 50]
+            response = requests.get(
+                f"{base_url}/inventory_items.json",
+                headers=headers,
+                params={"ids": ",".join(batch)},
+                timeout=20,
+            )
+            response.raise_for_status()
+            payload = response.json().get("inventory_items", []) or []
+            for item in payload:
+                item_id = str(item.get("id") or "").strip()
+                if item_id:
+                    inventory_item_cost_cache[item_id] = parse_money(item.get("cost", 0))
+            for missing_id in batch:
+                inventory_item_cost_cache.setdefault(missing_id, 0.0)
+    return {item_id: inventory_item_cost_cache.get(item_id, 0.0) for item_id in ids}
+
+
+def update_shopify_inventory_item_cost(inventory_item_id, cost):
+    if not inventory_item_id:
+        return
+    base_url = shopify_rest_base_url()
+    headers = shopify_rest_headers()
+    response = requests.put(
+        f"{base_url}/inventory_items/{inventory_item_id}.json",
+        headers=headers,
+        json={"inventory_item": {"id": int(inventory_item_id), "cost": str(parse_money(cost, 0))}},
+        timeout=20,
+    )
+    response.raise_for_status()
+    inventory_item_cost_cache[str(inventory_item_id)] = parse_money(cost, 0)
+
+
 def ensure_required_shopify_webhooks():
     base_url = shopify_rest_base_url()
     headers = shopify_rest_headers()
@@ -449,6 +492,7 @@ def get_variant_image_and_title(product, line_item):
 
     variant_name = ""
     image_src = base_image or "/static/sleekspace-wordmark.svg"
+    inventory_item_id = None
     images = list(getattr(product, "images", []) or [])
     fetched_images = False
 
@@ -462,6 +506,7 @@ def get_variant_image_and_title(product, line_item):
         if str(getattr(variant, "id", "") or "").strip() != line_item_variant_id:
             continue
         variant_name = "" if getattr(variant, "title", "") in {"", "Default Title"} else getattr(variant, "title", "")
+        inventory_item_id = getattr(variant, "inventory_item_id", None)
         variant_image_id = getattr(variant, "image_id", None)
         if variant_image_id and not images and not fetched_images:
             try:
@@ -480,8 +525,8 @@ def get_variant_image_and_title(product, line_item):
                     break
         break
 
-    product_image_cache[cache_key] = (image_src, variant_name)
-    return image_src, variant_name
+    product_image_cache[cache_key] = (image_src, variant_name, inventory_item_id)
+    return image_src, variant_name, inventory_item_id
 
 
 def summarize_tracking_result(tracking_number, data):
@@ -581,7 +626,6 @@ async def process_line_item(session_obj, line_item, fulfillments):
 
 async def process_order(session_obj, order):
     global LAST_REQUEST_TIME
-    cost_overrides = load_product_cost_overrides()
 
     elapsed_time = time.time() - LAST_REQUEST_TIME
     if elapsed_time < 1 / RATE_LIMIT:
@@ -638,19 +682,19 @@ async def process_order(session_obj, order):
             try:
                 product = shopify.Product.find(getattr(line_item, "product_id", None))
                 if product:
-                    image_src, variant_name = get_variant_image_and_title(product, line_item)
+                    image_src, variant_name, inventory_item_id = get_variant_image_and_title(product, line_item)
+                else:
+                    inventory_item_id = None
             except Exception as error:
                 print(f"Could not fetch product image for {getattr(line_item, 'product_id', None)}: {error}")
+                inventory_item_id = None
+        else:
+            inventory_item_id = None
 
         base_title = getattr(line_item, "title", "") or "Product"
         product_title = base_title if not variant_name else f"{base_title} - {variant_name}"
         unit_price = parse_money(getattr(line_item, "price", 0))
-        unit_cost = get_cost_override_for_item(
-            cost_overrides,
-            product_id=getattr(line_item, "product_id", None),
-            variant_id=getattr(line_item, "variant_id", None),
-            title=product_title,
-        )
+        unit_cost = 0.0
 
         for info in tracking_info_list:
             quantity = int(info["quantity"] or 0)
@@ -663,6 +707,7 @@ async def process_order(session_obj, order):
                     "product_title": product_title,
                     "product_id": getattr(line_item, "product_id", None),
                     "variant_id": getattr(line_item, "variant_id", None),
+                    "inventory_item_id": inventory_item_id,
                     "quantity": quantity,
                     "unit_price": unit_price,
                     "unit_cost": unit_cost,
@@ -710,6 +755,39 @@ def enrich_orders_with_protected_customer_data(orders):
             item["address"] = details.get("address") or item.get("address", "")
             item["city"] = details.get("city") or item.get("city", "")
             item["phone"] = details.get("phone") or item.get("phone", "")
+    return orders
+
+
+def enrich_orders_with_shopify_costs(orders):
+    if not orders:
+        return orders
+    overrides = load_product_cost_overrides()
+    inventory_ids = []
+    for order in orders:
+        for item in order.get("line_items", []):
+            inventory_id = item.get("inventory_item_id")
+            if inventory_id:
+                inventory_ids.append(str(inventory_id))
+    cost_map = {}
+    if inventory_ids:
+        try:
+            cost_map = fetch_shopify_inventory_item_costs(inventory_ids)
+        except Exception as error:
+            print(f"Could not fetch Shopify inventory costs: {error}")
+
+    for order in orders:
+        for item in order.get("line_items", []):
+            inventory_id = str(item.get("inventory_item_id") or "").strip()
+            fallback_cost = get_cost_override_for_item(
+                overrides,
+                product_id=item.get("product_id"),
+                variant_id=item.get("variant_id"),
+                title=item.get("product_title", ""),
+            )
+            unit_cost = cost_map.get(inventory_id, fallback_cost) if inventory_id else fallback_cost
+            quantity = int(item.get("quantity") or 0)
+            item["unit_cost"] = parse_money(unit_cost, 0)
+            item["line_cost_total"] = round(parse_money(unit_cost, 0) * quantity, 2)
     return orders
 
 
@@ -787,7 +865,9 @@ async def get_shopify_orders(force_status=None):
                 continue
             collected.append(result)
 
-    return sort_orders_newest_first(enrich_orders_with_protected_customer_data(collected))
+    collected = enrich_orders_with_protected_customer_data(collected)
+    collected = enrich_orders_with_shopify_costs(collected)
+    return sort_orders_newest_first(collected)
 
 
 def reload_orders():
@@ -1218,6 +1298,7 @@ def get_active_shopify_products(limit=120):
         return []
 
     results = []
+    inventory_ids = []
     for product in products:
         if getattr(product, "status", "active") != "active":
             continue
@@ -1248,20 +1329,35 @@ def get_active_shopify_products(limit=120):
                 {
                     "product_id": getattr(product, "id", None),
                     "variant_id": getattr(variant, "id", None),
+                    "inventory_item_id": getattr(variant, "inventory_item_id", None),
                     "title": display_title,
                     "product_title": getattr(product, "title", ""),
                     "variant_title": variant_title,
                     "price": float(getattr(variant, "price", 0) or 0),
-                    "cost": get_cost_override_for_item(
-                        cost_overrides,
-                        product_id=getattr(product, "id", None),
-                        variant_id=getattr(variant, "id", None),
-                        title=display_title,
-                    ),
+                    "cost": 0,
                     "image": variant_image,
                     "sku": getattr(variant, "sku", "") or "",
                 }
             )
+            if getattr(variant, "inventory_item_id", None):
+                inventory_ids.append(str(getattr(variant, "inventory_item_id", None)))
+
+    cost_map = {}
+    if inventory_ids:
+        try:
+            cost_map = fetch_shopify_inventory_item_costs(inventory_ids)
+        except Exception as error:
+            print(f"Could not fetch Shopify product costs: {error}")
+
+    for product in results:
+        inventory_id = str(product.get("inventory_item_id") or "").strip()
+        fallback_cost = get_cost_override_for_item(
+            cost_overrides,
+            product_id=product.get("product_id"),
+            variant_id=product.get("variant_id"),
+            title=product.get("title", ""),
+        )
+        product["cost"] = cost_map.get(inventory_id, fallback_cost) if inventory_id else fallback_cost
     return results
 
 
@@ -1272,6 +1368,7 @@ def build_product_cost_rows(limit=200):
             {
                 "product_id": product.get("product_id"),
                 "variant_id": product.get("variant_id"),
+                "inventory_item_id": product.get("inventory_item_id"),
                 "title": product.get("title", ""),
                 "product_title": product.get("product_title", ""),
                 "variant_title": product.get("variant_title", ""),
@@ -1654,6 +1751,7 @@ def update_product_costs():
     data = request.get_json() or {}
     product_id = data.get("product_id")
     variant_id = data.get("variant_id")
+    inventory_item_id = data.get("inventory_item_id")
     title = (data.get("title") or "").strip()
     submitted_price = parse_money(data.get("price", 0))
     original_price = parse_money(data.get("original_price", submitted_price))
@@ -1669,6 +1767,9 @@ def update_product_costs():
             current_product.price = submitted_price
             if not current_product.save():
                 raise RuntimeError("Shopify price update failed.")
+
+        if inventory_item_id:
+            update_shopify_inventory_item_cost(inventory_item_id, submitted_cost)
 
         overrides = load_product_cost_overrides()
         set_cost_override(
