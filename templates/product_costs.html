@@ -8,7 +8,7 @@
   .pc-title { font-size:16px; font-weight:700; color:#3a3b45; }
   .pc-scroll { flex:1; min-height:0; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:16px; }
   .pc-card { background:#fff; border:1px solid #e3e6f0; border-radius:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
-  .pc-head { padding:14px 20px; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .pc-head { padding:14px 20px; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .pc-table-wrap { overflow:auto; }
   .pc-table { width:100%; border-collapse:collapse; min-width:980px; }
   .pc-table th, .pc-table td { padding:12px 14px; border-bottom:1px solid #eef0f6; text-align:left; vertical-align:middle; }
@@ -25,8 +25,10 @@
   .pc-btn { border-radius:8px; padding:8px 12px; font-size:11px; font-weight:700; cursor:pointer; font-family:'DM Sans', sans-serif; border:1px solid #dce2ee; background:#fff; color:#3a3b45; }
   .pc-btn.primary { border-color:#4e73df; background:#4e73df; color:#fff; }
   .pc-btn.success { border-color:#1cc88a; background:#1cc88a; color:#fff; }
+  .pc-btn.warning { border-color:#f6c23e; background:#fff7dd; color:#8b5a00; }
   .pc-btn[hidden] { display:none !important; }
   .pc-status { font-size:11px; color:#858796; }
+  .pc-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   @media (max-width: 767px) {
     .pc-topbar { padding:0 14px; }
     .pc-scroll { padding:12px; }
@@ -46,6 +48,11 @@
         <div>
           <div style="font-size:14px;font-weight:700;color:#3a3b45;">Product price and cost control</div>
           <div style="font-size:11px;color:#858796;margin-top:4px;">Rows stay read-only until you click edit. Only saved rows trigger updates.</div>
+        </div>
+        <div class="pc-toolbar">
+          <button class="pc-btn primary" id="pc-bulk-edit" onclick="toggleAllProductRows(true)">Bulk edit</button>
+          <button class="pc-btn warning" id="pc-bulk-cancel" onclick="toggleAllProductRows(false)" hidden>Cancel all</button>
+          <button class="pc-btn success" id="pc-bulk-save" onclick="saveAllProductRows()" hidden>Save all</button>
         </div>
       </div>
       <div class="pc-table-wrap">
@@ -117,6 +124,21 @@
 
 {% block extra_js %}
 <script>
+function rowHasChanges(row) {
+  if (!row) return false;
+  return Array.from(row.querySelectorAll('.pc-input')).some((input) => {
+    return Number(input.value || 0) !== Number(input.dataset.original || 0);
+  });
+}
+
+function refreshBulkToolbar() {
+  const rows = Array.from(document.querySelectorAll('[data-row-index]'));
+  const anyEditable = rows.some((row) => !row.querySelector('.pc-input')?.readOnly);
+  document.getElementById('pc-bulk-edit').hidden = anyEditable;
+  document.getElementById('pc-bulk-cancel').hidden = !anyEditable;
+  document.getElementById('pc-bulk-save').hidden = !anyEditable;
+}
+
 function toggleProductRow(index, editable) {
   const row = document.querySelector(`[data-row-index="${index}"]`);
   if (!row) return;
@@ -135,6 +157,18 @@ function toggleProductRow(index, editable) {
     const firstInput = row.querySelector('.pc-input');
     if (firstInput) firstInput.focus();
   }
+  refreshBulkToolbar();
+}
+
+function toggleAllProductRows(editable) {
+  document.querySelectorAll('[data-row-index]').forEach((row) => {
+    const index = row.dataset.rowIndex;
+    if (editable) {
+      toggleProductRow(index, true);
+      return;
+    }
+    toggleProductRow(index, false);
+  });
 }
 
 function updateProductRowTotal(index) {
@@ -145,7 +179,8 @@ function updateProductRowTotal(index) {
   if (total) total.textContent = `PKR ${cost.toLocaleString('en-PK')}`;
 }
 
-async function saveProductRow(index) {
+async function saveProductRow(index, options = {}) {
+  const { silent = false } = options;
   const row = document.querySelector(`[data-row-index="${index}"]`);
   if (!row) return;
   const priceInput = row.querySelector('[data-field="price"]');
@@ -162,7 +197,8 @@ async function saveProductRow(index) {
   const changed = Number(priceInput?.dataset.original || 0) !== payload.price || Number(costInput?.dataset.original || 0) !== payload.cost;
   if (!changed) {
     toggleProductRow(index, false);
-    return;
+    if (!silent) showToast('No product pricing changes to save');
+    return { success: true, changed: false };
   }
   try {
     const response = await fetch('/product-costs/update', {
@@ -179,10 +215,44 @@ async function saveProductRow(index) {
     costInput.dataset.original = String(result.cost);
     toggleProductRow(index, false);
     updateProductRowTotal(index);
-    showToast('Product pricing updated');
+    if (!silent) showToast('Product pricing updated');
+    return { success: true, changed: true };
   } catch (error) {
-    showToast('Could not update product pricing');
+    if (!silent) showToast('Could not update product pricing');
+    return { success: false, error: 'Could not update product pricing' };
   }
+}
+
+async function saveAllProductRows() {
+  const rows = Array.from(document.querySelectorAll('[data-row-index]'));
+  const changedRows = rows.filter((row) => rowHasChanges(row));
+  if (!changedRows.length) {
+    toggleAllProductRows(false);
+    showToast('No product pricing changes to save');
+    return;
+  }
+
+  const bulkSaveButton = document.getElementById('pc-bulk-save');
+  const originalLabel = bulkSaveButton.textContent;
+  bulkSaveButton.disabled = true;
+  bulkSaveButton.textContent = 'Saving...';
+
+  let saved = 0;
+  for (const row of changedRows) {
+    const result = await saveProductRow(row.dataset.rowIndex, { silent: true });
+    if (!result || !result.success) {
+      bulkSaveButton.disabled = false;
+      bulkSaveButton.textContent = originalLabel;
+      showToast(result?.error || 'Could not update product pricing');
+      return;
+    }
+    saved += 1;
+  }
+
+  bulkSaveButton.disabled = false;
+  bulkSaveButton.textContent = originalLabel;
+  refreshBulkToolbar();
+  showToast(`Updated ${saved} product${saved === 1 ? '' : 's'}`);
 }
 
 document.addEventListener('input', (event) => {
@@ -190,5 +260,7 @@ document.addEventListener('input', (event) => {
   if (!row || !event.target.classList.contains('pc-input')) return;
   updateProductRowTotal(row.dataset.rowIndex);
 });
+
+document.addEventListener('DOMContentLoaded', refreshBulkToolbar);
 </script>
 {% endblock %}
