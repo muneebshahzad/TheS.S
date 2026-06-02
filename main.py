@@ -805,7 +805,7 @@ def get_shopify_created_at_min():
 
 
 def get_shopify_fetch_status():
-    return (os.getenv("SHOPIFY_ORDER_FETCH_STATUS") or "any").strip().lower() or "any"
+    return (os.getenv("SHOPIFY_ORDER_FETCH_STATUS") or "open").strip().lower() or "open"
 
 
 def fetch_all_shopify_orders(created_at_min, fetch_status):
@@ -844,7 +844,7 @@ def fetch_all_shopify_orders(created_at_min, fetch_status):
 
 async def get_shopify_orders(force_status=None):
     created_at_min = get_shopify_created_at_min()
-    fetch_status = (force_status or get_shopify_fetch_status() or "any").strip().lower() or "any"
+    fetch_status = (force_status or get_shopify_fetch_status() or "open").strip().lower() or "open"
     fetched_orders = fetch_all_shopify_orders(created_at_min, fetch_status)
     if fetched_orders is None:
         return None
@@ -870,7 +870,7 @@ def reload_orders():
     global order_details
     try:
         setup_shopify()
-        fetched_orders = asyncio.run(get_shopify_orders(force_status="any"))
+        fetched_orders = asyncio.run(get_shopify_orders())
         if fetched_orders is None:
             print("Keeping existing order cache because Shopify fetch failed.")
             return False
