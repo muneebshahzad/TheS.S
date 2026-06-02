@@ -531,7 +531,8 @@ function normalizeStatusBucket(status) {
   if (upper.includes('OUT FOR DELIVERY')) return 'Out For Delivery';
   if (upper.includes('RETURNED TO SHIPPER')) return 'RETURNED TO SHIPPER';
   if (upper.includes('BEING RETURN')) return 'Being Return';
-  if (upper === 'BOOKED' || upper.includes('CONSIGNMENT BOOKED') || upper.includes('PICKED FROM SHIPPER')) return 'Booked';
+  if (upper.includes('PICKED FROM SHIPPER')) return 'Picked From Shipper';
+  if (upper === 'BOOKED' || upper.includes('CONSIGNMENT BOOKED')) return 'Booked';
   if (upper === 'UN-BOOKED' || upper === 'UNBOOKED') return 'Un-Booked';
 
   return raw;
