@@ -491,11 +491,17 @@
 
   function openVendorListPage() {
     if (!vendorItems.length) return;
-    const popup = window.open('', '_blank', 'noopener,noreferrer');
-    if (!popup) return;
-    popup.document.open();
-    popup.document.write(buildVendorListHtml(vendorItems));
-    popup.document.close();
+    const html = buildVendorListHtml(vendorItems);
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const popup = window.open(url, '_blank');
+    if (!popup) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    popup.addEventListener('load', () => {
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, { once: true });
   }
 
   function renderVendorItems() {
