@@ -1290,7 +1290,7 @@ def format_employee_order_note(payment_method, delivery_method, customer_phone, 
     return "\n".join(lines)
 
 
-def get_active_shopify_products(limit=120):
+def get_active_shopify_products(limit=250):
     cost_overrides = load_product_cost_overrides()
     try:
         products = shopify.Product.find(limit=limit, published_status="published")
@@ -1300,48 +1300,56 @@ def get_active_shopify_products(limit=120):
 
     results = []
     inventory_ids = []
-    for product in products:
-        if getattr(product, "status", "active") != "active":
-            continue
-        base_image = product.image.src if getattr(product, "image", None) else ""
-        product_images = list(getattr(product, "images", []) or [])
-        fetched_images = False
-        for variant in getattr(product, "variants", []) or []:
-            variant_title = getattr(variant, "title", "") or ""
-            display_title = product.title if variant_title in {"Default Title", ""} else f"{product.title} - {variant_title}"
-            variant_image = base_image
-            variant_image_id = getattr(variant, "image_id", None)
-            if variant_image_id and not product_images and not fetched_images:
-                try:
-                    product_images = list(shopify.Image.find(product_id=getattr(product, "id", None)) or [])
-                except Exception:
-                    product_images = []
-                fetched_images = True
-            if variant_image_id and product_images:
-                for image in product_images:
-                    if getattr(image, "id", None) == variant_image_id:
-                        variant_image = getattr(image, "src", "") or base_image
-                        break
-                    attached_variant_ids = getattr(image, "variant_ids", None) or []
-                    if getattr(variant, "id", None) in attached_variant_ids:
-                        variant_image = getattr(image, "src", "") or base_image
-                        break
-            results.append(
-                {
-                    "product_id": getattr(product, "id", None),
-                    "variant_id": getattr(variant, "id", None),
-                    "inventory_item_id": getattr(variant, "inventory_item_id", None),
-                    "title": display_title,
-                    "product_title": getattr(product, "title", ""),
-                    "variant_title": variant_title,
-                    "price": float(getattr(variant, "price", 0) or 0),
-                    "cost": 0,
-                    "image": variant_image,
-                    "sku": getattr(variant, "sku", "") or "",
-                }
-            )
-            if getattr(variant, "inventory_item_id", None):
-                inventory_ids.append(str(getattr(variant, "inventory_item_id", None)))
+    while True:
+        for product in products:
+            if getattr(product, "status", "active") != "active":
+                continue
+            base_image = product.image.src if getattr(product, "image", None) else ""
+            product_images = list(getattr(product, "images", []) or [])
+            fetched_images = False
+            for variant in getattr(product, "variants", []) or []:
+                variant_title = getattr(variant, "title", "") or ""
+                display_title = product.title if variant_title in {"Default Title", ""} else f"{product.title} - {variant_title}"
+                variant_image = base_image
+                variant_image_id = getattr(variant, "image_id", None)
+                if variant_image_id and not product_images and not fetched_images:
+                    try:
+                        product_images = list(shopify.Image.find(product_id=getattr(product, "id", None)) or [])
+                    except Exception:
+                        product_images = []
+                    fetched_images = True
+                if variant_image_id and product_images:
+                    for image in product_images:
+                        if getattr(image, "id", None) == variant_image_id:
+                            variant_image = getattr(image, "src", "") or base_image
+                            break
+                        attached_variant_ids = getattr(image, "variant_ids", None) or []
+                        if getattr(variant, "id", None) in attached_variant_ids:
+                            variant_image = getattr(image, "src", "") or base_image
+                            break
+                results.append(
+                    {
+                        "product_id": getattr(product, "id", None),
+                        "variant_id": getattr(variant, "id", None),
+                        "inventory_item_id": getattr(variant, "inventory_item_id", None),
+                        "title": display_title,
+                        "product_title": getattr(product, "title", ""),
+                        "variant_title": variant_title,
+                        "price": float(getattr(variant, "price", 0) or 0),
+                        "cost": 0,
+                        "image": variant_image,
+                        "sku": getattr(variant, "sku", "") or "",
+                    }
+                )
+                if getattr(variant, "inventory_item_id", None):
+                    inventory_ids.append(str(getattr(variant, "inventory_item_id", None)))
+        try:
+            if not products.has_next_page():
+                break
+            products = products.next_page()
+        except Exception as error:
+            print(f"Could not load next Shopify product page: {error}")
+            break
 
     cost_map = {}
     if inventory_ids:
@@ -1362,7 +1370,7 @@ def get_active_shopify_products(limit=120):
     return results
 
 
-def build_product_cost_rows(limit=200):
+def build_product_cost_rows(limit=250):
     rows = []
     for product in get_active_shopify_products(limit=limit):
         rows.append(
