@@ -348,9 +348,8 @@ def setup_shopify():
     except Exception:
         pass
     if legacy_token:
-        if not shop_url.startswith("https://"):
-            shop_url = f"https://{shop_url.lstrip('/')}"
-        shopify.ShopifyResource.set_site(shop_url)
+        base_url = shopify_rest_base_url()
+        shopify.ShopifyResource.set_site(base_url)
         if api_key:
             shopify.ShopifyResource.set_user(api_key)
         shopify.ShopifyResource.set_password(legacy_token)
