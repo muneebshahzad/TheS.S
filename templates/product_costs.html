@@ -63,7 +63,6 @@
               <th>SKU</th>
               <th>Shopify Price</th>
               <th>Cost</th>
-              <th>Total</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -104,7 +103,6 @@
                   readonly
                 />
               </td>
-              <td><span class="pc-money" data-total>PKR {{ product.cost|format_number }}</span></td>
               <td>
                 <div class="pc-actions">
                   <button class="pc-btn" data-edit onclick="toggleProductRow({{ loop.index0 }}, true)">Edit</button>
@@ -171,14 +169,6 @@ function toggleAllProductRows(editable) {
   });
 }
 
-function updateProductRowTotal(index) {
-  const row = document.querySelector(`[data-row-index="${index}"]`);
-  if (!row) return;
-  const cost = Number(row.querySelector('[data-field="cost"]')?.value || 0);
-  const total = row.querySelector('[data-total]');
-  if (total) total.textContent = `PKR ${cost.toLocaleString('en-PK')}`;
-}
-
 async function saveProductRow(index, options = {}) {
   const { silent = false } = options;
   const row = document.querySelector(`[data-row-index="${index}"]`);
@@ -214,7 +204,6 @@ async function saveProductRow(index, options = {}) {
     priceInput.dataset.original = String(result.price);
     costInput.dataset.original = String(result.cost);
     toggleProductRow(index, false);
-    updateProductRowTotal(index);
     if (!silent) showToast('Product pricing updated');
     return { success: true, changed: true };
   } catch (error) {
@@ -254,12 +243,6 @@ async function saveAllProductRows() {
   refreshBulkToolbar();
   showToast(`Updated ${saved} product${saved === 1 ? '' : 's'}`);
 }
-
-document.addEventListener('input', (event) => {
-  const row = event.target.closest('[data-row-index]');
-  if (!row || !event.target.classList.contains('pc-input')) return;
-  updateProductRowTotal(row.dataset.rowIndex);
-});
 
 document.addEventListener('DOMContentLoaded', refreshBulkToolbar);
 </script>
