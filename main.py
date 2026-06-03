@@ -335,7 +335,9 @@ def employee_portal_safe_next_url(candidate):
 
 def setup_shopify():
     shop_url = get_shop_domain() or (os.getenv("SHOP_URL") or "").strip()
-    token = get_graphql_token() or (os.getenv("PASSWORD") or "").strip()
+    legacy_token = (os.getenv("PASSWORD") or "").strip()
+    oauth_token = get_graphql_token()
+    token = legacy_token or oauth_token
     api_key = (os.getenv("API_KEY") or "").strip()
     if not shop_url or not token:
         print("SHOP_URL or PASSWORD missing; Shopify client not configured.")
@@ -345,19 +347,21 @@ def setup_shopify():
         shopify.ShopifyResource.clear_session()
     except Exception:
         pass
+    if legacy_token:
+        if not shop_url.startswith("https://"):
+            shop_url = f"https://{shop_url.lstrip('/')}"
+        shopify.ShopifyResource.set_site(shop_url)
+        if api_key:
+            shopify.ShopifyResource.set_user(api_key)
+        shopify.ShopifyResource.set_password(legacy_token)
+        return
+
     try:
-        session_obj = shopify.Session(shop_url, get_graphql_api_version(), token)
+        session_obj = shopify.Session(shop_url, get_graphql_api_version(), oauth_token)
         shopify.ShopifyResource.activate_session(session_obj)
         return
     except Exception as error:
-        print(f"Could not activate Shopify session; falling back to legacy setup: {error}")
-
-    if not shop_url.startswith("https://"):
-        shop_url = f"https://{shop_url.lstrip('/')}"
-    shopify.ShopifyResource.set_site(shop_url)
-    if api_key:
-        shopify.ShopifyResource.set_user(api_key)
-    shopify.ShopifyResource.set_password(token)
+        print(f"Could not activate Shopify session: {error}")
 
 
 def shopify_rest_base_url():
@@ -371,7 +375,7 @@ def shopify_rest_base_url():
 
 
 def shopify_rest_headers():
-    token = get_graphql_token() or (os.getenv("PASSWORD") or "").strip()
+    token = (os.getenv("PASSWORD") or "").strip() or get_graphql_token()
     if not token:
         raise RuntimeError("Shopify admin token is missing.")
     return {
