@@ -44,6 +44,21 @@ def _ensure_aghaje_order_overrides_table(cur):
     )
 
 
+def _ensure_aghaje_item_cost_overrides_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS aghaje_item_cost_overrides (
+            item_key TEXT PRIMARY KEY,
+            product_id TEXT,
+            variant_id TEXT,
+            title TEXT NOT NULL,
+            cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """
+    )
+
+
 def get_conn():
     url = (
         os.getenv("DATABASE_URL", "")
@@ -94,6 +109,7 @@ def init_db():
                 )
                 _ensure_app_settings_table(cur)
                 _ensure_aghaje_order_overrides_table(cur)
+                _ensure_aghaje_item_cost_overrides_table(cur)
             conn.commit()
         _set_last_db_error("")
         print("DB initialized.")
@@ -254,4 +270,68 @@ def upsert_aghaje_order_override(
     except Exception as e:
         _set_last_db_error(str(e))
         print(f"DB upsert aghaje override error: {e}")
+        return False
+
+
+def load_aghaje_item_cost_overrides() -> dict:
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                _ensure_aghaje_item_cost_overrides_table(cur)
+                cur.execute(
+                    """
+                    SELECT item_key, product_id, variant_id, title, cost
+                    FROM aghaje_item_cost_overrides
+                    """
+                )
+                _set_last_db_error("")
+                return {row["item_key"]: dict(row) for row in cur.fetchall()}
+    except Exception as e:
+        _set_last_db_error(str(e))
+        print(f"DB load aghaje item cost overrides error: {e}")
+        return {}
+
+
+def upsert_aghaje_item_cost_override(
+    item_key: str,
+    title: str,
+    cost: str | float,
+    product_id: str | int | None = None,
+    variant_id: str | int | None = None,
+):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                _ensure_aghaje_item_cost_overrides_table(cur)
+                cur.execute(
+                    """
+                    INSERT INTO aghaje_item_cost_overrides (
+                        item_key,
+                        product_id,
+                        variant_id,
+                        title,
+                        cost
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (item_key) DO UPDATE
+                        SET product_id = EXCLUDED.product_id,
+                            variant_id = EXCLUDED.variant_id,
+                            title = EXCLUDED.title,
+                            cost = EXCLUDED.cost,
+                            updated_at = NOW()
+                    """,
+                    (
+                        item_key,
+                        str(product_id) if product_id is not None else None,
+                        str(variant_id) if variant_id is not None else None,
+                        title,
+                        cost,
+                    ),
+                )
+            conn.commit()
+        _set_last_db_error("")
+        return True
+    except Exception as e:
+        _set_last_db_error(str(e))
+        print(f"DB upsert aghaje item cost override error: {e}")
         return False

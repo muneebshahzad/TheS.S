@@ -31,9 +31,11 @@ from db import (
     delete_order_status,
     get_app_setting,
     init_db,
+    load_aghaje_item_cost_overrides,
     load_aghaje_order_overrides,
     load_order_statuses,
     set_app_setting,
+    upsert_aghaje_item_cost_override,
     upsert_aghaje_order_override,
     upsert_order_status,
 )
@@ -516,6 +518,17 @@ def get_aghaje_delivery_status(order):
     return "Inprocess", "No courier status yet"
 
 
+def aghaje_item_cost_key(product_id=None, variant_id=None, title=""):
+    product_id = str(product_id or "").strip()
+    variant_id = str(variant_id or "").strip()
+    normalized_title = " ".join(str(title or "").strip().lower().split())
+    if variant_id:
+        return f"variant:{variant_id}"
+    if product_id:
+        return f"product:{product_id}"
+    return f"title:{normalized_title}"
+
+
 def _aghaje_product_cache_key(product_id):
     return str(product_id or "").strip()
 
@@ -650,6 +663,7 @@ def load_aghaje_order_sync_state():
 
 def build_aghaje_orders_page_data():
     overrides = load_aghaje_order_sync_state()
+    item_cost_overrides = load_aghaje_item_cost_overrides()
     created_at_min = get_aghaje_created_at_min()
     fetch_status = get_aghaje_fetch_status()
     try:
@@ -659,7 +673,6 @@ def build_aghaje_orders_page_data():
         return [], {"total_orders": 0, "total_items_qty": 0, "net_payment": 0.0}, str(error)
 
     results = []
-    inventory_ids = []
     shop_domain = get_aghaje_shop_domain()
     parsed_shop = urlparse(shop_domain if "://" in shop_domain else f"https://{shop_domain}") if shop_domain else None
     shop_name = ((parsed_shop.netloc or parsed_shop.path) if parsed_shop else "").split(".")[0]
@@ -687,25 +700,27 @@ def build_aghaje_orders_page_data():
             variant_payload = (product_payload or {}).get("variants", {}).get(str(variant_id).strip(), {})
             image_src = variant_payload.get("image_src") or (product_payload or {}).get("image") or "/static/sleekspace-wordmark.svg"
             variant_title = variant_payload.get("variant_title") or ""
-            inventory_item_id = variant_payload.get("inventory_item_id")
-            if inventory_item_id:
-                inventory_ids.append(str(inventory_item_id))
 
             quantity = int(line_item.get("quantity") or 0)
             unit_price = parse_money(line_item.get("price", 0))
             product_title = line_item.get("title") or line_item.get("name") or "Product"
             display_title = f"{product_title} - {variant_title}" if variant_title and variant_title != "Default Title" else product_title
+            cost_key = aghaje_item_cost_key(product_id=product_id, variant_id=variant_id, title=display_title)
+            item_cost_override = item_cost_overrides.get(cost_key) or {}
+            unit_cost = parse_money(item_cost_override.get("cost", 0))
 
             item_rows.append(
                 {
+                    "cost_key": cost_key,
+                    "product_id": product_id,
+                    "variant_id": variant_id,
                     "title": display_title,
                     "image": image_src,
                     "qty": quantity,
                     "unit_price": unit_price,
                     "line_price": round(unit_price * quantity, 2),
-                    "inventory_item_id": inventory_item_id,
-                    "unit_cost": 0.0,
-                    "line_cost": 0.0,
+                    "unit_cost": unit_cost,
+                    "line_cost": round(unit_cost * quantity, 2),
                 }
             )
             item_qty_total += quantity
@@ -739,25 +754,13 @@ def build_aghaje_orders_page_data():
             }
         )
 
-    cost_map = {}
-    if inventory_ids:
-        try:
-            cost_map = fetch_aghaje_inventory_item_costs(inventory_ids)
-        except Exception as error:
-            print(f"Could not fetch Aghaje inventory costs: {error}")
-            cost_map = {}
-
     net_payment = 0.0
     total_items_qty = 0
     for order in results:
         total_items_qty += int(order.get("item_qty") or 0)
         order_item_cost = 0.0
         for item in order.get("items", []):
-            inventory_item_id = str(item.get("inventory_item_id") or "").strip()
-            unit_cost = parse_money(cost_map.get(inventory_item_id, 0)) if inventory_item_id else 0.0
             quantity = int(item.get("qty") or 0)
-            item["unit_cost"] = unit_cost
-            item["line_cost"] = round(unit_cost * quantity, 2)
             order_item_cost += item["line_cost"]
 
         order_id = str(order.get("order_id") or "")
@@ -2202,6 +2205,7 @@ def update_aghaje_order():
     amount_received = parse_money(data.get("amount_received", 0))
     packaging_cost = parse_money(data.get("packaging_cost", 0))
     delivery_cost = parse_money(data.get("delivery_cost", 0))
+    item_costs = data.get("item_costs") or []
 
     if delivery_status == "Cancelled":
         payment_status = "Not Payable"
@@ -2210,6 +2214,20 @@ def update_aghaje_order():
         delivery_cost = 0.0
 
     try:
+        for item in item_costs:
+            item_key = str(item.get("cost_key") or "").strip()
+            title = str(item.get("title") or "").strip()
+            if not item_key or not title:
+                continue
+            if not upsert_aghaje_item_cost_override(
+                item_key=item_key,
+                title=title,
+                cost=parse_money(item.get("cost", 0)),
+                product_id=item.get("product_id"),
+                variant_id=item.get("variant_id"),
+            ):
+                raise RuntimeError(f"Could not save item cost for {title}.")
+
         if not upsert_aghaje_order_override(
             order_id,
             amount_received,
