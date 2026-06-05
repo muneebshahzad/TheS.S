@@ -28,6 +28,22 @@ def _ensure_app_settings_table(cur):
     )
 
 
+def _ensure_aghaje_order_overrides_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS aghaje_order_overrides (
+            order_id TEXT PRIMARY KEY,
+            amount_received NUMERIC(12,2) NOT NULL DEFAULT 0,
+            packaging_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+            delivery_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+            payment_status TEXT NOT NULL DEFAULT 'Pending',
+            delivery_status TEXT NOT NULL DEFAULT 'Inprocess',
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """
+    )
+
+
 def get_conn():
     url = (
         os.getenv("DATABASE_URL", "")
@@ -77,6 +93,7 @@ def init_db():
                     """
                 )
                 _ensure_app_settings_table(cur)
+                _ensure_aghaje_order_overrides_table(cur)
             conn.commit()
         _set_last_db_error("")
         print("DB initialized.")
@@ -169,4 +186,72 @@ def set_app_setting(key: str, value: str):
     except Exception as e:
         _set_last_db_error(str(e))
         print(f"DB set_app_setting error: {e}")
+        return False
+
+
+def load_aghaje_order_overrides() -> dict:
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                _ensure_aghaje_order_overrides_table(cur)
+                cur.execute(
+                    """
+                    SELECT order_id, amount_received, packaging_cost, delivery_cost, payment_status, delivery_status
+                    FROM aghaje_order_overrides
+                    """
+                )
+                _set_last_db_error("")
+                return {row["order_id"]: dict(row) for row in cur.fetchall()}
+    except Exception as e:
+        _set_last_db_error(str(e))
+        print(f"DB load aghaje overrides error: {e}")
+        return {}
+
+
+def upsert_aghaje_order_override(
+    order_id: str,
+    amount_received: str | float,
+    packaging_cost: str | float,
+    delivery_cost: str | float,
+    payment_status: str,
+    delivery_status: str,
+):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                _ensure_aghaje_order_overrides_table(cur)
+                cur.execute(
+                    """
+                    INSERT INTO aghaje_order_overrides (
+                        order_id,
+                        amount_received,
+                        packaging_cost,
+                        delivery_cost,
+                        payment_status,
+                        delivery_status
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (order_id) DO UPDATE
+                        SET amount_received = EXCLUDED.amount_received,
+                            packaging_cost = EXCLUDED.packaging_cost,
+                            delivery_cost = EXCLUDED.delivery_cost,
+                            payment_status = EXCLUDED.payment_status,
+                            delivery_status = EXCLUDED.delivery_status,
+                            updated_at = NOW()
+                    """,
+                    (
+                        order_id,
+                        amount_received,
+                        packaging_cost,
+                        delivery_cost,
+                        payment_status,
+                        delivery_status,
+                    ),
+                )
+            conn.commit()
+        _set_last_db_error("")
+        return True
+    except Exception as e:
+        _set_last_db_error(str(e))
+        print(f"DB upsert aghaje override error: {e}")
         return False

@@ -31,8 +31,10 @@ from db import (
     delete_order_status,
     get_app_setting,
     init_db,
+    load_aghaje_order_overrides,
     load_order_statuses,
     set_app_setting,
+    upsert_aghaje_order_override,
     upsert_order_status,
 )
 from shopify_protected_data import (
@@ -61,6 +63,8 @@ ADMIN_PORTAL_PASSWORD = os.getenv("ADMIN_PORTAL_PASSWORD", "security")
 
 order_details = []
 product_image_cache = {}
+aghaje_product_cache = {}
+aghaje_inventory_item_cost_cache = {}
 semaphore = asyncio.Semaphore(2)
 RATE_LIMIT = 2
 LAST_REQUEST_TIME = 0.0
@@ -424,6 +428,372 @@ def update_shopify_inventory_item_cost(inventory_item_id, cost):
     )
     response.raise_for_status()
     inventory_item_cost_cache[str(inventory_item_id)] = parse_money(cost, 0)
+
+
+def get_aghaje_shop_domain():
+    return (os.getenv("AGHAJE_SHOP_URL") or os.getenv("AGHAJE_SHOP_DOMAIN") or "").strip()
+
+
+def aghaje_rest_base_url():
+    raw_shop_url = get_aghaje_shop_domain()
+    if not raw_shop_url:
+        raise RuntimeError("AGHAJE_SHOP_URL is not configured.")
+    parsed = urlparse(raw_shop_url if "://" in raw_shop_url else f"https://{raw_shop_url}")
+    host = parsed.netloc or parsed.path
+    if not host:
+        raise RuntimeError("AGHAJE_SHOP_URL is not configured.")
+    api_version = os.getenv("AGHAJE_ADMIN_API_VERSION", "2026-04")
+    return f"https://{host}/admin/api/{api_version}"
+
+
+def aghaje_rest_headers():
+    token = (os.getenv("AGHAJE_PASSWORD") or os.getenv("AGHAJE_ACCESS_TOKEN") or "").strip()
+    if not token:
+        raise RuntimeError("AGHAJE_PASSWORD is not configured.")
+    return {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def get_aghaje_created_at_min():
+    raw_value = (os.getenv("AGHAJE_CREATED_AT_MIN") or "2026-05-31T00:00:00+05:00").strip()
+    try:
+        return datetime.fromisoformat(raw_value.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        print(f"Invalid AGHAJE_CREATED_AT_MIN '{raw_value}', using 2026-05-31T00:00:00+05:00.")
+        return "2026-05-31T00:00:00+05:00"
+
+
+def get_aghaje_fetch_status():
+    return (os.getenv("AGHAJE_ORDER_FETCH_STATUS") or "any").strip().lower() or "any"
+
+
+def parse_shopify_next_link(link_header):
+    if not link_header:
+        return None
+    for part in str(link_header).split(","):
+        chunk = part.strip()
+        if 'rel="next"' not in chunk:
+            continue
+        url_part = chunk.split(";", 1)[0].strip()
+        if url_part.startswith("<") and url_part.endswith(">"):
+            return url_part[1:-1]
+    return None
+
+
+def extract_note_attributes(order):
+    notes = {}
+    for item in (order or {}).get("note_attributes") or []:
+        name = str((item or {}).get("name") or "").strip()
+        if name:
+            notes[name] = (item or {}).get("value")
+    return notes
+
+
+def get_aghaje_delivery_status(order):
+    if (order or {}).get("cancelled_at"):
+        return "Cancelled", "Order cancelled in Shopify."
+
+    note_attributes = extract_note_attributes(order)
+    raw_status = str(note_attributes.get("hxs_courier_status") or "").strip()
+    if raw_status:
+        upper = raw_status.upper()
+        if "DELIVER" in upper:
+            return "Delivered", raw_status
+        if "RETURN" in upper or "REFUS" in upper:
+            return "Returned", raw_status
+        if "CANCEL" in upper:
+            return "Cancelled", raw_status
+        return "Other status", raw_status
+
+    fulfillment_status = str((order or {}).get("fulfillment_status") or "").strip().lower()
+    if fulfillment_status == "fulfilled":
+        return "Delivered", "Fulfilled in Shopify"
+    if fulfillment_status == "partial":
+        return "Inprocess", "Partially fulfilled in Shopify"
+    return "Inprocess", "No courier status yet"
+
+
+def _aghaje_product_cache_key(product_id):
+    return str(product_id or "").strip()
+
+
+def fetch_aghaje_product_details(product_id):
+    cache_key = _aghaje_product_cache_key(product_id)
+    if not cache_key:
+        return None
+    if cache_key in aghaje_product_cache:
+        return aghaje_product_cache[cache_key]
+
+    base_url = aghaje_rest_base_url()
+    headers = aghaje_rest_headers()
+    response = requests.get(f"{base_url}/products/{cache_key}.json", headers=headers, timeout=30)
+    response.raise_for_status()
+    product = (response.json() or {}).get("product") or {}
+
+    images = list(product.get("images") or [])
+    base_image = ""
+    if product.get("image") and isinstance(product.get("image"), dict):
+        base_image = product["image"].get("src") or ""
+
+    variant_map = {}
+    for variant in product.get("variants") or []:
+        variant_id = str((variant or {}).get("id") or "").strip()
+        variant_title = str((variant or {}).get("title") or "").strip()
+        image_src = base_image or "/static/sleekspace-wordmark.svg"
+        image_id = str((variant or {}).get("image_id") or "").strip()
+        if image_id:
+            for image in images:
+                if str((image or {}).get("id") or "").strip() == image_id:
+                    image_src = (image or {}).get("src") or image_src
+                    break
+        variant_map[variant_id] = {
+            "variant_title": "" if variant_title in {"", "Default Title"} else variant_title,
+            "inventory_item_id": (variant or {}).get("inventory_item_id"),
+            "image_src": image_src,
+        }
+
+    payload = {
+        "product_title": product.get("title", ""),
+        "image": base_image or "/static/sleekspace-wordmark.svg",
+        "variants": variant_map,
+    }
+    aghaje_product_cache[cache_key] = payload
+    return payload
+
+
+def fetch_aghaje_inventory_item_costs(inventory_item_ids):
+    ids = [str(item_id).strip() for item_id in (inventory_item_ids or []) if str(item_id).strip()]
+    if not ids:
+        return {}
+
+    uncached_ids = [item_id for item_id in ids if item_id not in aghaje_inventory_item_cost_cache]
+    if uncached_ids:
+        base_url = aghaje_rest_base_url()
+        headers = aghaje_rest_headers()
+        for offset in range(0, len(uncached_ids), 50):
+            batch = uncached_ids[offset : offset + 50]
+            response = requests.get(
+                f"{base_url}/inventory_items.json",
+                headers=headers,
+                params={"ids": ",".join(batch)},
+                timeout=20,
+            )
+            response.raise_for_status()
+            payload = response.json().get("inventory_items", []) or []
+            for item in payload:
+                item_id = str(item.get("id") or "").strip()
+                if item_id:
+                    aghaje_inventory_item_cost_cache[item_id] = parse_money(item.get("cost", 0))
+            for missing_id in batch:
+                aghaje_inventory_item_cost_cache.setdefault(missing_id, 0.0)
+    return {item_id: aghaje_inventory_item_cost_cache.get(item_id, 0.0) for item_id in ids}
+
+
+def fetch_aghaje_orders(created_at_min, fetch_status):
+    collected = []
+    base_url = aghaje_rest_base_url()
+    headers = aghaje_rest_headers()
+    fields = ",".join(
+        [
+            "id",
+            "name",
+            "created_at",
+            "updated_at",
+            "financial_status",
+            "fulfillment_status",
+            "current_subtotal_price",
+            "current_total_price",
+            "subtotal_price",
+            "total_price",
+            "total_discounts",
+            "total_shipping_price_set",
+            "line_items",
+            "customer",
+            "billing_address",
+            "shipping_address",
+            "note_attributes",
+            "fulfillments",
+            "tags",
+            "cancelled_at",
+            "closed_at",
+        ]
+    )
+
+    url = f"{base_url}/orders.json"
+    params = {
+        "limit": 250,
+        "order": "created_at DESC",
+        "created_at_min": created_at_min,
+        "status": fetch_status,
+        "fields": fields,
+    }
+
+    while url:
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+        response.raise_for_status()
+        collected.extend(response.json().get("orders", []) or [])
+        url = parse_shopify_next_link(response.headers.get("Link"))
+        params = None
+
+    print(
+        f"Fetched {len(collected)} Aghaje orders with status={fetch_status}, created_at_min={created_at_min}."
+    )
+    return collected
+
+
+def load_aghaje_order_sync_state():
+    return load_aghaje_order_overrides() or {}
+
+
+def build_aghaje_orders_page_data():
+    overrides = load_aghaje_order_sync_state()
+    created_at_min = get_aghaje_created_at_min()
+    fetch_status = get_aghaje_fetch_status()
+    try:
+        raw_orders = fetch_aghaje_orders(created_at_min, fetch_status)
+    except Exception as error:
+        print(f"Could not fetch Aghaje orders: {error}")
+        return [], {"total_orders": 0, "total_items_qty": 0, "net_payment": 0.0}, str(error)
+
+    results = []
+    inventory_ids = []
+    shop_domain = get_aghaje_shop_domain()
+    parsed_shop = urlparse(shop_domain if "://" in shop_domain else f"https://{shop_domain}") if shop_domain else None
+    shop_name = ((parsed_shop.netloc or parsed_shop.path) if parsed_shop else "").split(".")[0]
+
+    for order in raw_orders:
+        note_attributes = extract_note_attributes(order)
+        delivery_status, delivery_detail = get_aghaje_delivery_status(order)
+        customer = order.get("customer") or {}
+        shipping = order.get("shipping_address") or {}
+        billing = order.get("billing_address") or {}
+        customer_name = (customer.get("first_name") or "").strip()
+        customer_name = f"{customer_name} {(customer.get('last_name') or '').strip()}".strip()
+        customer_name = customer_name or shipping.get("name") or billing.get("name") or "No customer name"
+
+        item_rows = []
+        item_qty_total = 0
+        for line_item in order.get("line_items", []) or []:
+            product_id = line_item.get("product_id")
+            variant_id = line_item.get("variant_id")
+            try:
+                product_payload = fetch_aghaje_product_details(product_id) if product_id else None
+            except Exception as error:
+                print(f"Could not fetch Aghaje product {product_id}: {error}")
+                product_payload = None
+            variant_payload = (product_payload or {}).get("variants", {}).get(str(variant_id).strip(), {})
+            image_src = variant_payload.get("image_src") or (product_payload or {}).get("image") or "/static/sleekspace-wordmark.svg"
+            variant_title = variant_payload.get("variant_title") or ""
+            inventory_item_id = variant_payload.get("inventory_item_id")
+            if inventory_item_id:
+                inventory_ids.append(str(inventory_item_id))
+
+            quantity = int(line_item.get("quantity") or 0)
+            unit_price = parse_money(line_item.get("price", 0))
+            product_title = line_item.get("title") or line_item.get("name") or "Product"
+            display_title = f"{product_title} - {variant_title}" if variant_title and variant_title != "Default Title" else product_title
+
+            item_rows.append(
+                {
+                    "title": display_title,
+                    "image": image_src,
+                    "qty": quantity,
+                    "unit_price": unit_price,
+                    "line_price": round(unit_price * quantity, 2),
+                    "inventory_item_id": inventory_item_id,
+                    "unit_cost": 0.0,
+                    "line_cost": 0.0,
+                }
+            )
+            item_qty_total += quantity
+
+        results.append(
+            {
+                "order_id": order.get("name") or f"#{order.get('order_number', '')}",
+                "shopify_order_id": order.get("id"),
+                "shopify_link": f"https://admin.shopify.com/store/{shop_name}/orders/{order.get('id')}" if shop_name else "#",
+                "created_at": order.get("created_at", ""),
+                "customer_name": customer_name,
+                "customer_phone": shipping.get("phone") or billing.get("phone") or (customer.get("phone") or ""),
+                "customer_city": shipping.get("city") or billing.get("city") or "",
+                "customer_address": shipping.get("address1") or billing.get("address1") or "",
+                "items": item_rows,
+                "item_cost": 0.0,
+                "item_qty": item_qty_total,
+                "packaging_cost": 0.0,
+                "delivery_cost": 0.0,
+                "amount_received": 0.0,
+                "payment_status": "Not Payable" if delivery_status == "Cancelled" else "Pending",
+                "delivery_status": delivery_status,
+                "delivery_status_detail": delivery_detail,
+                "price": parse_money(order.get("current_subtotal_price", order.get("subtotal_price", 0))),
+                "order_total": parse_money(order.get("current_total_price", order.get("total_price", 0))),
+                "payable": 0.0,
+                "financial_status": (order.get("financial_status") or "").title(),
+                "tags": [tag.strip() for tag in str(order.get("tags") or "").split(",") if tag.strip()],
+                "note_attributes": note_attributes,
+                "cancelled_at": order.get("cancelled_at"),
+            }
+        )
+
+    cost_map = {}
+    if inventory_ids:
+        try:
+            cost_map = fetch_aghaje_inventory_item_costs(inventory_ids)
+        except Exception as error:
+            print(f"Could not fetch Aghaje inventory costs: {error}")
+            cost_map = {}
+
+    net_payment = 0.0
+    total_items_qty = 0
+    for order in results:
+        total_items_qty += int(order.get("item_qty") or 0)
+        order_item_cost = 0.0
+        for item in order.get("items", []):
+            inventory_item_id = str(item.get("inventory_item_id") or "").strip()
+            unit_cost = parse_money(cost_map.get(inventory_item_id, 0)) if inventory_item_id else 0.0
+            quantity = int(item.get("qty") or 0)
+            item["unit_cost"] = unit_cost
+            item["line_cost"] = round(unit_cost * quantity, 2)
+            order_item_cost += item["line_cost"]
+
+        order_id = str(order.get("order_id") or "")
+        override = overrides.get(order_id) or {}
+        delivery_status = str(override.get("delivery_status") or order.get("delivery_status") or "Inprocess").strip() or "Inprocess"
+        packaging_cost = parse_money(override.get("packaging_cost", order.get("packaging_cost", 0)))
+        delivery_cost = parse_money(override.get("delivery_cost", order.get("delivery_cost", 0)))
+        financial_status = str(order.get("financial_status") or "").strip().lower()
+        default_amount_received = order["order_total"] if delivery_status == "Delivered" or financial_status in PAID_FINANCIAL_STATUSES else 0.0
+        amount_received = parse_money(override.get("amount_received", default_amount_received))
+        default_payment_status = "Not Payable" if delivery_status == "Cancelled" else ("Paid" if amount_received > 0 else "Pending")
+        payment_status = str(override.get("payment_status") or default_payment_status).strip() or default_payment_status
+
+        if delivery_status == "Cancelled":
+            payment_status = "Not Payable"
+            amount_received = 0.0
+            packaging_cost = 0.0
+            delivery_cost = 0.0
+
+        payable = 0.0 if payment_status == "Not Payable" or delivery_status == "Cancelled" else round(amount_received - order_item_cost - packaging_cost - delivery_cost, 2)
+        order["item_cost"] = round(order_item_cost, 2)
+        order["packaging_cost"] = round(packaging_cost, 2)
+        order["delivery_cost"] = round(delivery_cost, 2)
+        order["amount_received"] = round(amount_received, 2)
+        order["payment_status"] = payment_status
+        order["delivery_status"] = delivery_status
+        order["payable"] = round(payable, 2)
+        net_payment += order["payable"]
+
+    results.sort(key=lambda row: parse_date_for_sort(row.get("created_at")), reverse=True)
+    summary = {
+        "total_orders": len(results),
+        "total_items_qty": total_items_qty,
+        "net_payment": round(net_payment, 2),
+    }
+    return results, summary, ""
 
 
 def ensure_required_shopify_webhooks():
@@ -1761,6 +2131,17 @@ def pending_orders():
     return render_template("pending.html", all_orders=all_orders, pending_items=pending_items, summary=summary)
 
 
+@app.route("/aghaje-orders")
+def aghaje_orders():
+    orders, summary, error_message = build_aghaje_orders_page_data()
+    return render_template(
+        "aghaje_orders.html",
+        orders=orders,
+        summary=summary,
+        error_message=error_message,
+    )
+
+
 @app.route("/product-costs")
 def product_costs():
     return render_template("product_costs.html", products=build_product_cost_rows())
@@ -1805,6 +2186,50 @@ def update_product_costs():
 
         reload_orders()
         return jsonify({"success": True, "price": submitted_price, "cost": submitted_cost})
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 500
+
+
+@app.route("/aghaje-orders/update", methods=["POST"])
+def update_aghaje_order():
+    data = request.get_json() or {}
+    order_id = str(data.get("order_id") or "").strip()
+    if not order_id:
+        return jsonify({"success": False, "error": "Order id is required."}), 400
+
+    payment_status = str(data.get("payment_status") or "Pending").strip() or "Pending"
+    delivery_status = str(data.get("delivery_status") or "Inprocess").strip() or "Inprocess"
+    amount_received = parse_money(data.get("amount_received", 0))
+    packaging_cost = parse_money(data.get("packaging_cost", 0))
+    delivery_cost = parse_money(data.get("delivery_cost", 0))
+
+    if delivery_status == "Cancelled":
+        payment_status = "Not Payable"
+        amount_received = 0.0
+        packaging_cost = 0.0
+        delivery_cost = 0.0
+
+    try:
+        if not upsert_aghaje_order_override(
+            order_id,
+            amount_received,
+            packaging_cost,
+            delivery_cost,
+            payment_status,
+            delivery_status,
+        ):
+            raise RuntimeError("Could not save Aghaje order override.")
+        return jsonify(
+            {
+                "success": True,
+                "order_id": order_id,
+                "amount_received": amount_received,
+                "packaging_cost": packaging_cost,
+                "delivery_cost": delivery_cost,
+                "payment_status": payment_status,
+                "delivery_status": delivery_status,
+            }
+        )
     except Exception as error:
         return jsonify({"success": False, "error": str(error)}), 500
 

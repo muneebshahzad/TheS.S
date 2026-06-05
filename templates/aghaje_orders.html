@@ -1,0 +1,376 @@
+{% extends 'base.html' %}
+{% block title %}The Sleek Space – Aghaje Orders{% endblock %}
+
+{% block content %}
+<style>
+  #main { overflow:auto !important; }
+  .agh-shell { min-height:100%; display:block; }
+  .agh-topbar { height:52px; position:sticky; top:0; z-index:5; background:#fff; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; padding:0 20px; gap:12px; flex-shrink:0; }
+  .agh-title { font-size:16px; font-weight:700; color:#3a3b45; }
+  .agh-scroll { padding:16px; display:flex; flex-direction:column; gap:16px; }
+  .agh-stats { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; }
+  .agh-card { background:#fff; border-radius:12px; border:1px solid #e3e6f0; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
+  .agh-card-head { padding:14px 20px; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .agh-stat-row { padding:14px 16px; display:flex; align-items:center; gap:12px; }
+  .agh-stat-icon { width:42px; height:42px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0; }
+  .agh-stat-label { font-size:10px; color:#858796; font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
+  .agh-stat-value { font-size:22px; font-weight:800; margin-top:2px; }
+  .agh-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .agh-btn { border-radius:8px; padding:8px 12px; font-size:11px; font-weight:700; cursor:pointer; font-family:'DM Sans', sans-serif; border:1px solid #dce2ee; background:#fff; color:#3a3b45; }
+  .agh-btn.primary { border-color:#4e73df; background:#4e73df; color:#fff; }
+  .agh-btn.success { border-color:#1cc88a; background:#1cc88a; color:#fff; }
+  .agh-btn.warning { border-color:#f6c23e; background:#fff7dd; color:#8b5a00; }
+  .agh-btn[hidden] { display:none !important; }
+  .agh-table-wrap { overflow:auto; }
+  .agh-table { width:100%; border-collapse:collapse; min-width:1680px; }
+  .agh-table th, .agh-table td { padding:12px 14px; border-bottom:1px solid #eef0f6; text-align:left; vertical-align:top; }
+  .agh-table th { background:#f8f9fc; font-size:11px; font-weight:700; color:#858796; text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
+  .agh-table tbody tr:hover { background:#fafbff; }
+  .agh-order-id { font-size:13px; font-weight:700; color:#4e73df; text-decoration:none; white-space:nowrap; }
+  .agh-order-date { font-size:10px; color:#858796; margin-top:4px; white-space:nowrap; }
+  .agh-chip-list { display:flex; flex-direction:column; gap:8px; }
+  .agh-item-chip { display:grid; grid-template-columns:44px minmax(0,1fr) auto; gap:10px; align-items:center; padding:8px 10px; border:1px solid #e8eaef; border-radius:10px; background:#fff; }
+  .agh-item-chip img { width:44px; height:44px; border-radius:8px; object-fit:cover; background:#f2f4f8; }
+  .agh-item-title { font-size:12px; font-weight:700; color:#2d2e36; }
+  .agh-item-meta { font-size:10px; color:#858796; margin-top:2px; }
+  .agh-money { font-family:'DM Mono', monospace; font-size:13px; font-weight:700; color:#2d2e36; white-space:nowrap; }
+  .agh-input, .agh-select { width:120px; border:1px solid #dce2ee; border-radius:8px; padding:8px 10px; font-size:12px; font-family:'DM Sans', sans-serif; color:#2d2e36; background:#fff; }
+  .agh-input[disabled], .agh-select[disabled] { background:#f8f9fc; color:#858796; cursor:default; }
+  .agh-actions { display:flex; gap:8px; align-items:center; }
+  .agh-payable { font-family:'DM Mono', monospace; font-size:14px; font-weight:800; white-space:nowrap; }
+  .agh-detail { font-size:10px; color:#858796; margin-top:6px; line-height:1.45; max-width:220px; }
+  .agh-empty { padding:36px 16px; text-align:center; color:#858796; font-size:13px; }
+  .agh-banner { padding:12px 14px; border-radius:10px; background:#fef3f2; border:1px solid #f4c7c3; color:#a33a2e; font-size:12px; }
+  .agh-positive { color:#1cc88a; }
+  .agh-negative { color:#e74a3b; }
+  .agh-neutral { color:#6f7280; }
+  @media (max-width: 767px) {
+    .agh-topbar { padding:0 14px; }
+    .agh-scroll { padding:12px; }
+    .agh-stats { grid-template-columns:1fr; }
+  }
+</style>
+
+<div class="agh-shell">
+  <div class="agh-topbar">
+    <span class="agh-title">Aghaje Orders</span>
+    <div style="flex:1"></div>
+    <span style="font-size:11px;color:#858796;">{{ summary.total_orders }} order{{ '' if summary.total_orders == 1 else 's' }}</span>
+  </div>
+
+  <div class="agh-scroll">
+    {% if error_message %}
+    <div class="agh-banner">Could not fetch Aghaje orders: {{ error_message }}</div>
+    {% endif %}
+
+    <div class="agh-stats">
+      <div class="agh-card">
+        <div class="agh-stat-row">
+          <div class="agh-stat-icon" style="background:rgba(78,115,223,0.1)">🧾</div>
+          <div>
+            <div class="agh-stat-label">Total Orders</div>
+            <div class="agh-stat-value" style="color:#4e73df">{{ summary.total_orders }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="agh-card">
+        <div class="agh-stat-row">
+          <div class="agh-stat-icon" style="background:rgba(28,200,138,0.1)">📦</div>
+          <div>
+            <div class="agh-stat-label">Total Items</div>
+            <div class="agh-stat-value" style="color:#1cc88a">{{ summary.total_items_qty }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="agh-card">
+        <div class="agh-stat-row">
+          <div class="agh-stat-icon" style="background:rgba(54,185,204,0.12)">💰</div>
+          <div>
+            <div class="agh-stat-label">Net Payment</div>
+            <div class="agh-stat-value {{ 'agh-positive' if summary.net_payment >= 0 else 'agh-negative' }}">PKR {{ summary.net_payment|format_number }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="agh-card">
+      <div class="agh-card-head">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#3a3b45;">Aghaje order ledger</div>
+          <div style="font-size:11px;color:#858796;margin-top:4px;">Use the row editor for payment and operational costs. Cancelled orders are forced to Not Payable.</div>
+        </div>
+        <div class="agh-toolbar">
+          <button class="agh-btn primary" type="button" onclick="window.location.reload()">Refresh</button>
+        </div>
+      </div>
+      <div class="agh-table-wrap">
+        <table class="agh-table">
+          <thead>
+            <tr>
+              <th>Order Id</th>
+              <th>Items</th>
+              <th>Item Cost</th>
+              <th>Packaging Cost</th>
+              <th>Delivery Cost</th>
+              <th>Price</th>
+              <th>Order Total</th>
+              <th>Amount Received</th>
+              <th>Payable</th>
+              <th>Delivery Status</th>
+              <th>Payment Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for order in orders %}
+            <tr
+              data-row-index="{{ loop.index0 }}"
+              data-order-id="{{ order.order_id }}"
+              data-original-amount-received="{{ order.amount_received }}"
+              data-original-packaging-cost="{{ order.packaging_cost }}"
+              data-original-delivery-cost="{{ order.delivery_cost }}"
+              data-original-payment-status="{{ order.payment_status }}"
+              data-original-delivery-status="{{ order.delivery_status }}"
+            >
+              <td>
+                <a class="agh-order-id" href="{{ order.shopify_link }}" target="_blank">{{ order.order_id }}</a>
+                <div class="agh-order-date">{{ order.created_at }}</div>
+              </td>
+              <td>
+                <div class="agh-chip-list">
+                  {% for item in order.items %}
+                  <div class="agh-item-chip">
+                    <img src="{{ item.image }}" alt="">
+                    <div>
+                      <div class="agh-item-title">{{ item.title }}</div>
+                      <div class="agh-item-meta">Qty {{ item.qty }}</div>
+                    </div>
+                    <div class="agh-money">PKR {{ item.line_price|format_number }}</div>
+                  </div>
+                  {% endfor %}
+                </div>
+              </td>
+              <td><span class="agh-money">PKR {{ order.item_cost|format_number }}</span></td>
+              <td>
+                <input
+                  class="agh-input"
+                  data-aghaje-field="packaging_cost"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value="{{ order.packaging_cost }}"
+                  disabled
+                  oninput="recalculateAghajeRow(this.closest('tr'))"
+                >
+              </td>
+              <td>
+                <input
+                  class="agh-input"
+                  data-aghaje-field="delivery_cost"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value="{{ order.delivery_cost }}"
+                  disabled
+                  oninput="recalculateAghajeRow(this.closest('tr'))"
+                >
+              </td>
+              <td><span class="agh-money">PKR {{ order.price|format_number }}</span></td>
+              <td><span class="agh-money">PKR {{ order.order_total|format_number }}</span></td>
+              <td>
+                <input
+                  class="agh-input"
+                  data-aghaje-field="amount_received"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value="{{ order.amount_received }}"
+                  disabled
+                  oninput="recalculateAghajeRow(this.closest('tr'))"
+                >
+              </td>
+              <td>
+                <span class="agh-payable" data-payable-value="{{ order.payable }}">PKR {{ order.payable|format_number }}</span>
+              </td>
+              <td>
+                <select
+                  class="agh-select"
+                  data-aghaje-field="delivery_status"
+                  disabled
+                  onchange="handleAghajeStatusChange(this.closest('tr'))"
+                >
+                  {% for option in ['Inprocess', 'Delivered', 'Returned', 'Cancelled', 'Other status'] %}
+                  <option value="{{ option }}" {% if order.delivery_status == option %}selected{% endif %}>{{ option }}</option>
+                  {% endfor %}
+                </select>
+                <div class="agh-detail">{{ order.delivery_status_detail or 'No courier status yet' }}</div>
+              </td>
+              <td>
+                <select
+                  class="agh-select"
+                  data-aghaje-field="payment_status"
+                  disabled
+                  onchange="recalculateAghajeRow(this.closest('tr'))"
+                >
+                  {% for option in ['Pending', 'Paid', 'Not Payable'] %}
+                  <option value="{{ option }}" {% if order.payment_status == option %}selected{% endif %}>{{ option }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td>
+                <div class="agh-actions">
+                  <button class="agh-btn" data-edit onclick="toggleAghajeRow({{ loop.index0 }}, true)">Edit</button>
+                  <button class="agh-btn warning" data-cancel hidden onclick="toggleAghajeRow({{ loop.index0 }}, false)">Cancel</button>
+                  <button class="agh-btn success" data-save hidden onclick="saveAghajeRow({{ loop.index0 }})">Save</button>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if not orders %}
+        <div class="agh-empty">No Aghaje orders found for the selected date range.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function aghajeMoney(value) {
+  return `PKR ${Number(value || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function getAghajeRowInputs(row) {
+  return {
+    amount: row.querySelector('[data-aghaje-field="amount_received"]'),
+    packaging: row.querySelector('[data-aghaje-field="packaging_cost"]'),
+    delivery: row.querySelector('[data-aghaje-field="delivery_cost"]'),
+    payment: row.querySelector('[data-aghaje-field="payment_status"]'),
+    deliveryStatus: row.querySelector('[data-aghaje-field="delivery_status"]'),
+  };
+}
+
+function toggleAghajeRow(index, editable) {
+  const row = document.querySelector(`[data-row-index="${index}"]`);
+  if (!row) return;
+  const inputs = getAghajeRowInputs(row);
+  Object.values(inputs).forEach((el) => {
+    if (el) el.disabled = !editable;
+  });
+  row.querySelector('[data-edit]').hidden = editable;
+  row.querySelector('[data-cancel]').hidden = !editable;
+  row.querySelector('[data-save]').hidden = !editable;
+  if (!editable) {
+    resetAghajeRow(row);
+  } else {
+    recalculateAghajeRow(row);
+    inputs.amount?.focus();
+  }
+}
+
+function resetAghajeRow(row) {
+  if (!row) return;
+  const inputs = getAghajeRowInputs(row);
+  if (inputs.amount) inputs.amount.value = row.dataset.originalAmountReceived || '0';
+  if (inputs.packaging) inputs.packaging.value = row.dataset.originalPackagingCost || '0';
+  if (inputs.delivery) inputs.delivery.value = row.dataset.originalDeliveryCost || '0';
+  if (inputs.payment) inputs.payment.value = row.dataset.originalPaymentStatus || 'Pending';
+  if (inputs.deliveryStatus) inputs.deliveryStatus.value = row.dataset.originalDeliveryStatus || 'Inprocess';
+  recalculateAghajeRow(row);
+}
+
+function handleAghajeStatusChange(row) {
+  if (!row) return;
+  const inputs = getAghajeRowInputs(row);
+  if (!inputs.deliveryStatus) return;
+  if (inputs.deliveryStatus.value === 'Cancelled') {
+    if (inputs.amount) inputs.amount.value = '0';
+    if (inputs.packaging) inputs.packaging.value = '0';
+    if (inputs.delivery) inputs.delivery.value = '0';
+    if (inputs.payment) inputs.payment.value = 'Not Payable';
+  }
+  recalculateAghajeRow(row);
+}
+
+function recalculateAghajeRow(row) {
+  if (!row) return;
+  const inputs = getAghajeRowInputs(row);
+  const itemCost = Number(row.querySelector('[data-item-cost]')?.dataset.itemCost || row.querySelector('[data-item-cost]')?.textContent?.replace(/[^\d.-]/g, '') || 0);
+  const amount = Number(inputs.amount?.value || 0);
+  const packaging = Number(inputs.packaging?.value || 0);
+  const delivery = Number(inputs.delivery?.value || 0);
+  const deliveryStatus = String(inputs.deliveryStatus?.value || '');
+  const paymentStatus = String(inputs.payment?.value || '');
+  let payable = 0;
+  if (deliveryStatus !== 'Cancelled' && paymentStatus !== 'Not Payable') {
+    payable = amount - itemCost - packaging - delivery;
+  }
+  const payableEl = row.querySelector('[data-payable-value]');
+  if (payableEl) {
+    payableEl.dataset.payableValue = String(payable);
+    payableEl.textContent = aghajeMoney(payable);
+    payableEl.classList.toggle('agh-positive', payable >= 0);
+    payableEl.classList.toggle('agh-negative', payable < 0);
+  }
+}
+
+async function saveAghajeRow(index) {
+  const row = document.querySelector(`[data-row-index="${index}"]`);
+  if (!row) return;
+  const inputs = getAghajeRowInputs(row);
+  const payload = {
+    order_id: row.dataset.orderId,
+    amount_received: Number(inputs.amount?.value || 0),
+    packaging_cost: Number(inputs.packaging?.value || 0),
+    delivery_cost: Number(inputs.delivery?.value || 0),
+    payment_status: inputs.payment?.value || 'Pending',
+    delivery_status: inputs.deliveryStatus?.value || 'Inprocess',
+  };
+
+  const saveBtn = row.querySelector('[data-save]');
+  const oldLabel = saveBtn.textContent;
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving...';
+
+  try {
+    const response = await fetch('/aghaje-orders/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json();
+    if (!result.success) {
+      showToast(result.error || 'Could not save order');
+      saveBtn.disabled = false;
+      saveBtn.textContent = oldLabel;
+      return;
+    }
+    row.dataset.originalAmountReceived = String(result.amount_received);
+    row.dataset.originalPackagingCost = String(result.packaging_cost);
+    row.dataset.originalDeliveryCost = String(result.delivery_cost);
+    row.dataset.originalPaymentStatus = String(result.payment_status);
+    row.dataset.originalDeliveryStatus = String(result.delivery_status);
+    toggleAghajeRow(index, false);
+    showToast('Aghaje order updated');
+  } catch (error) {
+    showToast('Could not save order');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = oldLabel;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('[data-row-index]').forEach((row) => {
+    const itemCostCell = row.querySelector('td:nth-child(3)');
+    if (itemCostCell) {
+      itemCostCell.dataset.itemCost = String(Number(itemCostCell.textContent.replace(/[^\d.-]/g, '') || 0));
+    }
+    recalculateAghajeRow(row);
+  });
+});
+</script>
+{% endblock %}
