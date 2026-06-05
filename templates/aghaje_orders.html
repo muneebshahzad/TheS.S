@@ -102,7 +102,7 @@
       <div class="agh-card-head">
         <div>
           <div style="font-size:14px;font-weight:700;color:#3a3b45;">Aghaje order ledger</div>
-          <div style="font-size:11px;color:#858796;margin-top:4px;">Use the row editor for payment and operational costs. Cancelled orders are forced to Not Payable.</div>
+          <div style="font-size:11px;color:#858796;margin-top:4px;">Enter the cost for each item first. The item cost total updates automatically, then save the row costs and payment fields.</div>
         </div>
         <div class="agh-toolbar">
           <button class="agh-btn primary" type="button" onclick="window.location.reload()">Refresh</button>
@@ -163,6 +163,7 @@
                           type="number"
                           min="0"
                           step="0.01"
+                          placeholder="Cost / item"
                           value="{{ item.unit_cost }}"
                           disabled
                           oninput="recalculateAghajeRow(this.closest('tr'))"
@@ -299,7 +300,13 @@ function toggleAghajeRow(index, editable) {
     resetAghajeRow(row);
   } else {
     recalculateAghajeRow(row);
-    inputs.amount?.focus();
+    const firstCostInput = row.querySelector('[data-aghaje-item-cost]');
+    if (firstCostInput) {
+      firstCostInput.focus();
+      firstCostInput.select();
+    } else {
+      inputs.amount?.focus();
+    }
   }
 }
 
