@@ -155,6 +155,7 @@
             <div class="vendor-actions">
               <button class="vendor-add" type="button" onclick="toggleCustomVendorForm(true)">Add custom</button>
               <button class="vendor-open" type="button" onclick="openVendorListPage()">Show list</button>
+              <button class="vendor-open" type="button" onclick="openVendorInvoicePage()">Create invoice</button>
               <button class="vendor-clear" type="button" onclick="clearVendorList()">Clear all</button>
             </div>
           </div>
@@ -492,6 +493,122 @@
   function openVendorListPage() {
     if (!vendorItems.length) return;
     const html = buildVendorListHtml(vendorItems);
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const popup = window.open(url, '_blank');
+    if (!popup) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    popup.addEventListener('load', () => {
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, { once: true });
+  }
+
+  function buildVendorInvoiceHtml(items) {
+    const safeItems = Array.isArray(items) ? items : [];
+    const rows = safeItems.map((item) => {
+      const qty = Math.max(1, Number(item.quantity || 1));
+      const price = Math.max(0, Number(item.price || 0));
+      const total = Math.max(0, price * qty);
+      return `
+        <tr>
+          <td class="name">${escapeHtml(item.title || '')}</td>
+          <td class="image-cell">${item.image ? `<img class="product-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || '')}">` : ''}</td>
+          <td class="qty">${qty}</td>
+          <td class="money">PKR ${price.toLocaleString('en-PK')}</td>
+          <td class="money strong">PKR ${total.toLocaleString('en-PK')}</td>
+        </tr>
+      `;
+    }).join('');
+    const subtotal = safeItems.reduce((sum, item) => {
+      const qty = Math.max(1, Number(item.quantity || 1));
+      const price = Math.max(0, Number(item.price || 0));
+      return sum + (price * qty);
+    }, 0);
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vendor Invoice</title>
+  <style>
+    :root { --bg:#f6f7fb; --panel:#fff; --text:#202331; --muted:#687085; --line:#dfe3ec; --head:#eef2f8; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.35; }
+    main { width:min(1180px, calc(100% - 24px)); margin:18px auto 28px; }
+    .header { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:12px; }
+    h1 { margin:0; font-size:24px; line-height:1.15; }
+    .summary { margin:4px 0 0; color:var(--muted); }
+    .count { flex:0 0 auto; padding:7px 11px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--muted); font-weight:700; }
+    .table-wrap { border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 10px 26px rgba(25,34,62,0.08); overflow:hidden; }
+    table { width:100%; border-collapse:collapse; table-layout:fixed; }
+    th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
+    th { background:var(--head); color:#30364a; font-size:12px; font-weight:800; text-transform:uppercase; }
+    tbody tr:last-child td { border-bottom:0; }
+    tbody tr:hover { background:#fafbff; }
+    .name { width:34%; font-weight:700; overflow-wrap:anywhere; }
+    .image-cell { width:22%; }
+    .qty { width:10%; font-size:18px; font-weight:800; text-align:center; }
+    .money { width:17%; white-space:nowrap; }
+    .strong { font-weight:800; }
+    .product-image { display:block; width:110px; height:110px; object-fit:contain; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .totals { margin-top:12px; display:flex; justify-content:flex-end; }
+    .totals-card { min-width:320px; border:1px solid var(--line); border-radius:10px; background:var(--panel); box-shadow:0 10px 26px rgba(25,34,62,0.08); padding:14px 16px; }
+    .totals-row { display:flex; justify-content:space-between; gap:12px; margin-top:8px; }
+    .totals-row strong { font-size:16px; }
+    @media (max-width:900px) {
+      main { width:min(100% - 16px, 760px); }
+      .header { align-items:flex-start; flex-direction:column; }
+      .table-wrap { overflow-x:auto; }
+      table { min-width:920px; }
+      .totals { justify-content:stretch; }
+      .totals-card { min-width:100%; }
+    }
+    @media print {
+      body { background:#fff; }
+      main { width:100%; margin:0; }
+      .table-wrap, .totals-card { box-shadow:none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="header">
+      <div>
+        <h1>Vendor Invoice</h1>
+        <p class="summary">Product names, images, quantities, and selling price totals.</p>
+      </div>
+      <div class="count">${safeItems.length} item${safeItems.length === 1 ? '' : 's'}</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Image</th>
+            <th>Qty</th>
+            <th>Price</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="5" style="text-align:center;color:#687085;padding:18px;">No items selected.</td></tr>'}</tbody>
+      </table>
+    </div>
+    <div class="totals">
+      <div class="totals-card">
+        <div class="totals-row"><span>Subtotal</span><strong>PKR ${subtotal.toLocaleString('en-PK')}</strong></div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>`;
+  }
+
+  function openVendorInvoicePage() {
+    if (!vendorItems.length) return;
+    const html = buildVendorInvoiceHtml(vendorItems);
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const popup = window.open(url, '_blank');
