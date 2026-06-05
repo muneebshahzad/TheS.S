@@ -209,6 +209,9 @@
     }
     .badge.shopify { background: rgba(42, 157, 91, 0.12); color: #1b6f41; }
     .badge.daraz { background: rgba(242, 182, 50, 0.18); color: #8b5a00; }
+    .badge.payment.paid { background: rgba(28, 200, 138, 0.12); color: #1b6f41; }
+    .badge.payment.partial { background: rgba(242, 182, 50, 0.18); color: #8b5a00; }
+    .badge.payment.pending { background: rgba(20, 33, 61, 0.08); color: var(--ink); }
     .badge.pending { background: rgba(20, 33, 61, 0.08); color: var(--ink); }
     .badge.lahore { background: rgba(242, 182, 50, 0.2); color: #8b5a00; }
     .order-meta {
@@ -762,6 +765,7 @@
                 <span class="badge lahore">Lahore</span>
               {% endif %}
               <span class="badge {{ 'shopify' if order.order_via == 'Shopify' else 'daraz' }}">{{ order.order_via }}</span>
+              <span class="badge payment {{ order.payment_status_class }}">{{ order.payment_status_label }}</span>
               <span class="badge pending pending-badge"></span>
             </div>
           </div>
@@ -776,7 +780,7 @@
                 </div>
               {% endif %}
             </div>
-            <div class="price">PKR {{ order.total_price }}</div>
+            <div class="price">PKR {{ order.display_total_price|format_number }}</div>
           </div>
           <div class="items">
             {% for item in order.items_list %}
@@ -996,10 +1000,10 @@
         };
       });
       const computedSubtotal = items.reduce((sum, item) => sum + Number(item.line_total || 0), 0);
-      const storedSubtotal = Number(order.subtotal_price || 0);
+      const storedSubtotal = Number(order.current_subtotal_price || order.subtotal_price || 0);
       const shippingCharges = Number(order.shipping_charges || 0);
       const totalDiscounts = Number(order.total_discounts || 0);
-      const total = Number(order.total_price || 0);
+      const total = Number(order.current_total_price || order.total_price || 0);
       const subtotal = storedSubtotal || computedSubtotal;
       const derivedShipping = !shippingCharges && total > subtotal ? Math.max(total - subtotal + totalDiscounts, 0) : shippingCharges;
       return {

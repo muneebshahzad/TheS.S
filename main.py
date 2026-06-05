@@ -971,6 +971,12 @@ def build_pending_orders_mobile_data():
             continue
         pending_total_price = round(sum(parse_money(item.get("line_total", 0)) for item in items), 2)
         pending_total_cost = round(sum(parse_money(item.get("line_cost_total", 0)) for item in items), 2)
+        financial_status = str(shopify_order.get("financial_status", "") or "").strip().lower()
+        payment_label = "Pending"
+        payment_class = "pending"
+        if financial_status in PAID_FINANCIAL_STATUSES:
+            payment_label = "Partially Paid" if "partially" in financial_status else "Paid"
+            payment_class = "partial" if "partially" in financial_status else "paid"
         all_orders.append(
             {
                 "order_via": "Shopify",
@@ -987,10 +993,15 @@ def build_pending_orders_mobile_data():
                 "date": shopify_order.get("created_at", ""),
                 "items_list": items,
                 "financial_status": shopify_order.get("financial_status", ""),
-                "subtotal_price": shopify_order.get("subtotal_price", 0),
-                "shipping_charges": shopify_order.get("shipping_charges", 0),
-                "total_discounts": shopify_order.get("total_discounts", 0),
-                "total_price": shopify_order.get("total_price", 0),
+                "payment_status_label": payment_label,
+                "payment_status_class": payment_class,
+                "subtotal_price": parse_money(shopify_order.get("subtotal_price", 0)),
+                "current_subtotal_price": parse_money(shopify_order.get("current_subtotal_price", shopify_order.get("subtotal_price", 0))),
+                "shipping_charges": parse_money(shopify_order.get("shipping_charges", 0)),
+                "total_discounts": parse_money(shopify_order.get("total_discounts", 0)),
+                "total_price": parse_money(shopify_order.get("total_price", 0)),
+                "current_total_price": parse_money(shopify_order.get("current_total_price", shopify_order.get("current_subtotal_price", shopify_order.get("total_price", 0)))),
+                "display_total_price": parse_money(shopify_order.get("current_subtotal_price", shopify_order.get("subtotal_price", shopify_order.get("total_price", 0)))),
                 "pending_total_price": pending_total_price,
                 "pending_total_cost": pending_total_cost,
             }
