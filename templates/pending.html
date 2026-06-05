@@ -3,10 +3,10 @@
 
 {% block content %}
 <style>
-  .pending-shell { display:flex; flex-direction:column; height:100%; overflow:hidden; }
+  .pending-shell { display:flex; flex-direction:column; height:100vh; min-height:0; overflow:hidden; }
   .pending-topbar { height:52px; background:#fff; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; padding:0 20px; gap:12px; flex-shrink:0; }
   .pending-title { font-size:16px; font-weight:700; color:#3a3b45; }
-  .pending-scroll { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:16px; }
+  .pending-scroll { flex:1 1 auto; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:16px; display:flex; flex-direction:column; gap:16px; }
   .stats-grid { display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:12px; }
   .section-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; align-items:start; }
   .summary-list, .order-list { display:flex; flex-direction:column; gap:10px; }
@@ -40,7 +40,7 @@
   .vendor-clear { border:none; background:none; color:#858796; font-size:11px; font-weight:700; cursor:pointer; padding:0; }
   .vendor-list { display:flex; flex-direction:column; gap:10px; }
   .vendor-custom-form { border:1px solid #dce2ee; border-radius:12px; background:#f8faff; padding:12px; display:flex; flex-direction:column; gap:10px; }
-  .vendor-custom-grid { display:grid; grid-template-columns:1fr 1fr 90px; gap:10px; }
+  .vendor-custom-grid { display:grid; grid-template-columns:1fr 1fr 1fr 90px; gap:10px; }
   .vendor-item { border:1px solid #e3e6f0; border-radius:12px; background:#fff; padding:12px; display:grid; grid-template-columns:52px 1fr auto; gap:10px; align-items:start; }
   .vendor-thumb { width:52px; height:52px; border-radius:10px; overflow:hidden; background:#f2f4f8; display:flex; align-items:center; justify-content:center; }
   .vendor-thumb img { width:100%; height:100%; object-fit:cover; }
@@ -163,6 +163,7 @@
             <div class="vendor-custom-grid">
               <input class="vendor-input" id="customVendorName" type="text" placeholder="Product name" />
               <input class="vendor-input" id="customVendorImage" type="url" placeholder="Image URL" />
+              <input class="vendor-input" id="customVendorCost" type="number" min="0" step="0.01" value="0" placeholder="Cost" />
               <input class="vendor-input" id="customVendorQty" type="number" min="1" step="1" value="1" placeholder="Qty" />
             </div>
             <div class="vendor-custom-actions">
@@ -366,18 +367,22 @@
   function resetCustomVendorForm() {
     const nameInput = document.getElementById('customVendorName');
     const imageInput = document.getElementById('customVendorImage');
+    const costInput = document.getElementById('customVendorCost');
     const qtyInput = document.getElementById('customVendorQty');
     if (nameInput) nameInput.value = '';
     if (imageInput) imageInput.value = '';
+    if (costInput) costInput.value = '0';
     if (qtyInput) qtyInput.value = '1';
   }
 
   function saveCustomVendorItem() {
     const nameInput = document.getElementById('customVendorName');
     const imageInput = document.getElementById('customVendorImage');
+    const costInput = document.getElementById('customVendorCost');
     const qtyInput = document.getElementById('customVendorQty');
     const title = String(nameInput?.value || '').trim();
     const image = String(imageInput?.value || '').trim();
+    const cost = Math.max(0, Number(costInput?.value || 0));
     const quantity = Math.max(1, parseInt(qtyInput?.value || '1', 10) || 1);
     if (!title) {
       if (nameInput) nameInput.focus();
@@ -389,7 +394,7 @@
       quantity,
       image,
       price: 0,
-      cost: 0,
+      cost,
     });
     toggleCustomVendorForm(false);
   }
