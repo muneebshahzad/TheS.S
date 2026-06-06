@@ -71,6 +71,7 @@ semaphore = asyncio.Semaphore(2)
 RATE_LIMIT = 2
 LAST_REQUEST_TIME = 0.0
 PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
+AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY = "aghaje_net_payment_received_v1"
 inventory_item_cost_cache = {}
 
 _TAG_STYLES = {
@@ -179,6 +180,18 @@ def load_product_cost_overrides():
 
 def save_product_cost_overrides(overrides):
     return set_app_setting(PRODUCT_COSTS_SETTING_KEY, json.dumps(overrides or {}))
+
+
+def get_aghaje_net_payment_received_override():
+    raw = get_app_setting(AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY, "")
+    raw = str(raw or "").strip()
+    if not raw:
+        return None
+    return parse_money(raw)
+
+
+def set_aghaje_net_payment_received_override(value):
+    return set_app_setting(AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY, str(parse_money(value)))
 
 
 def product_cost_key(product_id=None, variant_id=None, title=""):
@@ -664,6 +677,7 @@ def load_aghaje_order_sync_state():
 def build_aghaje_orders_page_data():
     overrides = load_aghaje_order_sync_state()
     item_cost_overrides = load_aghaje_item_cost_overrides()
+    net_payment_received_override = get_aghaje_net_payment_received_override()
     created_at_min = get_aghaje_created_at_min()
     fetch_status = get_aghaje_fetch_status()
     try:
@@ -755,6 +769,7 @@ def build_aghaje_orders_page_data():
         )
 
     net_payment = 0.0
+    total_amount_received = 0.0
     total_items_qty = 0
     for order in results:
         total_items_qty += int(order.get("item_qty") or 0)
@@ -789,12 +804,16 @@ def build_aghaje_orders_page_data():
         order["delivery_status"] = delivery_status
         order["payable"] = round(payable, 2)
         net_payment += order["payable"]
+        total_amount_received += order["amount_received"]
 
     results.sort(key=lambda row: parse_date_for_sort(row.get("created_at")), reverse=True)
     summary = {
         "total_orders": len(results),
         "total_items_qty": total_items_qty,
         "net_payment": round(net_payment, 2),
+        "net_payment_received": round(net_payment_received_override if net_payment_received_override is not None else total_amount_received, 2),
+        "net_payment_received_auto": round(total_amount_received, 2),
+        "has_net_payment_received_override": net_payment_received_override is not None,
     }
     return results, summary, ""
 
@@ -2248,6 +2267,18 @@ def update_aghaje_order():
                 "delivery_status": delivery_status,
             }
         )
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 500
+
+
+@app.route("/aghaje-orders/update-summary", methods=["POST"])
+def update_aghaje_orders_summary():
+    data = request.get_json() or {}
+    try:
+        amount_received = parse_money(data.get("amount_received", 0))
+        if not set_aghaje_net_payment_received_override(amount_received):
+            raise RuntimeError("Could not save Aghaje summary amount received.")
+        return jsonify({"success": True, "amount_received": amount_received})
     except Exception as error:
         return jsonify({"success": False, "error": str(error)}), 500
 

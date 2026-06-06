@@ -8,7 +8,7 @@
   .agh-topbar { height:52px; position:sticky; top:0; z-index:5; background:#fff; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; padding:0 20px; gap:12px; flex-shrink:0; }
   .agh-title { font-size:16px; font-weight:700; color:#3a3b45; }
   .agh-scroll { padding:16px; display:flex; flex-direction:column; gap:16px; }
-  .agh-stats { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; }
+  .agh-stats { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; }
   .agh-card { background:#fff; border-radius:12px; border:1px solid #e3e6f0; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
   .agh-card-head { padding:14px 20px; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .agh-stat-row { padding:14px 16px; display:flex; align-items:center; gap:12px; }
@@ -41,6 +41,7 @@
   .agh-money { font-family:'DM Mono', monospace; font-size:13px; font-weight:700; color:#2d2e36; white-space:nowrap; }
   .agh-input, .agh-select { width:120px; border:1px solid #dce2ee; border-radius:8px; padding:8px 10px; font-size:12px; font-family:'DM Sans', sans-serif; color:#2d2e36; background:#fff; }
   .agh-input[disabled], .agh-select[disabled] { background:#f8f9fc; color:#858796; cursor:default; }
+  .agh-summary-input { width:100%; max-width:170px; margin-top:6px; font-size:14px; font-weight:700; }
   .agh-actions { display:flex; gap:8px; align-items:center; }
   .agh-payable { font-family:'DM Mono', monospace; font-size:14px; font-weight:800; white-space:nowrap; }
   .agh-detail { font-size:10px; color:#858796; margin-top:6px; line-height:1.45; max-width:220px; }
@@ -94,6 +95,26 @@
             <div class="agh-stat-label">Net Payment</div>
             <div class="agh-stat-value {{ 'agh-positive' if summary.net_payment >= 0 else 'agh-negative' }}">PKR {{ summary.net_payment|format_number }}</div>
           </div>
+        </div>
+      </div>
+      <div class="agh-card">
+        <div class="agh-stat-row" style="align-items:flex-start;">
+          <div class="agh-stat-icon" style="background:rgba(54,185,204,0.12)">💳</div>
+          <div style="min-width:0; flex:1;">
+            <div class="agh-stat-label">Net Payment Received</div>
+            <input
+              class="agh-input agh-summary-input"
+              data-summary-amount-received
+              type="number"
+              min="0"
+              step="1"
+              value="{{ summary.net_payment_received|round(0)|int }}"
+            >
+            <div class="agh-detail" style="margin-top:4px; max-width:none;">
+              Auto total: PKR {{ summary.net_payment_received_auto|format_number }}
+            </div>
+          </div>
+          <button class="agh-btn primary" type="button" onclick="saveAghajeSummaryReceived()">Update</button>
         </div>
       </div>
     </div>
@@ -429,6 +450,33 @@ async function saveAghajeRow(index) {
   } finally {
     saveBtn.disabled = false;
     saveBtn.textContent = oldLabel;
+  }
+}
+
+async function saveAghajeSummaryReceived() {
+  const input = document.querySelector('[data-summary-amount-received]');
+  if (!input) return;
+  const value = Number(input.value || 0);
+  const oldLabel = input.value;
+  input.disabled = true;
+  try {
+    const response = await fetch('/aghaje-orders/update-summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount_received: value }),
+    });
+    const result = await response.json();
+    if (!result.success) {
+      showToast(result.error || 'Could not save summary amount received');
+      input.value = oldLabel;
+      return;
+    }
+    input.value = String(Number(result.amount_received || 0));
+    showToast('Net payment received updated');
+  } catch (error) {
+    showToast('Could not save summary amount received');
+  } finally {
+    input.disabled = false;
   }
 }
 
