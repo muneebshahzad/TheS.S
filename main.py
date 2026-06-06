@@ -59,9 +59,11 @@ app.secret_key = os.getenv("APP_SECRET_KEY", "default_secret_key")
 
 EMPLOYEE_PORTAL_SESSION_KEY = "employee_portal_authenticated"
 ADMIN_PORTAL_SESSION_KEY = "admin_portal_authenticated"
+AGHAJE_PORTAL_SESSION_KEY = "aghaje_portal_authenticated"
 SHOPIFY_OAUTH_STATE_SESSION_KEY = "shopify_oauth_state"
 EMPLOYEE_PORTAL_PASSWORD = os.getenv("EMPLOYEE_PORTAL_PASSWORD", "@@@t")
 ADMIN_PORTAL_PASSWORD = os.getenv("ADMIN_PORTAL_PASSWORD", "security")
+AGHAJE_PORTAL_PASSWORD = os.getenv("AGHAJE_PORTAL_PASSWORD", "aghaje")
 
 order_details = []
 product_image_cache = {}
@@ -346,6 +348,10 @@ def admin_portal_is_authenticated():
     return bool(session.get(ADMIN_PORTAL_SESSION_KEY))
 
 
+def aghaje_portal_is_authenticated():
+    return bool(session.get(AGHAJE_PORTAL_SESSION_KEY))
+
+
 def employee_portal_safe_next_url(candidate):
     if candidate and str(candidate).startswith("/employee_portal"):
         return candidate
@@ -470,6 +476,25 @@ def aghaje_rest_headers():
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
+
+
+def get_aghaje_webhook_base_url():
+    return (
+        os.getenv("AJ_WEBHOOK")
+        or os.getenv("AGHAJE_WEBHOOK_BASE_URL")
+        or os.getenv("SHOPIFY_APP_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
+
+
+def verify_aghaje_webhook(req):
+    webhook_secret = (os.getenv("AJ_WEBHOOK_SECRET") or os.getenv("SHOPIFY_WEBHOOK_SECRET") or "").strip()
+    if not webhook_secret:
+        raise ValueError("AJ_WEBHOOK_SECRET or SHOPIFY_WEBHOOK_SECRET is not set.")
+    aj_hmac = req.headers.get("X-Shopify-Hmac-Sha256")
+    digest = hmac.new(webhook_secret.encode("utf-8"), req.get_data(), hashlib.sha256).digest()
+    computed_hmac = base64.b64encode(digest).decode("utf-8")
+    return hmac.compare_digest(computed_hmac, aj_hmac or "")
 
 
 def get_aghaje_created_at_min():
@@ -694,6 +719,9 @@ def build_aghaje_orders_page_data():
     for order in raw_orders:
         note_attributes = extract_note_attributes(order)
         delivery_status, delivery_detail = get_aghaje_delivery_status(order)
+        courier_name = str(note_attributes.get("hxs_courier_name") or "").strip()
+        tracking_number = str(note_attributes.get("hxs_courier_tracking") or "").strip()
+        tracking_url = str(note_attributes.get("hxs_courier_url") or "").strip()
         customer = order.get("customer") or {}
         shipping = order.get("shipping_address") or {}
         billing = order.get("billing_address") or {}
@@ -739,16 +767,29 @@ def build_aghaje_orders_page_data():
             )
             item_qty_total += quantity
 
+        raw_fulfillment_status = str(order.get("fulfillment_status") or "").strip().lower()
+        if raw_fulfillment_status == "fulfilled":
+            fulfillment_status_label = "Fulfilled"
+        elif raw_fulfillment_status == "partial":
+            fulfillment_status_label = "Partially fulfilled"
+        else:
+            fulfillment_status_label = "Unfulfilled"
+
         results.append(
             {
                 "order_id": order.get("name") or f"#{order.get('order_number', '')}",
                 "shopify_order_id": order.get("id"),
                 "shopify_link": f"https://admin.shopify.com/store/{shop_name}/orders/{order.get('id')}" if shop_name else "#",
                 "created_at": order.get("created_at", ""),
+                "fulfillment_status": fulfillment_status_label,
+                "fulfillment_status_raw": raw_fulfillment_status,
                 "customer_name": customer_name,
                 "customer_phone": shipping.get("phone") or billing.get("phone") or (customer.get("phone") or ""),
                 "customer_city": shipping.get("city") or billing.get("city") or "",
                 "customer_address": shipping.get("address1") or billing.get("address1") or "",
+                "courier_name": courier_name,
+                "tracking_number": tracking_number,
+                "tracking_url": tracking_url,
                 "items": item_rows,
                 "item_cost": 0.0,
                 "item_qty": item_qty_total,
@@ -818,6 +859,58 @@ def build_aghaje_orders_page_data():
     return results, summary, ""
 
 
+def build_aghaje_portal_page_data():
+    orders, summary, error_message = build_aghaje_orders_page_data()
+    fulfilled_orders = []
+    unfulfilled_orders = []
+    delivery_counts = {"Delivered": 0, "Returned": 0, "Cancelled": 0, "Other status": 0, "Inprocess": 0}
+    payment_counts = {"Paid": 0, "Pending": 0, "Not Payable": 0}
+
+    for order in orders:
+        raw_fulfillment = str(order.get("fulfillment_status_raw") or "").strip().lower()
+        if raw_fulfillment == "fulfilled":
+            fulfilled_orders.append(order)
+        else:
+            unfulfilled_orders.append(order)
+
+        delivery_status = str(order.get("delivery_status") or "Inprocess").strip() or "Inprocess"
+        if delivery_status not in delivery_counts:
+            delivery_counts["Other status"] += 1
+        else:
+            delivery_counts[delivery_status] += 1
+
+        payment_status = str(order.get("payment_status") or "Pending").strip() or "Pending"
+        if payment_status not in payment_counts:
+            payment_counts["Pending"] += 1
+        else:
+            payment_counts[payment_status] += 1
+
+    net_payment_received = parse_money(summary.get("net_payment_received", 0))
+    net_payment = parse_money(summary.get("net_payment", 0))
+    balance = round(net_payment_received - net_payment, 2)
+    portal_summary = {
+        **summary,
+        "fulfilled_orders": len(fulfilled_orders),
+        "unfulfilled_orders": len(unfulfilled_orders),
+        "delivered_orders": delivery_counts["Delivered"],
+        "returned_orders": delivery_counts["Returned"],
+        "cancelled_orders": delivery_counts["Cancelled"],
+        "other_status_orders": delivery_counts["Other status"],
+        "paid_orders": payment_counts["Paid"],
+        "pending_orders": payment_counts["Pending"],
+        "not_payable_orders": payment_counts["Not Payable"],
+        "net_payment_received": net_payment_received,
+        "balance": balance,
+    }
+    return {
+        "orders": orders,
+        "fulfilled_orders": fulfilled_orders,
+        "unfulfilled_orders": unfulfilled_orders,
+        "summary": portal_summary,
+        "error_message": error_message,
+    }
+
+
 def ensure_required_shopify_webhooks():
     base_url = shopify_rest_base_url()
     headers = shopify_rest_headers()
@@ -828,6 +921,43 @@ def ensure_required_shopify_webhooks():
     desired = {
         "orders/create": f"{app_base_url}/shopify/webhook/order_created",
         "orders/updated": f"{app_base_url}/shopify/webhook/order_updated",
+    }
+
+    response = requests.get(f"{base_url}/webhooks.json", headers=headers, timeout=20)
+    response.raise_for_status()
+    existing_hooks = response.json().get("webhooks", []) or []
+    existing_pairs = {
+        (
+            str((hook or {}).get("topic") or "").strip().lower(),
+            str((hook or {}).get("address") or "").strip().rstrip("/"),
+        )
+        for hook in existing_hooks
+    }
+
+    for topic, address in desired.items():
+        if (topic.lower(), address.rstrip("/")) in existing_pairs:
+            continue
+        payload = {
+            "webhook": {
+                "topic": topic,
+                "address": address,
+                "format": "json",
+            }
+        }
+        create_response = requests.post(f"{base_url}/webhooks.json", headers=headers, json=payload, timeout=20)
+        create_response.raise_for_status()
+
+
+def ensure_required_aghaje_webhooks():
+    base_url = aghaje_rest_base_url()
+    headers = aghaje_rest_headers()
+    app_base_url = get_aghaje_webhook_base_url()
+    if not app_base_url:
+        raise RuntimeError("AJ_WEBHOOK is not configured.")
+
+    desired = {
+        "orders/create": f"{app_base_url}/aghaje/webhook/order_created",
+        "orders/updated": f"{app_base_url}/aghaje/webhook/order_updated",
     }
 
     response = requests.get(f"{base_url}/webhooks.json", headers=headers, timeout=20)
@@ -2283,6 +2413,38 @@ def update_aghaje_orders_summary():
         return jsonify({"success": False, "error": str(error)}), 500
 
 
+@app.route("/aghaje_portal", methods=["GET", "POST"])
+@app.route("/aghaje-portal", methods=["GET", "POST"])
+def aghaje_portal():
+    if request.method == "POST":
+        submitted_password = (request.form.get("password") or "").strip()
+        if submitted_password == AGHAJE_PORTAL_PASSWORD:
+            session[AGHAJE_PORTAL_SESSION_KEY] = True
+            return redirect(url_for("aghaje_portal"))
+        return render_template("aghaje_portal.html", view="login", login_error="Wrong password. Try again."), 401
+
+    if not aghaje_portal_is_authenticated():
+        return render_template("aghaje_portal.html", view="login", login_error="")
+
+    portal_data = build_aghaje_portal_page_data()
+    return render_template(
+        "aghaje_portal.html",
+        view="portal",
+        orders=portal_data["orders"],
+        fulfilled_orders=portal_data["fulfilled_orders"],
+        unfulfilled_orders=portal_data["unfulfilled_orders"],
+        summary=portal_data["summary"],
+        error_message=portal_data["error_message"],
+    )
+
+
+@app.route("/aghaje_portal/logout", methods=["POST"])
+@app.route("/aghaje-portal/logout", methods=["POST"])
+def aghaje_portal_logout():
+    session.pop(AGHAJE_PORTAL_SESSION_KEY, None)
+    return redirect(url_for("aghaje_portal"))
+
+
 @app.route("/orders")
 def pending_orders_mobile():
     return render_template("orders.html", all_orders=build_pending_orders_mobile_data(), employee_portal_mode=False)
@@ -2382,6 +2544,26 @@ def _handle_shopify_order_webhook():
         return jsonify({"success": False, "error": str(error)}), 500
 
 
+def _handle_aghaje_order_webhook():
+    global aghaje_product_cache, aghaje_inventory_item_cost_cache
+    try:
+        if not verify_aghaje_webhook(request):
+            return jsonify({"error": "Invalid webhook signature"}), 401
+
+        payload = request.get_json(silent=True) or {}
+        order_id = payload.get("id")
+        if not order_id:
+            return jsonify({"error": "No order id found in payload"}), 400
+
+        aghaje_product_cache.clear()
+        aghaje_inventory_item_cost_cache.clear()
+        print(f"Aghaje webhook processed for order {order_id}")
+        return jsonify({"success": True, "message": f"Order {order_id} processed successfully"})
+    except Exception as error:
+        print(f"Aghaje webhook processing error: {error}")
+        return jsonify({"success": False, "error": str(error)}), 500
+
+
 @app.route("/shopify/webhook/order_created", methods=["POST"])
 def shopify_order_created():
     return _handle_shopify_order_webhook()
@@ -2390,6 +2572,16 @@ def shopify_order_created():
 @app.route("/shopify/webhook/order_updated", methods=["POST"])
 def shopify_order_updated():
     return _handle_shopify_order_webhook()
+
+
+@app.route("/aghaje/webhook/order_created", methods=["POST"])
+def aghaje_order_created_webhook():
+    return _handle_aghaje_order_webhook()
+
+
+@app.route("/aghaje/webhook/order_updated", methods=["POST"])
+def aghaje_order_updated_webhook():
+    return _handle_aghaje_order_webhook()
 
 
 @app.route("/scan", methods=["GET", "POST"])
@@ -2654,6 +2846,10 @@ def check_restart_times():
 
 init_db()
 setup_shopify()
+try:
+    ensure_required_aghaje_webhooks()
+except Exception as aghaje_webhook_error:
+    print(f"Warning: could not ensure Aghaje webhooks: {aghaje_webhook_error}")
 reload_orders()
 
 
