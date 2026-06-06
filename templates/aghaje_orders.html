@@ -162,9 +162,9 @@
                           data-original="{{ item.unit_cost }}"
                           type="number"
                           min="0"
-                          step="0.01"
+                          step="1"
                           placeholder="Cost / item"
-                          value="{{ item.unit_cost }}"
+                          value="{{ item.unit_cost|round(0)|int }}"
                           disabled
                           oninput="recalculateAghajeRow(this.closest('tr'))"
                         >
@@ -183,8 +183,8 @@
                   data-aghaje-field="packaging_cost"
                   type="number"
                   min="0"
-                  step="0.01"
-                  value="{{ order.packaging_cost }}"
+                  step="1"
+                  value="{{ order.packaging_cost|round(0)|int }}"
                   disabled
                   oninput="recalculateAghajeRow(this.closest('tr'))"
                 >
@@ -195,8 +195,8 @@
                   data-aghaje-field="delivery_cost"
                   type="number"
                   min="0"
-                  step="0.01"
-                  value="{{ order.delivery_cost }}"
+                  step="1"
+                  value="{{ order.delivery_cost|round(0)|int }}"
                   disabled
                   oninput="recalculateAghajeRow(this.closest('tr'))"
                 >
@@ -209,8 +209,8 @@
                   data-aghaje-field="amount_received"
                   type="number"
                   min="0"
-                  step="0.01"
-                  value="{{ order.amount_received }}"
+                  step="1"
+                  value="{{ order.amount_received|round(0)|int }}"
                   disabled
                   oninput="recalculateAghajeRow(this.closest('tr'))"
                 >
@@ -266,7 +266,7 @@
 {% block extra_js %}
 <script>
 function aghajeMoney(value) {
-  return `PKR ${Number(value || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `PKR ${Number(value || 0).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`;
 }
 
 function getAghajeRowInputs(row) {
@@ -322,7 +322,7 @@ function resetAghajeRow(row) {
     input.value = input.dataset.original || '0';
     const lineCost = Number(input.value || 0) * Number(input.dataset.qty || 0);
     const lineCostEl = input.closest('.agh-item-chip')?.querySelector('[data-item-line-cost]');
-    if (lineCostEl) lineCostEl.textContent = Number(lineCost).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (lineCostEl) lineCostEl.textContent = Number(lineCost).toLocaleString('en-PK', { maximumFractionDigits: 0 });
   });
   recalculateAghajeRow(row);
 }
@@ -351,7 +351,7 @@ function recalculateAghajeRow(row) {
     itemCost += lineCost;
     const lineCostEl = input.closest('.agh-item-chip')?.querySelector('[data-item-line-cost]');
     if (lineCostEl) {
-      lineCostEl.textContent = Number(lineCost).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      lineCostEl.textContent = Number(lineCost).toLocaleString('en-PK', { maximumFractionDigits: 0 });
     }
   });
   const itemCostSummary = row.querySelector('[data-item-cost-summary]');
