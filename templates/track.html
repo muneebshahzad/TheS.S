@@ -314,7 +314,7 @@
             <div class="card-date">{{ order.created_at[:10] }}</div>
           </div>
           <div class="ch-spacer"></div>
-          <span class="sbadge {{ badge_cls }}">
+          <span class="sbadge {{ badge_cls }} order-status-badge">
             <svg width="6" height="6" viewBox="0 0 6 6"><circle cx="3" cy="3" r="3" fill="{{ dot_col }}"/></svg>
             {{ s or 'Un-Booked' }}
           </span>
@@ -367,7 +367,7 @@
               <div class="info-row">
                 <span class="info-lbl">Tags</span>
                 <span class="info-val">
-                  <div class="tags-wrap">
+                  <div class="tags-wrap" data-tags-for="{{ order.id }}">
                     {% for tag in order.tags %}<span class="tag-badge" style="{{ tag_style(tag) }}">{{ tag }}</span>{% endfor %}
                   </div>
                 </span>
@@ -428,7 +428,7 @@
             {% if order.tags %}
             <div class="info-row">
               <span class="info-lbl">Tags</span>
-              <span class="info-val"><div class="tags-wrap">{% for tag in order.tags %}<span class="tag-badge" style="{{ tag_style(tag) }}">{{ tag }}</span>{% endfor %}</div></span>
+              <span class="info-val"><div class="tags-wrap" data-tags-for="{{ order.id }}">{% for tag in order.tags %}<span class="tag-badge" style="{{ tag_style(tag) }}">{{ tag }}</span>{% endfor %}</div></span>
             </div>
             {% endif %}
             <div class="info-row"><span class="info-lbl">Payment</span><span class="info-val">{{ order.financial_status or 'Pending' }}</span></div>
@@ -543,6 +543,91 @@ function normalizeStatusBucket(status) {
 function getStatusQueryBucket(query) {
   const normalized = (query || '').trim().toLowerCase();
   return STATUS_QUERY_ALIASES[normalized] || '';
+}
+
+function statusBadgeMeta(status) {
+  const bucket = normalizeStatusBucket(status);
+  if (bucket === 'Booked') return { cls: 'sb-booked', dot: '#4e73df', label: bucket };
+  if (bucket === 'Un-Booked') return { cls: 'sb-unbooked', dot: '#aaa', label: bucket };
+  if (bucket === 'Delivered') return { cls: 'sb-delivered', dot: '#1cc88a', label: bucket };
+  if (bucket === 'Partially Delivered') return { cls: 'sb-partial', dot: '#f6c23e', label: bucket };
+  if (bucket === 'Out For Delivery') return { cls: 'sb-ofd', dot: '#f6c23e', label: bucket };
+  return { cls: 'sb-return', dot: '#e74a3b', label: bucket || 'Un-Booked' };
+}
+
+function datedTag(tag) {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${tag} (${yyyy}-${mm}-${dd})`;
+}
+
+function tagStyle(tag) {
+  const t = (tag || '').toLowerCase();
+  if (t.includes('delivered')) return 'background:#d4f5e9;color:#0f6848';
+  if (t.includes('returned') || t.includes('cancel')) return 'background:#fce8e6;color:#8b1a10';
+  if (t.includes('confirm')) return 'background:#e8eaf6;color:#283593';
+  if (t.includes('courier')) return 'background:#efe3f8;color:#4a236d';
+  return 'background:#e8eaf6;color:#283593';
+}
+
+const MANUAL_STATUS_TAGS = {
+  'delivered': 'Delivered',
+  'returned': 'RETURNED TO SHIPPER',
+  'cancelled': 'Cancelled',
+  'booked': 'Booked',
+  'out for delivery': 'Out For Delivery',
+  'being return': 'Being Return',
+  'call not attended': 'Call Not Attended',
+};
+
+function updateOrderCardAfterMark(orderId, tag) {
+  const card = document.getElementById('order-card-' + orderId);
+  const previousStatus = card?.dataset.status || ORDER_DATA.find(o => String(o.id) === String(orderId))?.status || '';
+  const manualStatus = MANUAL_STATUS_TAGS[(tag || '').trim().toLowerCase()] || '';
+  const bucket = manualStatus ? normalizeStatusBucket(manualStatus) : normalizeStatusBucket(previousStatus);
+  const manualTag = datedTag(tag);
+
+  const order = ORDER_DATA.find(o => String(o.id) === String(orderId));
+  if (order) {
+    if (manualStatus) order.status = bucket;
+    order.tags = Array.isArray(order.tags) ? order.tags : [];
+    if (!order.tags.includes(manualTag)) order.tags.push(manualTag);
+  }
+
+  if (card) {
+    if (manualStatus) {
+      card.dataset.status = bucket;
+      const badge = card.querySelector('.order-status-badge');
+      if (badge) {
+        const meta = statusBadgeMeta(bucket);
+        badge.className = `sbadge ${meta.cls} order-status-badge`;
+        badge.innerHTML = `<svg width="6" height="6" viewBox="0 0 6 6"><circle cx="3" cy="3" r="3" fill="${meta.dot}"/></svg>${meta.label}`;
+      }
+    }
+    card.dataset.search = `${card.dataset.search || ''} ${bucket} ${manualTag}`;
+
+    card.querySelectorAll(`[data-tags-for="${orderId}"]`).forEach((wrap) => {
+      if ([...wrap.querySelectorAll('.tag-badge')].some(el => el.textContent.trim() === manualTag)) return;
+      const chip = document.createElement('span');
+      chip.className = 'tag-badge';
+      chip.setAttribute('style', tagStyle(manualTag));
+      chip.textContent = manualTag;
+      wrap.appendChild(chip);
+    });
+
+    if (selectedOrders.has(String(orderId))) {
+      selectedOrders.delete(String(orderId));
+      card.classList.remove('selected');
+      const cb = card.querySelector('input[type=checkbox]');
+      if (cb) cb.checked = false;
+    }
+  }
+
+  renderStats();
+  applyFilterSearch();
+  updateBulkBar();
 }
 
 function renderStats() {
@@ -692,7 +777,7 @@ function markOrder(orderId, tag) {
       return;
     }
     showToast(`Marked as "${tag}"`);
-    setTimeout(() => window.location.reload(), 700);
+    updateOrderCardAfterMark(orderId, tag);
   })
   .catch(() => showToast('Request failed'));
 }
@@ -762,6 +847,7 @@ async function bulkMark(tag) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order_id: ids[i], tag })
       });
+      updateOrderCardAfterMark(ids[i], tag);
     } catch(e) {}
     await new Promise(r => setTimeout(r, 400));
   }
@@ -784,6 +870,7 @@ async function applyDeliveredToAll() {
     lbl.textContent = `Applying ${i+1}/${toDeliver.length}…`;
     try {
       await fetch('/apply_tag', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({order_id: toDeliver[i].id, tag:'Delivered'}) });
+      updateOrderCardAfterMark(toDeliver[i].id, 'Delivered');
     } catch(e) {}
     await new Promise(r => setTimeout(r, 600));
   }
@@ -803,6 +890,7 @@ async function applyReturnedToAll() {
     lbl.textContent = `Applying ${i+1}/${toReturn.length}…`;
     try {
       await fetch('/apply_tag', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({order_id: toReturn[i].id, tag:'Returned'}) });
+      updateOrderCardAfterMark(toReturn[i].id, 'Returned');
     } catch(e) {}
     await new Promise(r => setTimeout(r, 600));
   }
