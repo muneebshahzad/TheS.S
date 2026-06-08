@@ -49,9 +49,6 @@
     }
     .hero {
       padding: 16px;
-      position: sticky;
-      top: 8px;
-      z-index: 20;
     }
     .hero-top {
       display: flex;
@@ -132,43 +129,11 @@
       color: #fff;
       background: var(--ink);
     }
-    .hero-stats {
-      margin-top: 14px;
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-    }
-    .mini-stat {
-      border-radius: 16px;
-      padding: 12px;
-      background: rgba(255,255,255,0.72);
-      border: 1px solid rgba(20, 33, 61, 0.08);
-      min-width: 0;
-    }
-    .mini-stat-label {
-      font-size: 10px;
-      font-weight: 800;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-    .mini-stat-value {
-      margin-top: 4px;
-      font-size: 18px;
-      font-weight: 800;
-      letter-spacing: -0.02em;
-    }
-    .mini-stat-value.positive { color: var(--green); }
-    .mini-stat-value.blue { color: var(--blue); }
-    .mini-stat-value.red { color: var(--red); }
     .tab-bar {
       padding: 8px;
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 8px;
-      position: sticky;
-      top: 92px;
-      z-index: 19;
     }
     .tab-btn {
       border-radius: 14px;
@@ -356,6 +321,22 @@
       line-height: 1.45;
       color: #2d2e36;
     }
+    .courier-status {
+      display: inline-flex;
+      width: fit-content;
+      align-items: center;
+      padding: 7px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.15;
+      margin-top: 6px;
+    }
+    .courier-status.delivered { background: rgba(28, 200, 138, 0.14); color: #16683a; }
+    .courier-status.returned { background: rgba(207, 63, 63, 0.12); color: #8f2b2b; }
+    .courier-status.cancelled { background: rgba(207, 63, 63, 0.12); color: #8f2b2b; }
+    .courier-status.pending { background: rgba(20, 33, 61, 0.08); color: var(--ink); }
+    .courier-status.other { background: rgba(242, 182, 50, 0.16); color: #8b5a00; }
     .line {
       display: flex;
       justify-content: space-between;
@@ -426,17 +407,25 @@
       font-size: 12px;
       line-height: 1.5;
     }
+    .ledger-modal-backdrop { position: fixed; inset: 0; background: rgba(20, 33, 61, 0.38); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 18px; }
+    .ledger-modal-backdrop.open { display: flex; }
+    .ledger-modal { width: min(420px, 100%); max-height: 80vh; overflow: auto; background: #fff; border-radius: 20px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+    .ledger-modal-head { padding: 16px 18px; border-bottom: 1px solid rgba(20,33,61,.08); display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .ledger-modal-title { font-weight: 800; font-size: 15px; }
+    .ledger-entry-list { padding: 10px 18px 18px; display:flex; flex-direction:column; gap:8px; }
+    .ledger-entry-row { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(20,33,61,.08); }
+    .ledger-entry-row:last-child { border-bottom:0; }
+    .ledger-entry-date { color:var(--muted); font-size:11px; margin-top:4px; }
     @media (max-width: 820px) {
       .order-body { grid-template-columns: 1fr; }
       .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 640px) {
       body { padding: 12px 10px 24px; }
-      .hero { top: 6px; padding: 14px; }
+      .hero { padding: 14px; }
       .hero-top { flex-direction: column; }
       .hero-actions { width: 100%; justify-content: space-between; }
-      .hero-stats { grid-template-columns: 1fr; }
-      .tab-bar { top: 90px; }
+      .tab-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .summary-grid { grid-template-columns: 1fr; }
       .chip-row { justify-content: flex-start; }
       .order-head { flex-direction: column; }
@@ -466,9 +455,7 @@
     <div class="hero">
       <div class="hero-top">
         <div class="brand">
-          <div class="eyebrow">Aghaje Portal · Read only</div>
           <h1>Aghaje Orders</h1>
-          <p class="subcopy">Track fulfilled and unfulfilled orders, see courier status, and review accounts summary from one clean mobile-first screen.</p>
         </div>
         <div class="hero-actions">
           <form method="post" action="/aghaje_portal/logout">
@@ -476,26 +463,13 @@
           </form>
         </div>
       </div>
-      <div class="hero-stats">
-        <div class="mini-stat">
-          <div class="mini-stat-label">Total Orders</div>
-          <div class="mini-stat-value blue">{{ summary.total_orders }}</div>
-        </div>
-        <div class="mini-stat">
-          <div class="mini-stat-label">Net Payment</div>
-          <div class="mini-stat-value {% if summary.net_payment >= 0 %}positive{% else %}red{% endif %}">PKR {{ summary.net_payment|format_number }}</div>
-        </div>
-        <div class="mini-stat">
-          <div class="mini-stat-label">Amount Received</div>
-          <div class="mini-stat-value green">PKR {{ summary.net_payment_received|format_number }}</div>
-        </div>
-      </div>
     </div>
 
     <div class="tab-bar">
-      <button class="tab-btn active" type="button" data-tab-btn="summary">Summary</button>
-      <button class="tab-btn" type="button" data-tab-btn="fulfilled">Fulfilled ({{ fulfilled_orders|length }})</button>
+      <button class="tab-btn active" type="button" data-tab-btn="fulfilled">Fulfilled ({{ fulfilled_orders|length }})</button>
+      <button class="tab-btn" type="button" data-tab-btn="closed">Closed ({{ closed_orders|length }})</button>
       <button class="tab-btn" type="button" data-tab-btn="unfulfilled">Unfulfilled ({{ unfulfilled_orders|length }})</button>
+      <button class="tab-btn" type="button" data-tab-btn="summary">Summary</button>
     </div>
 
     {% if error_message %}
@@ -504,7 +478,7 @@
     </div>
     {% endif %}
 
-    <div class="tab-panel active" data-tab-panel="summary">
+    <div class="tab-panel" data-tab-panel="summary">
       <div class="section">
         <div class="summary-grid">
           <div class="summary-card blue">
@@ -528,9 +502,9 @@
             <div class="small">Orders with delivered courier or Shopify completion status.</div>
           </div>
           <div class="summary-card red">
-            <div class="label">Returned / Cancelled</div>
-            <div class="value">{{ summary.returned_orders + summary.cancelled_orders }}</div>
-            <div class="small">{{ summary.returned_orders }} returned · {{ summary.cancelled_orders }} cancelled.</div>
+            <div class="label">Returned</div>
+            <div class="value">{{ summary.returned_orders }}</div>
+            <div class="small">Cancelled orders are excluded from this portal.</div>
           </div>
           <div class="summary-card green">
             <div class="label">Balance</div>
@@ -555,12 +529,12 @@
             <div class="summary-card">
               <div class="label">Not Payable</div>
               <div class="value red">{{ summary.not_payable_orders }}</div>
-              <div class="small">Cancelled or pre-paid cases.</div>
+              <div class="small">Non-cancelled cases not payable to us.</div>
             </div>
-            <div class="summary-card">
+            <div class="summary-card" data-received-ledger-open style="cursor:pointer;">
               <div class="label">Net Payment Received</div>
               <div class="value teal">PKR {{ summary.net_payment_received|format_number }}</div>
-              <div class="small">Manual top-level received amount.</div>
+              <div class="small">Click to view received entries.</div>
             </div>
             <div class="summary-card">
               <div class="label">Net Payment</div>
@@ -577,7 +551,7 @@
       </div>
     </div>
 
-    <div class="tab-panel" data-tab-panel="fulfilled">
+    <div class="tab-panel active" data-tab-panel="fulfilled">
       <div class="section">
         <div class="order-list">
           {% for order in fulfilled_orders %}
@@ -628,7 +602,8 @@
                   <div class="mini-label">Tracking</div>
                   <div class="mini-value">
                     {% if order.courier_name %}{{ order.courier_name }}<br>{% endif %}
-                    {{ order.delivery_status_detail or 'No courier status yet' }}
+                    {% set courier_status = order.delivery_status_detail or order.delivery_status or 'No courier status yet' %}
+                    <span class="courier-status {% if order.delivery_status == 'Delivered' %}delivered{% elif order.delivery_status == 'Returned' %}returned{% elif order.delivery_status == 'Cancelled' %}cancelled{% elif order.delivery_status == 'Inprocess' %}pending{% else %}other{% endif %}">{{ courier_status }}</span>
                     {% if order.tracking_number %}
                     <br><span style="font-family:'Space Mono', monospace;">{{ order.tracking_number }}</span>
                     {% endif %}
@@ -636,6 +611,9 @@
                 </div>
                 <div class="mini-block">
                   <div class="mini-label">Money</div>
+                  <div class="line"><span>Product Cost</span><strong>PKR {{ order.item_cost|format_number }}</strong></div>
+                  <div class="line"><span>Packaging Cost</span><strong>PKR {{ order.packaging_cost|format_number }}</strong></div>
+                  <div class="line"><span>Delivery Cost</span><strong>PKR {{ order.delivery_cost|format_number }}</strong></div>
                   <div class="line"><span>Subtotal</span><strong>PKR {{ order.price|format_number }}</strong></div>
                   <div class="line"><span>Order Total</span><strong>PKR {{ order.order_total|format_number }}</strong></div>
                   <div class="line"><span>Amount Received</span><strong>PKR {{ order.amount_received|format_number }}</strong></div>
@@ -646,6 +624,84 @@
           </div>
           {% else %}
           <div class="empty">No fulfilled Aghaje orders found for the selected date range.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-panel" data-tab-panel="closed">
+      <div class="section">
+        <div class="order-list">
+          {% for order in closed_orders %}
+          <div class="order-card">
+            <div class="order-head">
+              <div>
+                <a class="order-id" href="{{ order.shopify_link }}" target="_blank">{{ order.order_id }}</a>
+                <div class="order-date">{{ order.created_at }}</div>
+                <div class="chip-row" style="margin-top:8px;">
+                  <span class="chip paid">Closed</span>
+                  <span class="chip {% if order.delivery_status == 'Delivered' %}delivered{% elif order.delivery_status == 'Returned' %}returned{% else %}pending{% endif %}">{{ order.delivery_status }}</span>
+                  <span class="chip paid">{{ order.payment_status }}</span>
+                </div>
+              </div>
+              <div class="chip-row">
+                <span class="chip shopify">Shopify</span>
+                {% if order.tracking_number %}
+                <span class="chip pending">{{ order.tracking_number }}</span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="order-body">
+              <div class="items">
+                {% for item in order['items'] %}
+                <div class="item">
+                  {% if item.image %}<img src="{{ item.image }}" alt="">{% else %}<div style="width:48px;height:48px;border-radius:10px;background:#e3e6f0;display:flex;align-items:center;justify-content:center;">📦</div>{% endif %}
+                  <div>
+                    <div class="item-title">{{ item.title }}</div>
+                    <div class="item-meta">
+                      <span>Qty {{ item.qty }}</span>
+                      <span>Price PKR {{ item.line_price|format_number }}</span>
+                      <span>Cost PKR {{ item.line_cost|format_number }}</span>
+                    </div>
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+              <div class="panel-side">
+                <div class="mini-block">
+                  <div class="mini-label">Customer</div>
+                  <div class="mini-value">
+                    {{ order.customer_name or 'No customer name' }}
+                    {% if order.customer_phone %}<br>{{ order.customer_phone }}{% endif %}
+                    {% if order.customer_city %}<br>{{ order.customer_city }}{% endif %}
+                  </div>
+                </div>
+                <div class="mini-block">
+                  <div class="mini-label">Tracking</div>
+                  <div class="mini-value">
+                    {% if order.courier_name %}{{ order.courier_name }}<br>{% endif %}
+                    {% set courier_status = order.delivery_status_detail or order.delivery_status or 'No courier status yet' %}
+                    <span class="courier-status {% if order.delivery_status == 'Delivered' %}delivered{% elif order.delivery_status == 'Returned' %}returned{% elif order.delivery_status == 'Inprocess' %}pending{% else %}other{% endif %}">{{ courier_status }}</span>
+                    {% if order.tracking_number %}
+                    <br><span style="font-family:'Space Mono', monospace;">{{ order.tracking_number }}</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="mini-block">
+                  <div class="mini-label">Money</div>
+                  <div class="line"><span>Product Cost</span><strong>PKR {{ order.item_cost|format_number }}</strong></div>
+                  <div class="line"><span>Packaging Cost</span><strong>PKR {{ order.packaging_cost|format_number }}</strong></div>
+                  <div class="line"><span>Delivery Cost</span><strong>PKR {{ order.delivery_cost|format_number }}</strong></div>
+                  <div class="line"><span>Subtotal</span><strong>PKR {{ order.price|format_number }}</strong></div>
+                  <div class="line"><span>Order Total</span><strong>PKR {{ order.order_total|format_number }}</strong></div>
+                  <div class="line"><span>Amount Received</span><strong>PKR {{ order.amount_received|format_number }}</strong></div>
+                  <div class="line"><span>Payable</span><strong>PKR {{ order.payable|format_number }}</strong></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <div class="empty">No closed Aghaje orders yet.</div>
           {% endfor %}
         </div>
       </div>
@@ -702,7 +758,8 @@
                   <div class="mini-label">Tracking</div>
                   <div class="mini-value">
                     {% if order.courier_name %}{{ order.courier_name }}<br>{% endif %}
-                    {{ order.delivery_status_detail or 'No courier status yet' }}
+                    {% set courier_status = order.delivery_status_detail or order.delivery_status or 'No courier status yet' %}
+                    <span class="courier-status {% if order.delivery_status == 'Delivered' %}delivered{% elif order.delivery_status == 'Returned' %}returned{% elif order.delivery_status == 'Cancelled' %}cancelled{% elif order.delivery_status == 'Inprocess' %}pending{% else %}other{% endif %}">{{ courier_status }}</span>
                     {% if order.tracking_number %}
                     <br><span style="font-family:'Space Mono', monospace;">{{ order.tracking_number }}</span>
                     {% endif %}
@@ -710,6 +767,9 @@
                 </div>
                 <div class="mini-block">
                   <div class="mini-label">Money</div>
+                  <div class="line"><span>Product Cost</span><strong>PKR {{ order.item_cost|format_number }}</strong></div>
+                  <div class="line"><span>Packaging Cost</span><strong>PKR {{ order.packaging_cost|format_number }}</strong></div>
+                  <div class="line"><span>Delivery Cost</span><strong>PKR {{ order.delivery_cost|format_number }}</strong></div>
                   <div class="line"><span>Subtotal</span><strong>PKR {{ order.price|format_number }}</strong></div>
                   <div class="line"><span>Order Total</span><strong>PKR {{ order.order_total|format_number }}</strong></div>
                   <div class="line"><span>Amount Received</span><strong>PKR {{ order.amount_received|format_number }}</strong></div>
@@ -720,6 +780,27 @@
           </div>
           {% else %}
           <div class="empty">No unfulfilled Aghaje orders found for the selected date range.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="ledger-modal-backdrop" data-received-ledger-modal>
+      <div class="ledger-modal" role="dialog" aria-modal="true" aria-labelledby="portal-received-ledger-title">
+        <div class="ledger-modal-head">
+          <div class="ledger-modal-title" id="portal-received-ledger-title">Net Payment Received Entries</div>
+          <button class="ghost-btn" type="button" data-received-ledger-close>Close</button>
+        </div>
+        <div class="ledger-entry-list">
+          {% for entry in summary.net_payment_received_entries %}
+          <div class="ledger-entry-row">
+            <div>
+              <strong>PKR {{ entry.amount|format_number }}</strong>
+              <div class="ledger-entry-date">{{ entry.created_at or 'Saved entry' }}</div>
+            </div>
+          </div>
+          {% else %}
+          <div class="empty" style="padding:20px 0;">No manual received entries yet.</div>
           {% endfor %}
         </div>
       </div>
@@ -747,6 +828,13 @@
       if (hash && tabButtons.some((btn) => btn.dataset.tabBtn === hash)) {
         activateTab(hash);
       }
+
+      const ledgerModal = document.querySelector('[data-received-ledger-modal]');
+      document.querySelector('[data-received-ledger-open]')?.addEventListener('click', () => ledgerModal?.classList.add('open'));
+      document.querySelector('[data-received-ledger-close]')?.addEventListener('click', () => ledgerModal?.classList.remove('open'));
+      ledgerModal?.addEventListener('click', (event) => {
+        if (event.target === ledgerModal) ledgerModal.classList.remove('open');
+      });
     })();
   </script>
 </body>

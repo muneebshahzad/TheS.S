@@ -63,7 +63,7 @@ AGHAJE_PORTAL_SESSION_KEY = "aghaje_portal_authenticated"
 SHOPIFY_OAUTH_STATE_SESSION_KEY = "shopify_oauth_state"
 EMPLOYEE_PORTAL_PASSWORD = os.getenv("EMPLOYEE_PORTAL_PASSWORD", "@@@t")
 ADMIN_PORTAL_PASSWORD = os.getenv("ADMIN_PORTAL_PASSWORD", "security")
-AGHAJE_PORTAL_PASSWORD = os.getenv("AGHAJE_PORTAL_PASSWORD", "aghaje")
+AGHAJE_PORTAL_PASSWORD = os.getenv("AGHAJE_PORTAL_PASSWORD", "security")
 
 order_details = []
 product_image_cache = {}
@@ -184,16 +184,49 @@ def save_product_cost_overrides(overrides):
     return set_app_setting(PRODUCT_COSTS_SETTING_KEY, json.dumps(overrides or {}))
 
 
-def get_aghaje_net_payment_received_override():
+def get_aghaje_net_payment_received_entries():
     raw = get_app_setting(AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY, "")
     raw = str(raw or "").strip()
     if not raw:
-        return None
-    return parse_money(raw)
+        return []
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            entries = []
+            for entry in data:
+                if not isinstance(entry, dict):
+                    continue
+                amount = parse_money(entry.get("amount", 0))
+                if amount <= 0:
+                    continue
+                entries.append(
+                    {
+                        "amount": amount,
+                        "created_at": entry.get("created_at") or "",
+                    }
+                )
+            return entries
+    except Exception:
+        pass
+
+    legacy_amount = parse_money(raw)
+    if legacy_amount <= 0:
+        return []
+    return [{"amount": legacy_amount, "created_at": "Legacy saved amount"}]
 
 
-def set_aghaje_net_payment_received_override(value):
-    return set_app_setting(AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY, str(parse_money(value)))
+def add_aghaje_net_payment_received_entry(value):
+    amount = parse_money(value)
+    if amount <= 0:
+        raise ValueError("Amount received must be greater than zero.")
+    entries = get_aghaje_net_payment_received_entries()
+    entries.append(
+        {
+            "amount": amount,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+    )
+    return set_app_setting(AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY, json.dumps(entries))
 
 
 def product_cost_key(product_id=None, variant_id=None, title=""):
@@ -702,7 +735,7 @@ def load_aghaje_order_sync_state():
 def build_aghaje_orders_page_data():
     overrides = load_aghaje_order_sync_state()
     item_cost_overrides = load_aghaje_item_cost_overrides()
-    net_payment_received_override = get_aghaje_net_payment_received_override()
+    net_payment_received_entries = get_aghaje_net_payment_received_entries()
     created_at_min = get_aghaje_created_at_min()
     fetch_status = get_aghaje_fetch_status()
     try:
@@ -852,23 +885,28 @@ def build_aghaje_orders_page_data():
         "total_orders": len(results),
         "total_items_qty": total_items_qty,
         "net_payment": round(net_payment, 2),
-        "net_payment_received": round(net_payment_received_override if net_payment_received_override is not None else total_amount_received, 2),
+        "net_payment_received": round(sum(parse_money(entry.get("amount", 0)) for entry in net_payment_received_entries), 2),
         "net_payment_received_auto": round(total_amount_received, 2),
-        "has_net_payment_received_override": net_payment_received_override is not None,
+        "net_payment_received_entries": net_payment_received_entries,
     }
     return results, summary, ""
 
 
 def build_aghaje_portal_page_data():
     orders, summary, error_message = build_aghaje_orders_page_data()
+    orders = [order for order in orders if str(order.get("delivery_status") or "").strip() != "Cancelled"]
     fulfilled_orders = []
+    closed_orders = []
     unfulfilled_orders = []
     delivery_counts = {"Delivered": 0, "Returned": 0, "Cancelled": 0, "Other status": 0, "Inprocess": 0}
     payment_counts = {"Paid": 0, "Pending": 0, "Not Payable": 0}
 
     for order in orders:
+        payment_status = str(order.get("payment_status") or "Pending").strip() or "Pending"
         raw_fulfillment = str(order.get("fulfillment_status_raw") or "").strip().lower()
-        if raw_fulfillment == "fulfilled":
+        if payment_status == "Paid":
+            closed_orders.append(order)
+        elif raw_fulfillment == "fulfilled":
             fulfilled_orders.append(order)
         else:
             unfulfilled_orders.append(order)
@@ -879,7 +917,6 @@ def build_aghaje_portal_page_data():
         else:
             delivery_counts[delivery_status] += 1
 
-        payment_status = str(order.get("payment_status") or "Pending").strip() or "Pending"
         if payment_status not in payment_counts:
             payment_counts["Pending"] += 1
         else:
@@ -887,10 +924,12 @@ def build_aghaje_portal_page_data():
 
     net_payment_received = parse_money(summary.get("net_payment_received", 0))
     net_payment = parse_money(summary.get("net_payment", 0))
-    balance = round(net_payment_received - net_payment, 2)
+    balance = round(net_payment_received + net_payment, 2)
     portal_summary = {
         **summary,
+        "total_orders": len(orders),
         "fulfilled_orders": len(fulfilled_orders),
+        "closed_orders": len(closed_orders),
         "unfulfilled_orders": len(unfulfilled_orders),
         "delivered_orders": delivery_counts["Delivered"],
         "returned_orders": delivery_counts["Returned"],
@@ -905,6 +944,7 @@ def build_aghaje_portal_page_data():
     return {
         "orders": orders,
         "fulfilled_orders": fulfilled_orders,
+        "closed_orders": closed_orders,
         "unfulfilled_orders": unfulfilled_orders,
         "summary": portal_summary,
         "error_message": error_message,
@@ -2406,9 +2446,18 @@ def update_aghaje_orders_summary():
     data = request.get_json() or {}
     try:
         amount_received = parse_money(data.get("amount_received", 0))
-        if not set_aghaje_net_payment_received_override(amount_received):
-            raise RuntimeError("Could not save Aghaje summary amount received.")
-        return jsonify({"success": True, "amount_received": amount_received})
+        if not add_aghaje_net_payment_received_entry(amount_received):
+            raise RuntimeError("Could not save Aghaje received amount.")
+        entries = get_aghaje_net_payment_received_entries()
+        total_received = round(sum(parse_money(entry.get("amount", 0)) for entry in entries), 2)
+        return jsonify(
+            {
+                "success": True,
+                "amount_received": amount_received,
+                "total_received": total_received,
+                "entries": entries,
+            }
+        )
     except Exception as error:
         return jsonify({"success": False, "error": str(error)}), 500
 
@@ -2432,6 +2481,7 @@ def aghaje_portal():
         view="portal",
         orders=portal_data["orders"],
         fulfilled_orders=portal_data["fulfilled_orders"],
+        closed_orders=portal_data["closed_orders"],
         unfulfilled_orders=portal_data["unfulfilled_orders"],
         summary=portal_data["summary"],
         error_message=portal_data["error_message"],

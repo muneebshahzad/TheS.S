@@ -42,11 +42,24 @@
   .agh-input, .agh-select { width:120px; border:1px solid #dce2ee; border-radius:8px; padding:8px 10px; font-size:12px; font-family:'DM Sans', sans-serif; color:#2d2e36; background:#fff; }
   .agh-input[disabled], .agh-select[disabled] { background:#f8f9fc; color:#858796; cursor:default; }
   .agh-summary-input { width:100%; max-width:170px; margin-top:6px; font-size:14px; font-weight:700; }
+  .agh-summary-total { font-size:20px; font-weight:800; color:#2d2e36; margin-top:4px; cursor:pointer; }
+  .agh-summary-add-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .agh-summary-add-row .agh-summary-input { margin-top:0; }
+  .agh-plus-btn { min-width:42px; height:38px; padding:0; font-size:20px; line-height:1; }
   .agh-actions { display:flex; gap:8px; align-items:center; }
   .agh-payable { font-family:'DM Mono', monospace; font-size:14px; font-weight:800; white-space:nowrap; }
   .agh-detail { font-size:10px; color:#858796; margin-top:6px; line-height:1.45; max-width:220px; }
   .agh-empty { padding:36px 16px; text-align:center; color:#858796; font-size:13px; }
   .agh-banner { padding:12px 14px; border-radius:10px; background:#fef3f2; border:1px solid #f4c7c3; color:#a33a2e; font-size:12px; }
+  .agh-modal-backdrop { position:fixed; inset:0; background:rgba(20,33,61,.36); display:none; align-items:center; justify-content:center; z-index:1000; padding:18px; }
+  .agh-modal-backdrop.open { display:flex; }
+  .agh-modal { width:min(420px, 100%); max-height:80vh; overflow:auto; background:#fff; border-radius:14px; border:1px solid #e3e6f0; box-shadow:0 18px 50px rgba(20,33,61,.22); }
+  .agh-modal-head { padding:16px 18px; border-bottom:1px solid #eef0f6; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .agh-modal-title { font-size:15px; font-weight:800; color:#2d2e36; }
+  .agh-entry-list { padding:10px 18px 18px; display:flex; flex-direction:column; gap:8px; }
+  .agh-entry-row { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid #f0f2f7; font-size:13px; }
+  .agh-entry-row:last-child { border-bottom:0; }
+  .agh-entry-date { color:#858796; font-size:11px; }
   .agh-positive { color:#1cc88a; }
   .agh-negative { color:#e74a3b; }
   .agh-neutral { color:#6f7280; }
@@ -97,24 +110,48 @@
           </div>
         </div>
       </div>
-      <div class="agh-card">
+      <div class="agh-card" data-received-ledger-open>
         <div class="agh-stat-row" style="align-items:flex-start;">
           <div class="agh-stat-icon" style="background:rgba(54,185,204,0.12)">💳</div>
           <div style="min-width:0; flex:1;">
             <div class="agh-stat-label">Net Payment Received</div>
+            <div class="agh-summary-total">PKR <span data-summary-received-total>{{ summary.net_payment_received|format_number }}</span></div>
+            <div class="agh-summary-add-row" onclick="event.stopPropagation()">
             <input
               class="agh-input agh-summary-input"
               data-summary-amount-received
               type="number"
               min="0"
               step="1"
-              value="{{ summary.net_payment_received|round(0)|int }}"
+              placeholder="Add amount"
             >
+              <button class="agh-btn primary agh-plus-btn" type="button" onclick="saveAghajeSummaryReceived()" aria-label="Add amount">+</button>
+            </div>
             <div class="agh-detail" style="margin-top:4px; max-width:none;">
-              Auto total: PKR {{ summary.net_payment_received_auto|format_number }}
+              Auto total: PKR {{ summary.net_payment_received_auto|format_number }} · Click card to view entries.
             </div>
           </div>
-          <button class="agh-btn primary" type="button" onclick="saveAghajeSummaryReceived()">Update</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="agh-modal-backdrop" data-received-ledger-modal>
+      <div class="agh-modal" role="dialog" aria-modal="true" aria-labelledby="received-ledger-title">
+        <div class="agh-modal-head">
+          <div class="agh-modal-title" id="received-ledger-title">Net Payment Received Entries</div>
+          <button class="agh-btn" type="button" data-received-ledger-close>Close</button>
+        </div>
+        <div class="agh-entry-list" data-received-ledger-list>
+          {% for entry in summary.net_payment_received_entries %}
+          <div class="agh-entry-row">
+            <div>
+              <strong>PKR {{ entry.amount|format_number }}</strong>
+              <div class="agh-entry-date">{{ entry.created_at or 'Saved entry' }}</div>
+            </div>
+          </div>
+          {% else %}
+          <div class="agh-empty" style="padding:20px 0;">No manual received entries yet.</div>
+          {% endfor %}
         </div>
       </div>
     </div>
@@ -457,7 +494,10 @@ async function saveAghajeSummaryReceived() {
   const input = document.querySelector('[data-summary-amount-received]');
   if (!input) return;
   const value = Number(input.value || 0);
-  const oldLabel = input.value;
+  if (!value || value <= 0) {
+    showToast('Enter an amount greater than 0');
+    return;
+  }
   input.disabled = true;
   try {
     const response = await fetch('/aghaje-orders/update-summary', {
@@ -467,20 +507,45 @@ async function saveAghajeSummaryReceived() {
     });
     const result = await response.json();
     if (!result.success) {
-      showToast(result.error || 'Could not save summary amount received');
-      input.value = oldLabel;
+      showToast(result.error || 'Could not add received amount');
       return;
     }
-    input.value = String(Number(result.amount_received || 0));
-    showToast('Net payment received updated');
+    input.value = '';
+    const totalEl = document.querySelector('[data-summary-received-total]');
+    if (totalEl) totalEl.textContent = aghajeMoney(result.total_received || 0).replace('PKR ', '');
+    renderReceivedLedgerEntries(result.entries || []);
+    showToast('Received amount added');
   } catch (error) {
-    showToast('Could not save summary amount received');
+    showToast('Could not add received amount');
   } finally {
     input.disabled = false;
   }
 }
 
+function renderReceivedLedgerEntries(entries) {
+  const list = document.querySelector('[data-received-ledger-list]');
+  if (!list) return;
+  if (!entries.length) {
+    list.innerHTML = '<div class="agh-empty" style="padding:20px 0;">No manual received entries yet.</div>';
+    return;
+  }
+  list.innerHTML = entries.map((entry) => `
+    <div class="agh-entry-row">
+      <div>
+        <strong>${aghajeMoney(entry.amount || 0)}</strong>
+        <div class="agh-entry-date">${entry.created_at || 'Saved entry'}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  const ledgerModal = document.querySelector('[data-received-ledger-modal]');
+  document.querySelector('[data-received-ledger-open]')?.addEventListener('click', () => ledgerModal?.classList.add('open'));
+  document.querySelector('[data-received-ledger-close]')?.addEventListener('click', () => ledgerModal?.classList.remove('open'));
+  ledgerModal?.addEventListener('click', (event) => {
+    if (event.target === ledgerModal) ledgerModal.classList.remove('open');
+  });
   document.querySelectorAll('[data-row-index]').forEach((row) => {
     recalculateAghajeRow(row);
   });
