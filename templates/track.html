@@ -516,6 +516,7 @@ const STATUS_QUERY_ALIASES = {
   'out for delivery': 'Out For Delivery',
   'ofd': 'Out For Delivery',
   'being return': 'Being Return',
+  'undelivered': 'Undelivered',
   'returned to shipper': 'RETURNED TO SHIPPER',
   'rts': 'RETURNED TO SHIPPER',
   'delivered': 'Delivered',
@@ -527,10 +528,11 @@ function normalizeStatusBucket(status) {
   const upper = raw.toUpperCase();
 
   if (upper.includes('PARTIALLY DELIVERED')) return 'Partially Delivered';
-  if (upper.includes('DELIVERED')) return 'Delivered';
-  if (upper.includes('OUT FOR DELIVERY')) return 'Out For Delivery';
   if (upper.includes('RETURNED TO SHIPPER')) return 'RETURNED TO SHIPPER';
-  if (upper.includes('BEING RETURN')) return 'Being Return';
+  if (upper.includes('BEING RETURN') || upper.includes('OUT FOR RETURN') || upper.includes('RETURN SUBMISSION')) return 'Being Return';
+  if (upper.includes('UNDELIVERED')) return 'Undelivered';
+  if (upper.includes('OUT FOR DELIVERY')) return 'Out For Delivery';
+  if (upper === 'DELIVERED' || upper.startsWith('DELIVERED ')) return 'Delivered';
   if (upper.includes('PICKED FROM SHIPPER')) return 'Picked From Shipper';
   if (upper === 'BOOKED' || upper.includes('CONSIGNMENT BOOKED')) return 'Booked';
   if (upper === 'UN-BOOKED' || upper === 'UNBOOKED') return 'Un-Booked';

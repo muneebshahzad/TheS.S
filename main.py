@@ -104,7 +104,12 @@ def is_undelivered_status(status):
     return any(
         keyword in normalized
         for keyword in ("OUT FOR", "RETURN", "REFUS", "CALL NOT", "HOLD", "UNTRACEABLE", "ATTEMPT", "DELAY")
-    )
+    ) or "UNDELIVERED" in normalized
+
+
+def is_delivered_status(status):
+    normalized = (status or "").strip().upper()
+    return normalized == "DELIVERED" or normalized.startswith("DELIVERED ")
 
 
 def normalize_status_bucket(status):
@@ -112,14 +117,16 @@ def normalize_status_bucket(status):
     upper = raw.upper()
     if "PARTIALLY DELIVERED" in upper:
         return "Partially Delivered"
-    if "DELIVERED" in upper:
-        return "Delivered"
-    if "OUT FOR DELIVERY" in upper:
-        return "Out For Delivery"
     if "RETURNED TO SHIPPER" in upper:
         return "RETURNED TO SHIPPER"
-    if "BEING RETURN" in upper:
+    if "BEING RETURN" in upper or "OUT FOR RETURN" in upper or "RETURN SUBMISSION" in upper:
         return "Being Return"
+    if "UNDELIVERED" in upper:
+        return "Undelivered"
+    if "OUT FOR DELIVERY" in upper:
+        return "Out For Delivery"
+    if is_delivered_status(raw):
+        return "Delivered"
     if "PICKED FROM SHIPPER" in upper:
         return "Picked From Shipper"
     if upper == "BOOKED" or "CONSIGNMENT BOOKED" in upper:
@@ -290,10 +297,10 @@ def status_badge(status):
     upper = status.upper()
     if "PARTIALLY DELIVERED" in upper:
         bg, color, dot = "#fff0d9", "#8b5a00", "#f6c23e"
-    elif "DELIVERED" in upper:
-        bg, color, dot = "#d4f5e9", "#0f6848", "#1cc88a"
-    elif "RETURN" in upper or "CANCEL" in upper:
+    elif "UNDELIVERED" in upper or "RETURN" in upper or "CANCEL" in upper:
         bg, color, dot = "#fce8e6", "#8b1a10", "#e74a3b"
+    elif is_delivered_status(status):
+        bg, color, dot = "#d4f5e9", "#0f6848", "#1cc88a"
     elif status == "Booked":
         bg, color, dot = "#dde4fb", "#2346a8", "#4e73df"
     elif status == "Un-Booked":
@@ -347,16 +354,18 @@ def aggregate_order_status(line_items):
     delivered_count = sum(1 for status in normalized_statuses if status == "Delivered")
     pending_statuses = [status for status in normalized_statuses if is_pending_line_item_status(status)]
 
+    if any(status == "RETURNED TO SHIPPER" for status in normalized_statuses):
+        return "RETURNED TO SHIPPER"
+    if any(status == "Being Return" for status in normalized_statuses):
+        return "Being Return"
+    if any(status == "Undelivered" for status in normalized_statuses):
+        return "Undelivered"
     if delivered_count and pending_statuses:
         return "Partially Delivered"
     if delivered_count and delivered_count == len(normalized_statuses):
         return "Delivered"
     if any(status == "Out For Delivery" for status in normalized_statuses):
         return "Out For Delivery"
-    if any(status == "RETURNED TO SHIPPER" for status in normalized_statuses):
-        return "RETURNED TO SHIPPER"
-    if any(status == "Being Return" for status in normalized_statuses):
-        return "Being Return"
     if any(status == "Booked" for status in normalized_statuses):
         return "Booked"
     if any(status == "Un-Booked" for status in normalized_statuses):
@@ -573,10 +582,10 @@ def get_aghaje_delivery_status(order):
     raw_status = str(note_attributes.get("hxs_courier_status") or "").strip()
     if raw_status:
         upper = raw_status.upper()
-        if "DELIVER" in upper:
-            return "Delivered", raw_status
-        if "RETURN" in upper or "REFUS" in upper:
+        if "UNDELIVERED" in upper or "RETURN" in upper or "REFUS" in upper:
             return "Returned", raw_status
+        if is_delivered_status(raw_status):
+            return "Delivered", raw_status
         if "CANCEL" in upper:
             return "Cancelled", raw_status
         return "Other status", raw_status
