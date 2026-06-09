@@ -606,14 +606,7 @@ def get_aghaje_delivery_status(order):
     note_attributes = extract_note_attributes(order)
     raw_status = str(note_attributes.get("hxs_courier_status") or "").strip()
     if raw_status:
-        upper = raw_status.upper()
-        if "UNDELIVERED" in upper or "RETURN" in upper or "REFUS" in upper:
-            return "Returned", raw_status
-        if is_delivered_status(raw_status):
-            return "Delivered", raw_status
-        if "CANCEL" in upper:
-            return "Cancelled", raw_status
-        return "Other status", raw_status
+        return classify_aghaje_delivery_status(raw_status)
 
     fulfillment_status = str((order or {}).get("fulfillment_status") or "").strip().lower()
     if fulfillment_status == "fulfilled":
@@ -621,6 +614,57 @@ def get_aghaje_delivery_status(order):
     if fulfillment_status == "partial":
         return "Inprocess", "Partially fulfilled in Shopify"
     return "Inprocess", "No courier status yet"
+
+
+def classify_aghaje_delivery_status(raw_status):
+    raw_status = str(raw_status or "").strip()
+    upper = raw_status.upper()
+    if not raw_status:
+        return "Inprocess", "No courier status yet"
+    if "UNDELIVERED" in upper or "RETURN" in upper or "REFUS" in upper:
+        return "Returned", raw_status
+    if is_delivered_status(raw_status):
+        return "Delivered", raw_status
+    if "CANCEL" in upper:
+        return "Cancelled", raw_status
+    return "Other status", raw_status
+
+
+def fetch_tracking_data_sync(tracking_number):
+    async def run_lookup():
+        async with aiohttp.ClientSession() as session_obj:
+            return await fetch_tracking_data(session_obj, tracking_number)
+
+    return asyncio.run(run_lookup())
+
+
+def build_tracking_summary_payload(tracking_number):
+    data = fetch_tracking_data_sync(tracking_number)
+    summary = summarize_tracking_result(tracking_number, data)
+    events = []
+    if str(tracking_number or "").startswith("LE"):
+        packet_list = (data or {}).get("packet_list") or []
+        packet = packet_list[0] if packet_list else {}
+        for detail in list((packet or {}).get("Tracking Detail") or [])[::-1]:
+            title = detail.get("Status") or "Tracking update"
+            meta = " ".join(str(part or "").strip() for part in [detail.get("Activity_Date"), detail.get("Activity_Time")] if str(part or "").strip())
+            reason = detail.get("Reason") or ""
+            events.append({"title": title, "meta": meta, "reason": "" if reason == "N/A" else reason})
+    elif isinstance(data, list):
+        for detail in list(data)[::-1]:
+            title = detail.get("ProcessDescForPortal") or detail.get("ProcessDesc") or "Tracking update"
+            meta = detail.get("TransactionDate") or ""
+            reason = detail.get("ReasonDesc") or ""
+            events.append({"title": title, "meta": meta, "reason": "" if reason == "OK" else reason})
+    return {
+        "tracking_number": tracking_number,
+        "status": summary.get("status") or "No tracking status",
+        "customer": summary.get("name") or "",
+        "city": summary.get("city") or "",
+        "phone": summary.get("phone") or "",
+        "address": summary.get("address") or "",
+        "events": events,
+    }
 
 
 def aghaje_item_cost_key(product_id=None, variant_id=None, title=""):
@@ -789,6 +833,13 @@ def build_aghaje_orders_page_data():
         courier_name = str(note_attributes.get("hxs_courier_name") or "").strip()
         tracking_number = str(note_attributes.get("hxs_courier_tracking") or "").strip()
         tracking_url = str(note_attributes.get("hxs_courier_url") or "").strip()
+        courier_tracking_ready = bool(tracking_number)
+        if courier_tracking_ready:
+            try:
+                tracking_summary = build_tracking_summary_payload(tracking_number)
+                delivery_status, delivery_detail = classify_aghaje_delivery_status(tracking_summary.get("status"))
+            except Exception as error:
+                print(f"Could not refresh Aghaje courier tracking {tracking_number}: {error}")
         customer = order.get("customer") or {}
         shipping = order.get("shipping_address") or {}
         billing = order.get("billing_address") or {}
@@ -857,6 +908,7 @@ def build_aghaje_orders_page_data():
                 "courier_name": courier_name,
                 "tracking_number": tracking_number,
                 "tracking_url": tracking_url,
+                "courier_tracking_ready": courier_tracking_ready,
                 "items": item_rows,
                 "item_cost": 0.0,
                 "item_qty": item_qty_total,
@@ -888,7 +940,10 @@ def build_aghaje_orders_page_data():
 
         order_id = str(order.get("order_id") or "")
         override = overrides.get(order_id) or {}
-        delivery_status = str(override.get("delivery_status") or order.get("delivery_status") or "Inprocess").strip() or "Inprocess"
+        if order.get("courier_tracking_ready"):
+            delivery_status = str(order.get("delivery_status") or "Inprocess").strip() or "Inprocess"
+        else:
+            delivery_status = str(override.get("delivery_status") or order.get("delivery_status") or "Inprocess").strip() or "Inprocess"
         packaging_cost = parse_money(override.get("packaging_cost", order.get("packaging_cost", 0)))
         delivery_cost = parse_money(override.get("delivery_cost", order.get("delivery_cost", 0)))
         financial_status = str(order.get("financial_status") or "").strip().lower()
@@ -2351,6 +2406,14 @@ def display_tracking(tracking_num):
     return render_template("trackingdata.html", data=data, tracking_number=tracking_num, matched_order=matched_order)
 
 
+@app.route("/tracking-summary/<tracking_num>")
+def tracking_summary(tracking_num):
+    try:
+        return jsonify({"success": True, "tracking": build_tracking_summary_payload(tracking_num)})
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 500
+
+
 @app.route("/pending")
 def pending_orders():
     all_orders, pending_items, summary = build_pending_items_table_data()
@@ -2520,6 +2583,18 @@ def aghaje_portal():
         summary=portal_data["summary"],
         error_message=portal_data["error_message"],
     )
+
+
+@app.route("/aghaje_portal/refresh", methods=["POST"])
+@app.route("/aghaje-portal/refresh", methods=["POST"])
+def aghaje_portal_refresh():
+    if not aghaje_portal_is_authenticated():
+        return jsonify({"success": False, "error": "Not authenticated."}), 401
+    try:
+        build_aghaje_portal_page_data()
+        return jsonify({"success": True, "message": "Aghaje tracking refreshed."})
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 500
 
 
 @app.route("/aghaje_portal/logout", methods=["POST"])
