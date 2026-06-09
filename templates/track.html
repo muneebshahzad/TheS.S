@@ -95,6 +95,8 @@
   .sb-partial   { background: #fff3cd; color: #8b5a00; }
   .sb-ofd       { background: #fff3cd; color: #7a5c00; }
   .sb-return    { background: #fde8e6; color: #c0392b; }
+  .sb-attention { background: #fff0d9; color: #8b5a00; }
+  .sb-mixed     { background: #e8f8fb; color: #0a5c6e; }
 
   /* ── Card body ── */
   .card-body { padding: 0 14px 0; display: flex; flex-direction: column; gap: 10px; }
@@ -110,6 +112,7 @@
   .product-track { font-family: 'DM Mono', monospace; font-size: 8px; color: #3a3b45; background: #e8eaef; padding: 2px 5px; border-radius: 3px; text-decoration: none; text-align: center; max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; font-weight: 600; transition: background 0.15s, color 0.15s; }
   .product-track:hover { background: #2d2e36; color: #fff; }
   .product-notrack { font-size: 8px; color: #c0c2cc; font-style: italic; }
+  .product-status { max-width: 76px; border-radius: 999px; padding: 2px 6px; font-size: 7px; line-height: 1.2; font-weight: 700; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* Desktop info block */
   .info-block { display: flex; flex-direction: column; gap: 4px; }
@@ -227,7 +230,7 @@
 
     <!-- Filter pills + Refresh -->
     <div class="filter-strip">
-      {% for f in ['All','Booked','Un-Booked','Out For Delivery','Delivered','Being Return','RETURNED TO SHIPPER'] %}
+      {% for f in ['All','Booked','Un-Booked','Out For Delivery','Delivered','Need Attention','Being Return','RETURNED TO SHIPPER'] %}
       <button class="fpill {% if loop.first %}active{% endif %}" data-filter="{{ f }}" onclick="setFilter(this)">{{ f }}</button>
       {% endfor %}
       <button class="refresh-btn" id="refreshTrackingBtn" onclick="refreshTracking()">
@@ -297,11 +300,14 @@
       {% elif s == 'Delivered' %}{% set badge_cls = 'sb-delivered' %}{% set dot_col = '#1cc88a' %}
       {% elif s == 'Partially Delivered' %}{% set badge_cls = 'sb-partial' %}{% set dot_col = '#f6c23e' %}
       {% elif s == 'Out For Delivery' %}{% set badge_cls = 'sb-ofd' %}{% set dot_col = '#f6c23e' %}
+      {% elif s == 'Need Attention' %}{% set badge_cls = 'sb-attention' %}{% set dot_col = '#f6c23e' %}
+      {% elif s == 'Mixed Status' %}{% set badge_cls = 'sb-mixed' %}{% set dot_col = '#36b9cc' %}
       {% else %}{% set badge_cls = 'sb-return' %}{% set dot_col = '#e74a3b' %}{% endif %}
 
       <div class="card" id="order-card-{{ order.id }}"
            data-status="{{ s }}"
-           data-search="{{ order.order_id }} {{ s }} {{ order.financial_status or 'Pending' }} {{ name }} {{ city }} {{ phone }} {{ addr }} {% for tag in order.tags %}{{ tag }} {% endfor %}{% for i in order.line_items %}{{ i.product_title }} {{ i.tracking_number }} {% endfor %}">
+           data-financial-status="{{ order.financial_status or 'Pending' }}"
+           data-search="{{ order.order_id }} {{ s }} {{ order.financial_status or 'Pending' }} {{ name }} {{ city }} {{ phone }} {{ addr }} {% for tag in order.tags %}{{ tag }} {% endfor %}{% for i in order.line_items %}{{ i.product_title }} {{ i.tracking_number }} {{ i.status }} {% endfor %}">
 
         <!-- Header: checkbox | order# | date | status | amount -->
         <div class="card-head">
@@ -338,6 +344,7 @@
               {% else %}
               <span class="product-notrack">No tracking</span>
               {% endif %}
+              <span class="product-status {{ 'sb-delivered' if item.status|default('') == 'Delivered' else 'sb-return' if 'RETURN' in item.status|default('')|upper or 'UNDELIVERED' in item.status|default('')|upper else 'sb-ofd' if 'OUT FOR DELIVERY' in item.status|default('')|upper else 'sb-attention' if 'CONTACTING CONSIGNEE' in item.status|default('')|upper or 'MOVED TO ORIGIN BRANCH' in item.status|default('')|upper else 'sb-booked' }}">{{ item.status or 'Un-Booked' }}</span>
             </div>
             {% endfor %}
           </div>
@@ -516,6 +523,8 @@ const STATUS_QUERY_ALIASES = {
   'out for delivery': 'Out For Delivery',
   'ofd': 'Out For Delivery',
   'being return': 'Being Return',
+  'need attention': 'Need Attention',
+  'attention': 'Need Attention',
   'undelivered': 'Undelivered',
   'returned to shipper': 'RETURNED TO SHIPPER',
   'rts': 'RETURNED TO SHIPPER',
@@ -531,6 +540,9 @@ function normalizeStatusBucket(status) {
   if (upper.includes('RETURNED TO SHIPPER')) return 'RETURNED TO SHIPPER';
   if (upper.includes('BEING RETURN') || upper.includes('OUT FOR RETURN') || upper.includes('RETURN SUBMISSION')) return 'Being Return';
   if (upper.includes('UNDELIVERED')) return 'Undelivered';
+  if (upper.includes('CONTACTING CONSIGNEE') || upper.includes('MOVED TO ORIGIN BRANCH') || upper.includes('RETURN SUBMITTED')) return 'Need Attention';
+  if (upper === 'NEED ATTENTION') return 'Need Attention';
+  if (upper === 'MIXED STATUS') return 'Mixed Status';
   if (upper.includes('OUT FOR DELIVERY')) return 'Out For Delivery';
   if (upper === 'DELIVERED' || upper.startsWith('DELIVERED ')) return 'Delivered';
   if (upper.includes('PICKED FROM SHIPPER')) return 'Picked From Shipper';
@@ -552,6 +564,8 @@ function statusBadgeMeta(status) {
   if (bucket === 'Delivered') return { cls: 'sb-delivered', dot: '#1cc88a', label: bucket };
   if (bucket === 'Partially Delivered') return { cls: 'sb-partial', dot: '#f6c23e', label: bucket };
   if (bucket === 'Out For Delivery') return { cls: 'sb-ofd', dot: '#f6c23e', label: bucket };
+  if (bucket === 'Need Attention') return { cls: 'sb-attention', dot: '#f6c23e', label: bucket };
+  if (bucket === 'Mixed Status') return { cls: 'sb-mixed', dot: '#36b9cc', label: bucket };
   return { cls: 'sb-return', dot: '#e74a3b', label: bucket || 'Un-Booked' };
 }
 
@@ -570,6 +584,37 @@ function tagStyle(tag) {
   if (t.includes('confirm')) return 'background:#e8eaf6;color:#283593';
   if (t.includes('courier')) return 'background:#efe3f8;color:#4a236d';
   return 'background:#e8eaf6;color:#283593';
+}
+
+function itemNeedsAttention(item) {
+  const raw = `${item?.status || ''}`.toUpperCase();
+  const bucket = normalizeStatusBucket(raw);
+  return (
+    bucket === 'Need Attention' ||
+    bucket === 'Undelivered' ||
+    bucket === 'Being Return' ||
+    raw.includes('UNDELIVERED') ||
+    raw.includes('CONTACTING CONSIGNEE') ||
+    raw.includes('MOVED TO ORIGIN BRANCH') ||
+    raw.includes('RETURN SUBMITTED') ||
+    raw.includes('RETURN SUBMISSION') ||
+    raw.includes('OUT FOR RETURN')
+  );
+}
+
+function orderNeedsAttention(order) {
+  const bucket = normalizeStatusBucket(order?.status || '');
+  return (
+    bucket === 'Need Attention' ||
+    bucket === 'Undelivered' ||
+    bucket === 'Being Return' ||
+    (order?.line_items || []).some(itemNeedsAttention)
+  );
+}
+
+function isUnpaidOrder(order) {
+  const financial = `${order?.financial_status || ''}`.trim().toLowerCase();
+  return !['paid', 'partially paid', 'partially_paid', 'partially-paid'].includes(financial);
 }
 
 const MANUAL_STATUS_TAGS = {
@@ -630,18 +675,46 @@ function updateOrderCardAfterMark(orderId, tag) {
   updateBulkBar();
 }
 
+function syncAttentionCards() {
+  ORDER_DATA.forEach((order) => {
+    if (!orderNeedsAttention(order)) return;
+    const card = document.getElementById('order-card-' + order.id);
+    if (!card) return;
+    order.status = 'Need Attention';
+    card.dataset.status = 'Need Attention';
+    card.dataset.search = `${card.dataset.search || ''} Need Attention`;
+    const badge = card.querySelector('.order-status-badge');
+    if (badge) {
+      const meta = statusBadgeMeta('Need Attention');
+      badge.className = `sbadge ${meta.cls} order-status-badge`;
+      badge.innerHTML = `<svg width="6" height="6" viewBox="0 0 6 6"><circle cx="3" cy="3" r="3" fill="${meta.dot}"/></svg>${meta.label}`;
+    }
+  });
+}
+
 function renderStats() {
   const counts = {}, totals = {};
+  const unpaidTotals = { Delivered: 0, 'Un-Booked': 0, 'Need Attention': 0, Booked: 0 };
   let grandTotal = 0;
   ORDER_DATA.forEach(o => {
     const s = normalizeStatusBucket(o.status);
-    counts[s] = (counts[s] || 0) + 1;
-    totals[s] = (totals[s] || 0) + Number(o.total_price || 0);
-    grandTotal += Number(o.total_price || 0);
+    const attention = orderNeedsAttention(o);
+    const statBucket = attention ? 'Need Attention' : s;
+    const amount = Number(o.total_price || 0);
+    counts[statBucket] = (counts[statBucket] || 0) + 1;
+    totals[statBucket] = (totals[statBucket] || 0) + amount;
+    grandTotal += amount;
+    if (isUnpaidOrder(o)) {
+      if (statBucket === 'Delivered') unpaidTotals.Delivered += amount;
+      if (statBucket === 'Un-Booked') unpaidTotals['Un-Booked'] += amount;
+      if (statBucket === 'Need Attention' || statBucket === 'Being Return' || statBucket === 'Undelivered') unpaidTotals['Need Attention'] += amount;
+      if (statBucket === 'Booked') unpaidTotals.Booked += amount;
+    }
   });
   const fmt = n => n >= 1000 ? Math.round(n / 1000) + 'k' : Math.round(n).toString();
   const retCnt = (counts['Being Return'] || 0) + (counts['RETURNED TO SHIPPER'] || 0);
   const retAmt = (totals['Being Return'] || 0) + (totals['RETURNED TO SHIPPER'] || 0);
+  const fmtFull = n => Math.round(n).toLocaleString('en-PK');
 
   document.getElementById('statsStrip').innerHTML = `
     <div class="stat">
@@ -670,6 +743,32 @@ function renderStats() {
       <span class="stat-pkr">Rs ${fmt(retAmt)}</span>
       <span class="stat-lbl">Returned</span>
     </div>
+    <div class="stat">
+      <span class="stat-val" style="color:#f6c23e">${counts['Need Attention']||0}</span>
+      <span class="stat-pkr">Rs ${fmt(totals['Need Attention']||0)}</span>
+      <span class="stat-lbl">Need Attention</span>
+    </div>
+    <div class="stat-div"></div>
+    <div class="stat">
+      <span class="stat-val" style="color:#1cc88a;font-size:13px">${fmtFull(unpaidTotals.Delivered)}</span>
+      <span class="stat-pkr">Unpaid</span>
+      <span class="stat-lbl">Delivered</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val" style="color:#8a8b96;font-size:13px">${fmtFull(unpaidTotals['Un-Booked'])}</span>
+      <span class="stat-pkr">Unpaid</span>
+      <span class="stat-lbl">Un-Booked</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val" style="color:#f6c23e;font-size:13px">${fmtFull(unpaidTotals['Need Attention'])}</span>
+      <span class="stat-pkr">Unpaid</span>
+      <span class="stat-lbl">Need Attention</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val" style="color:#4e73df;font-size:13px">${fmtFull(unpaidTotals.Booked)}</span>
+      <span class="stat-pkr">Unpaid</span>
+      <span class="stat-lbl">Booked</span>
+    </div>
     <div class="stat-div"></div>
     <div class="stat">
       <span class="stat-val" style="color:#d4a800;font-size:13px">${Math.round(grandTotal).toLocaleString('en-PK')}</span>
@@ -692,6 +791,7 @@ function getVisibleOrders() {
   const effectiveFilter = statusQueryBucket || currentFilter;
   return ORDER_DATA.filter((order) => {
     const status = normalizeStatusBucket(order.status);
+    const attention = orderNeedsAttention(order);
     const search = [
       order.order_id || '',
       (order.customer_details || {}).name || '',
@@ -699,10 +799,10 @@ function getVisibleOrders() {
       (order.customer_details || {}).phone || '',
       (order.customer_details || {}).address || '',
       ...(order.tags || []),
-      ...((order.line_items || []).map((item) => `${item.product_title || ''} ${item.tracking_number || ''}`)),
+      ...((order.line_items || []).map((item) => `${item.product_title || ''} ${item.tracking_number || ''} ${item.status || ''}`)),
     ].join(' ').toLowerCase();
-    const matchFilter = effectiveFilter === 'All' || status === effectiveFilter;
-    const matchSearch = !q || (statusQueryBucket ? status === statusQueryBucket : search.includes(q));
+    const matchFilter = effectiveFilter === 'All' || status === effectiveFilter || (effectiveFilter === 'Need Attention' && attention);
+    const matchSearch = !q || (statusQueryBucket ? (status === statusQueryBucket || (statusQueryBucket === 'Need Attention' && attention)) : search.includes(q));
     return matchFilter && matchSearch;
   });
 }
@@ -752,9 +852,11 @@ function applyFilterSearch() {
   let visible = 0;
   document.querySelectorAll('#shopifyOrderList .card').forEach(card => {
     const status = normalizeStatusBucket(card.dataset.status || '');
+    const order = ORDER_DATA.find(o => String(o.id) === String(card.id || '').replace('order-card-', ''));
+    const attention = order ? orderNeedsAttention(order) : status === 'Need Attention';
     const search = `${card.dataset.search || ''}`.toLowerCase();
-    const matchFilter = effectiveFilter === 'All' || status === effectiveFilter;
-    const matchSearch = !q || (statusQueryBucket ? status === statusQueryBucket : search.includes(q));
+    const matchFilter = effectiveFilter === 'All' || status === effectiveFilter || (effectiveFilter === 'Need Attention' && attention);
+    const matchSearch = !q || (statusQueryBucket ? (status === statusQueryBucket || (statusQueryBucket === 'Need Attention' && attention)) : search.includes(q));
     const show = matchFilter && matchSearch;
     card.style.display = show ? '' : 'none';
     if (show) visible++;
@@ -942,7 +1044,9 @@ function toggleMobile(orderId) {
 }
 
 // ── Init ──
+syncAttentionCards();
 renderStats();
+applyFilterSearch();
 updateBottomBar();
 </script>
 {% endblock %}

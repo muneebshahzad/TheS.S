@@ -346,11 +346,32 @@ def is_pending_line_item_status(status):
     return normalized in {"Booked", "Un-Booked"}
 
 
+def is_need_attention_status(status):
+    upper = str(status or "").strip().upper()
+    normalized = normalize_status_bucket(status)
+    attention_keywords = (
+        "UNDELIVERED",
+        "CONTACTING CONSIGNEE",
+        "MOVED TO ORIGIN BRANCH",
+        "RETURN SUBMITTED",
+        "RETURN SUBMISSION",
+        "BEING RETURN",
+        "OUT FOR RETURN",
+    )
+    return normalized in {"Undelivered", "Being Return"} or any(keyword in upper for keyword in attention_keywords)
+
+
 def aggregate_order_status(line_items):
     if not line_items:
         return "Un-Booked"
 
     normalized_statuses = [normalize_status_bucket(item.get("status")) for item in line_items]
+    tracking_numbers = {
+        str(item.get("tracking_number") or "").strip()
+        for item in line_items
+        if str(item.get("tracking_number") or "").strip() and str(item.get("tracking_number") or "").strip() != "N/A"
+    }
+    has_different_tracked_statuses = len(tracking_numbers) > 1 and len(set(normalized_statuses)) > 1
     delivered_count = sum(1 for status in normalized_statuses if status == "Delivered")
     pending_statuses = [status for status in normalized_statuses if is_pending_line_item_status(status)]
 
@@ -360,6 +381,10 @@ def aggregate_order_status(line_items):
         return "Being Return"
     if any(status == "Undelivered" for status in normalized_statuses):
         return "Undelivered"
+    if any(is_need_attention_status(item.get("status")) for item in line_items):
+        return "Need Attention"
+    if has_different_tracked_statuses:
+        return "Mixed Status"
     if delivered_count and pending_statuses:
         return "Partially Delivered"
     if delivered_count and delivered_count == len(normalized_statuses):
