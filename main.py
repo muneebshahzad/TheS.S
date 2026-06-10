@@ -69,7 +69,6 @@ order_details = []
 product_image_cache = {}
 aghaje_product_cache = {}
 aghaje_inventory_item_cost_cache = {}
-semaphore = asyncio.Semaphore(2)
 RATE_LIMIT = 2
 LAST_REQUEST_TIME = 0.0
 PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
@@ -1378,8 +1377,8 @@ async def process_order(session_obj, order):
     return order_info
 
 
-async def limited_request(coroutine):
-    async with semaphore:
+async def limited_request(coroutine, semaphore_obj):
+    async with semaphore_obj:
         await asyncio.sleep(0.5)
         return await coroutine
 
@@ -1506,8 +1505,9 @@ async def get_shopify_orders(force_status=None):
         return None
 
     collected = []
+    request_semaphore = asyncio.Semaphore(2)
     async with aiohttp.ClientSession() as session_obj:
-        tasks = [limited_request(process_order(session_obj, order)) for order in fetched_orders]
+        tasks = [limited_request(process_order(session_obj, order), request_semaphore) for order in fetched_orders]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for result in results:
             if isinstance(result, Exception):
@@ -1522,13 +1522,33 @@ async def get_shopify_orders(force_status=None):
     return sort_orders_newest_first(collected)
 
 
-def reload_orders():
+def merge_order_refresh(existing_orders, refreshed_orders):
+    merged = {}
+    for order in existing_orders or []:
+        key = str(order.get("id") or order.get("order_id") or "").strip()
+        if key:
+            merged[key] = order
+    for order in refreshed_orders or []:
+        key = str(order.get("id") or order.get("order_id") or "").strip()
+        if key:
+            merged[key] = order
+    return sort_orders_newest_first(list(merged.values()))
+
+
+def reload_orders(preserve_existing_on_partial=False):
     global order_details
     try:
         setup_shopify()
         fetched_orders = asyncio.run(get_shopify_orders())
         if fetched_orders is None:
             print("Keeping existing order cache because Shopify fetch failed.")
+            return False
+        if preserve_existing_on_partial and order_details and len(fetched_orders) < len(order_details):
+            print(
+                f"Partial Shopify refresh returned {len(fetched_orders)} orders; "
+                f"keeping {len(order_details)} cached orders and merging refreshed tracking data."
+            )
+            order_details = merge_order_refresh(order_details, fetched_orders)
             return False
         order_details = sort_orders_newest_first(fetched_orders)
         return True
@@ -2387,9 +2407,10 @@ def tracking():
 @app.route("/refresh", methods=["POST"])
 def refresh_data():
     try:
-        reload_orders()
+        refreshed_all = reload_orders(preserve_existing_on_partial=True)
         if request.headers.get("X-Requested-With") == "XMLHttpRequest" or request.is_json:
-            return jsonify({"message": "Data refreshed successfully"})
+            message = "Data refreshed successfully" if refreshed_all else "Tracking refreshed; existing order cache preserved"
+            return jsonify({"message": message})
         return render_template("track.html", order_details=order_details, darazOrders=[], employee_approvals=build_employee_approval_items())
     except Exception as error:
         return jsonify({"message": f"Failed to refresh data: {error}"}), 500
