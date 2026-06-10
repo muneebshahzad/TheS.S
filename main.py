@@ -631,7 +631,8 @@ def classify_aghaje_delivery_status(raw_status):
 
 def fetch_tracking_data_sync(tracking_number):
     async def run_lookup():
-        async with aiohttp.ClientSession() as session_obj:
+        timeout = aiohttp.ClientTimeout(total=8)
+        async with aiohttp.ClientSession(timeout=timeout) as session_obj:
             return await fetch_tracking_data(session_obj, tracking_number)
 
     return asyncio.run(run_lookup())
@@ -833,12 +834,6 @@ def build_aghaje_orders_page_data():
         tracking_number = str(note_attributes.get("hxs_courier_tracking") or "").strip()
         tracking_url = str(note_attributes.get("hxs_courier_url") or "").strip()
         courier_tracking_ready = bool(tracking_number)
-        if courier_tracking_ready:
-            try:
-                tracking_summary = build_tracking_summary_payload(tracking_number)
-                delivery_status, delivery_detail = classify_aghaje_delivery_status(tracking_summary.get("status"))
-            except Exception as error:
-                print(f"Could not refresh Aghaje courier tracking {tracking_number}: {error}")
         customer = order.get("customer") or {}
         shipping = order.get("shipping_address") or {}
         billing = order.get("billing_address") or {}
