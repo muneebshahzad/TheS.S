@@ -2439,9 +2439,24 @@ def pending_orders():
 @app.route("/aghaje-orders")
 def aghaje_orders():
     orders, summary, error_message = build_aghaje_orders_page_data()
+    fulfilled_orders = []
+    closed_orders = []
+    unfulfilled_orders = []
+    for order in orders:
+        payment_status = str(order.get("payment_status") or "Pending").strip() or "Pending"
+        raw_fulfillment = str(order.get("fulfillment_status_raw") or "").strip().lower()
+        if payment_status == "Paid":
+            closed_orders.append(order)
+        elif raw_fulfillment == "fulfilled":
+            fulfilled_orders.append(order)
+        else:
+            unfulfilled_orders.append(order)
     return render_template(
         "aghaje_orders.html",
         orders=orders,
+        fulfilled_orders=fulfilled_orders,
+        closed_orders=closed_orders,
+        unfulfilled_orders=unfulfilled_orders,
         summary=summary,
         error_message=error_message,
     )
