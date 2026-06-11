@@ -2462,10 +2462,15 @@ def aghaje_orders():
     fulfilled_orders = []
     closed_orders = []
     unfulfilled_orders = []
+    cancelled_orders = []
     for order in orders:
         payment_status = str(order.get("payment_status") or "Pending").strip() or "Pending"
         raw_fulfillment = str(order.get("fulfillment_status_raw") or "").strip().lower()
-        if payment_status == "Paid":
+        delivery_status = str(order.get("delivery_status") or "").strip()
+        is_cancelled = bool(order.get("cancelled_at")) or delivery_status == "Cancelled"
+        if is_cancelled:
+            cancelled_orders.append(order)
+        elif payment_status == "Paid":
             closed_orders.append(order)
         elif raw_fulfillment == "fulfilled":
             fulfilled_orders.append(order)
@@ -2477,6 +2482,7 @@ def aghaje_orders():
         fulfilled_orders=fulfilled_orders,
         closed_orders=closed_orders,
         unfulfilled_orders=unfulfilled_orders,
+        cancelled_orders=cancelled_orders,
         summary=summary,
         error_message=error_message,
     )
