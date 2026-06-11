@@ -975,7 +975,7 @@ def build_aghaje_orders_page_data():
         "total_cost": round(total_cost, 2),
         "total_cod": total_cod,
         "total_cash_paid": total_cash_paid,
-        "balance": round(total_cod - total_cost - total_cash_paid, 2),
+        "balance": round(total_cod + total_cash_paid - total_cost, 2),
         "net_payment": round(net_payment, 2),
         "net_payment_received": total_cash_paid,
         "net_payment_received_auto": total_cod,
@@ -1023,7 +1023,7 @@ def build_aghaje_portal_page_data():
     )
     total_cod = round(sum(parse_money(order.get("amount_received", 0)) for order in orders), 2)
     total_cash_paid = parse_money(summary.get("net_payment_received", 0))
-    balance = round(total_cod - total_cost - total_cash_paid, 2)
+    balance = round(total_cod + total_cash_paid - total_cost, 2)
     portal_summary = {
         **summary,
         "total_orders": len(orders),
