@@ -924,6 +924,7 @@ def build_aghaje_orders_page_data():
 
     net_payment = 0.0
     total_amount_received = 0.0
+    total_cost = 0.0
     total_items_qty = 0
     for order in results:
         total_items_qty += int(order.get("item_qty") or 0)
@@ -962,14 +963,22 @@ def build_aghaje_orders_page_data():
         order["payable"] = round(payable, 2)
         net_payment += order["payable"]
         total_amount_received += order["amount_received"]
+        if delivery_status != "Cancelled":
+            total_cost += order["item_cost"] + order["packaging_cost"] + order["delivery_cost"]
 
+    total_cash_paid = round(sum(parse_money(entry.get("amount", 0)) for entry in net_payment_received_entries), 2)
+    total_cod = round(total_amount_received, 2)
     results.sort(key=lambda row: parse_date_for_sort(row.get("created_at")), reverse=True)
     summary = {
         "total_orders": len(results),
         "total_items_qty": total_items_qty,
+        "total_cost": round(total_cost, 2),
+        "total_cod": total_cod,
+        "total_cash_paid": total_cash_paid,
+        "balance": round(total_cod - total_cost - total_cash_paid, 2),
         "net_payment": round(net_payment, 2),
-        "net_payment_received": round(sum(parse_money(entry.get("amount", 0)) for entry in net_payment_received_entries), 2),
-        "net_payment_received_auto": round(total_amount_received, 2),
+        "net_payment_received": total_cash_paid,
+        "net_payment_received_auto": total_cod,
         "net_payment_received_entries": net_payment_received_entries,
     }
     return results, summary, ""
@@ -1005,9 +1014,16 @@ def build_aghaje_portal_page_data():
         else:
             payment_counts[payment_status] += 1
 
-    net_payment_received = parse_money(summary.get("net_payment_received", 0))
-    net_payment = parse_money(summary.get("net_payment", 0))
-    balance = round(net_payment_received + net_payment, 2)
+    total_cost = round(
+        sum(
+            parse_money(order.get("item_cost", 0)) + parse_money(order.get("packaging_cost", 0)) + parse_money(order.get("delivery_cost", 0))
+            for order in orders
+        ),
+        2,
+    )
+    total_cod = round(sum(parse_money(order.get("amount_received", 0)) for order in orders), 2)
+    total_cash_paid = parse_money(summary.get("net_payment_received", 0))
+    balance = round(total_cod - total_cost - total_cash_paid, 2)
     portal_summary = {
         **summary,
         "total_orders": len(orders),
@@ -1021,7 +1037,11 @@ def build_aghaje_portal_page_data():
         "paid_orders": payment_counts["Paid"],
         "pending_orders": payment_counts["Pending"],
         "not_payable_orders": payment_counts["Not Payable"],
-        "net_payment_received": net_payment_received,
+        "total_cost": total_cost,
+        "total_cod": total_cod,
+        "total_cash_paid": total_cash_paid,
+        "net_payment_received": total_cash_paid,
+        "net_payment_received_auto": total_cod,
         "balance": balance,
     }
     return {

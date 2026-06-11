@@ -533,9 +533,24 @@
             <div class="small">Cancelled orders are excluded from this portal.</div>
           </div>
           <div class="summary-card green">
+            <div class="label">Total Cost</div>
+            <div class="value">PKR {{ summary.total_cost|format_number }}</div>
+            <div class="small">Product cost + packaging + delivery.</div>
+          </div>
+          <div class="summary-card teal">
+            <div class="label">Total COD</div>
+            <div class="value">PKR {{ summary.total_cod|format_number }}</div>
+            <div class="small">Total amount received from courier.</div>
+          </div>
+          <div class="summary-card" data-received-ledger-open style="cursor:pointer;">
+            <div class="label">Total Amount Paid in Cash</div>
+            <div class="value teal">PKR {{ summary.total_cash_paid|format_number }}</div>
+            <div class="small">Click to view cash payment entries.</div>
+          </div>
+          <div class="summary-card green">
             <div class="label">Balance</div>
             <div class="value {% if summary.balance >= 0 %}positive{% else %}red{% endif %}">PKR {{ summary.balance|format_number }}</div>
-            <div class="small">Net payment received minus net payable.</div>
+            <div class="small">COD - cost - cash paid.</div>
           </div>
         </div>
 
@@ -551,21 +566,6 @@
               <div class="label">Pending Orders</div>
               <div class="value">{{ summary.pending_orders }}</div>
               <div class="small">Waiting for payment confirmation.</div>
-            </div>
-            <div class="summary-card">
-              <div class="label">Not Payable</div>
-              <div class="value red">{{ summary.not_payable_orders }}</div>
-              <div class="small">Non-cancelled cases not payable to us.</div>
-            </div>
-            <div class="summary-card" data-received-ledger-open style="cursor:pointer;">
-              <div class="label">Net Payment Received</div>
-              <div class="value teal">PKR {{ summary.net_payment_received|format_number }}</div>
-              <div class="small">Click to view received entries.</div>
-            </div>
-            <div class="summary-card">
-              <div class="label">Net Payment</div>
-              <div class="value {% if summary.net_payment >= 0 %}positive{% else %}red{% endif %}">PKR {{ summary.net_payment|format_number }}</div>
-              <div class="small">Sum of payables across all orders.</div>
             </div>
             <div class="summary-card">
               <div class="label">Other Status</div>

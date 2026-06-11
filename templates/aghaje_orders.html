@@ -98,28 +98,31 @@
     <div class="agh-stats">
       <div class="agh-card">
         <div class="agh-stat-row">
-          <div class="agh-stat-icon" style="background:rgba(78,115,223,0.1)">🧾</div>
+          <div class="agh-stat-icon" style="background:rgba(54,185,204,0.12)">🧮</div>
           <div>
-            <div class="agh-stat-label">Total Orders</div>
-            <div class="agh-stat-value" style="color:#4e73df">{{ summary.total_orders }}</div>
+            <div class="agh-stat-label">Total Cost</div>
+            <div class="agh-stat-value" style="color:#36b9cc">PKR {{ summary.total_cost|format_number }}</div>
+            <div class="agh-detail" style="max-width:none;">Product cost + packaging + delivery.</div>
           </div>
         </div>
       </div>
       <div class="agh-card">
         <div class="agh-stat-row">
-          <div class="agh-stat-icon" style="background:rgba(28,200,138,0.1)">📦</div>
+          <div class="agh-stat-icon" style="background:rgba(28,200,138,0.1)">💵</div>
           <div>
-            <div class="agh-stat-label">Total Items</div>
-            <div class="agh-stat-value" style="color:#1cc88a">{{ summary.total_items_qty }}</div>
+            <div class="agh-stat-label">Total COD</div>
+            <div class="agh-stat-value" style="color:#1cc88a">PKR {{ summary.total_cod|format_number }}</div>
+            <div class="agh-detail" style="max-width:none;">Total amount received from courier.</div>
           </div>
         </div>
       </div>
       <div class="agh-card">
         <div class="agh-stat-row">
-          <div class="agh-stat-icon" style="background:rgba(54,185,204,0.12)">💰</div>
+          <div class="agh-stat-icon" style="background:rgba(246,194,62,0.14)">⚖️</div>
           <div>
-            <div class="agh-stat-label">Net Payment</div>
-            <div class="agh-stat-value {{ 'agh-positive' if summary.net_payment >= 0 else 'agh-negative' }}">PKR {{ summary.net_payment|format_number }}</div>
+            <div class="agh-stat-label">Balance</div>
+            <div class="agh-stat-value {{ 'agh-positive' if summary.balance >= 0 else 'agh-negative' }}">PKR {{ summary.balance|format_number }}</div>
+            <div class="agh-detail" style="max-width:none;">COD - cost - cash paid.</div>
           </div>
         </div>
       </div>
@@ -127,8 +130,8 @@
         <div class="agh-stat-row" style="align-items:flex-start;">
           <div class="agh-stat-icon" style="background:rgba(54,185,204,0.12)">💳</div>
           <div style="min-width:0; flex:1;">
-            <div class="agh-stat-label">Net Payment Received</div>
-            <div class="agh-summary-total">PKR <span data-summary-received-total>{{ summary.net_payment_received|format_number }}</span></div>
+            <div class="agh-stat-label">Total Amount Paid in Cash</div>
+            <div class="agh-summary-total">PKR <span data-summary-received-total>{{ summary.total_cash_paid|format_number }}</span></div>
             <div class="agh-summary-add-row" onclick="event.stopPropagation()">
             <input
               class="agh-input agh-summary-input"
@@ -141,7 +144,7 @@
               <button class="agh-btn primary agh-plus-btn" type="button" onclick="saveAghajeSummaryReceived()" aria-label="Add amount">+</button>
             </div>
             <div class="agh-detail" style="margin-top:4px; max-width:none;">
-              Auto total: PKR {{ summary.net_payment_received_auto|format_number }} · Click card to view entries.
+              Click card to view cash payment entries.
             </div>
           </div>
         </div>
@@ -532,6 +535,7 @@ async function saveAghajeSummaryReceived() {
     if (totalEl) totalEl.textContent = aghajeMoney(result.total_received || 0).replace('PKR ', '');
     renderReceivedLedgerEntries(result.entries || []);
     showToast('Received amount added');
+    setTimeout(() => window.location.reload(), 500);
   } catch (error) {
     showToast('Could not add received amount');
   } finally {
