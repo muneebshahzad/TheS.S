@@ -609,7 +609,7 @@ def get_aghaje_delivery_status(order):
 
     fulfillment_status = str((order or {}).get("fulfillment_status") or "").strip().lower()
     if fulfillment_status == "fulfilled":
-        return "Delivered", "Fulfilled in Shopify"
+        return "Inprocess", "Fulfilled in Shopify; courier status not available yet."
     if fulfillment_status == "partial":
         return "Inprocess", "Partially fulfilled in Shopify"
     return "Inprocess", "No courier status yet"
@@ -942,16 +942,17 @@ def build_aghaje_orders_page_data():
         packaging_cost = parse_money(override.get("packaging_cost", order.get("packaging_cost", 0)))
         delivery_cost = parse_money(override.get("delivery_cost", order.get("delivery_cost", 0)))
         financial_status = str(order.get("financial_status") or "").strip().lower()
-        default_amount_received = order["order_total"] if delivery_status == "Delivered" or financial_status in PAID_FINANCIAL_STATUSES else 0.0
+        default_amount_received = order["order_total"] if delivery_status == "Delivered" else 0.0
         amount_received = parse_money(override.get("amount_received", default_amount_received))
-        default_payment_status = "Not Payable" if delivery_status == "Cancelled" else ("Paid" if amount_received > 0 else "Pending")
+        default_payment_status = "Not Payable" if delivery_status == "Cancelled" or financial_status in PAID_FINANCIAL_STATUSES else "Pending"
         payment_status = str(override.get("payment_status") or default_payment_status).strip() or default_payment_status
 
-        if delivery_status == "Cancelled":
+        if delivery_status == "Cancelled" or financial_status in PAID_FINANCIAL_STATUSES:
             payment_status = "Not Payable"
             amount_received = 0.0
-            packaging_cost = 0.0
-            delivery_cost = 0.0
+            if delivery_status == "Cancelled":
+                packaging_cost = 0.0
+                delivery_cost = 0.0
 
         payable = 0.0 if payment_status == "Not Payable" or delivery_status == "Cancelled" else round(amount_received - order_item_cost - packaging_cost - delivery_cost, 2)
         order["item_cost"] = round(order_item_cost, 2)
