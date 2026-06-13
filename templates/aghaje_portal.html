@@ -175,22 +175,36 @@
       margin-bottom: 14px;
     }
     .status-filter-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
       border: 1px solid var(--line);
       background: rgba(255,255,255,.82);
       color: var(--ink);
       border-radius: 999px;
-      min-height: 38px;
-      padding: 8px 14px;
+      min-height: 58px;
+      min-width: 122px;
+      padding: 9px 16px;
       font-size: 12px;
       font-weight: 900;
       cursor: pointer;
       transition: background .15s ease, border-color .15s ease, color .15s ease;
+    }
+    .status-filter-value {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .04em;
+      text-transform: uppercase;
     }
     .status-filter-btn.active {
       background: rgba(38,103,255,.11);
       border-color: rgba(38,103,255,.28);
       color: var(--blue);
     }
+    .status-filter-btn.active .status-filter-value { color: var(--blue); }
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
     .section {
@@ -619,14 +633,26 @@
     <div class="tab-panel active" data-tab-panel="fulfilled">
       <div class="section">
         <div class="status-filter-bar" aria-label="Fulfilled order status filters">
-          <button class="status-filter-btn active" type="button" data-fulfilled-filter="all">All</button>
-          <button class="status-filter-btn" type="button" data-fulfilled-filter="delivered">Delivered</button>
-          <button class="status-filter-btn" type="button" data-fulfilled-filter="out-for-delivery">Out For Delivery</button>
+          <button class="status-filter-btn active" type="button" data-fulfilled-filter="all">
+            <span>All</span>
+            <span class="status-filter-value">Rs {{ summary.fulfilled_filter_values.all|format_number }}</span>
+          </button>
+          <button class="status-filter-btn" type="button" data-fulfilled-filter="delivered">
+            <span>Delivered</span>
+            <span class="status-filter-value">Rs {{ summary.fulfilled_filter_values.delivered|format_number }}</span>
+          </button>
+          <button class="status-filter-btn" type="button" data-fulfilled-filter="out-for-delivery">
+            <span>Out For Delivery</span>
+            <span class="status-filter-value">Rs {{ summary.fulfilled_filter_values.out_for_delivery|format_number }}</span>
+          </button>
+          <button class="status-filter-btn" type="button" data-fulfilled-filter="undelivered">
+            <span>Undelivered</span>
+            <span class="status-filter-value">Rs {{ summary.fulfilled_filter_values.undelivered|format_number }}</span>
+          </button>
         </div>
         <div class="order-list">
           {% for order in fulfilled_orders %}
-          {% set fulfilled_filter_status = 'delivered' if order.delivery_status == 'Delivered' else 'out-for-delivery' if 'OUT FOR DELIVERY' in (order.delivery_status_detail or '')|upper else 'other' %}
-          <div class="order-card" data-fulfilled-status="{{ fulfilled_filter_status }}">
+          <div class="order-card" data-fulfilled-status="{{ order.fulfilled_filter_status }}">
             <div class="order-head">
               <div>
                 <a class="order-id" href="{{ order.shopify_link }}" target="_blank">{{ order.order_id }}</a>
