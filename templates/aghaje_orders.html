@@ -146,7 +146,6 @@
               class="agh-input agh-summary-input"
               data-summary-amount-received
               type="number"
-              min="0"
               step="1"
               placeholder="Add amount"
             >
@@ -524,8 +523,8 @@ async function saveAghajeSummaryReceived() {
   const input = document.querySelector('[data-summary-amount-received]');
   if (!input) return;
   const value = Number(input.value || 0);
-  if (!value || value <= 0) {
-    showToast('Enter an amount greater than 0');
+  if (!Number.isFinite(value) || value === 0) {
+    showToast('Enter a non-zero amount');
     return;
   }
   input.disabled = true;

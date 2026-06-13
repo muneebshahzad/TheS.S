@@ -215,7 +215,7 @@ def get_aghaje_net_payment_received_entries():
                 if not isinstance(entry, dict):
                     continue
                 amount = parse_money(entry.get("amount", 0))
-                if amount <= 0:
+                if amount == 0:
                     continue
                 entries.append(
                     {
@@ -228,15 +228,15 @@ def get_aghaje_net_payment_received_entries():
         pass
 
     legacy_amount = parse_money(raw)
-    if legacy_amount <= 0:
+    if legacy_amount == 0:
         return []
     return [{"amount": legacy_amount, "created_at": "Legacy saved amount"}]
 
 
 def add_aghaje_net_payment_received_entry(value):
     amount = parse_money(value)
-    if amount <= 0:
-        raise ValueError("Amount received must be greater than zero.")
+    if amount == 0:
+        raise ValueError("Amount received must not be zero.")
     entries = get_aghaje_net_payment_received_entries()
     entries.append(
         {
@@ -3192,6 +3192,16 @@ def admin_portal_manifest():
 @app.route("/admin_portal-sw.js")
 def admin_portal_service_worker():
     return send_from_directory("static", "admin-portal-sw.js", mimetype="application/javascript")
+
+
+@app.route("/aghaje-portal-manifest.webmanifest")
+def aghaje_portal_manifest():
+    return send_from_directory("static", "aghaje-portal.webmanifest", mimetype="application/manifest+json")
+
+
+@app.route("/aghaje-portal-sw.js")
+def aghaje_portal_service_worker():
+    return send_from_directory("static", "aghaje-portal-sw.js", mimetype="application/javascript")
 
 
 def restart_program():
