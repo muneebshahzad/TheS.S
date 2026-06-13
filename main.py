@@ -1151,11 +1151,11 @@ def build_aghaje_portal_page_data():
     total_cash_paid = parse_money(summary.get("net_payment_received", 0))
     balance = round(total_cod + total_cash_paid - total_cost, 2)
     fulfilled_filter_orders = {
-        "all": fulfilled_orders,
         "delivered": [order for order in fulfilled_orders if order.get("fulfilled_filter_status") == "delivered"],
         "out_for_delivery": [order for order in fulfilled_orders if order.get("fulfilled_filter_status") == "out-for-delivery"],
-        "undelivered": [order for order in fulfilled_orders if order.get("fulfilled_filter_status") == "undelivered"],
+        "in_transit": [order for order in fulfilled_orders if order.get("fulfilled_filter_status") != "delivered"],
     }
+    closed_received_value = round(sum(parse_money(order.get("amount_received", 0)) for order in closed_orders), 2)
     portal_summary = {
         **summary,
         "total_orders": len(orders),
@@ -1177,6 +1177,7 @@ def build_aghaje_portal_page_data():
         "balance": balance,
         "fulfilled_unpaid_value": sum_shopify_unpaid_value(fulfilled_orders),
         "unfulfilled_unpaid_value": sum_shopify_unpaid_value(unfulfilled_orders),
+        "closed_received_value": closed_received_value,
         "fulfilled_filter_values": {
             key: sum_shopify_unpaid_value(group) for key, group in fulfilled_filter_orders.items()
         },

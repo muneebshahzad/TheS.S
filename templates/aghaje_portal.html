@@ -547,7 +547,10 @@
         <span>Unfulfilled ({{ unfulfilled_orders|length }})</span>
         <span class="tab-subvalue">Rs {{ summary.unfulfilled_unpaid_value|format_number }}</span>
       </button>
-      <button class="tab-btn" type="button" data-tab-btn="closed">Closed ({{ closed_orders|length }})</button>
+      <button class="tab-btn" type="button" data-tab-btn="closed">
+        <span>Closed ({{ closed_orders|length }})</span>
+        <span class="tab-subvalue">Rs {{ summary.closed_received_value|format_number }}</span>
+      </button>
       <button class="tab-btn" type="button" data-tab-btn="summary">Summary</button>
     </div>
 
@@ -633,11 +636,7 @@
     <div class="tab-panel active" data-tab-panel="fulfilled">
       <div class="section">
         <div class="status-filter-bar" aria-label="Fulfilled order status filters">
-          <button class="status-filter-btn active" type="button" data-fulfilled-filter="all">
-            <span>All</span>
-            <span class="status-filter-value">Rs {{ summary.fulfilled_filter_values.all|format_number }}</span>
-          </button>
-          <button class="status-filter-btn" type="button" data-fulfilled-filter="delivered">
+          <button class="status-filter-btn active" type="button" data-fulfilled-filter="delivered">
             <span>Delivered</span>
             <span class="status-filter-value">Rs {{ summary.fulfilled_filter_values.delivered|format_number }}</span>
           </button>
@@ -645,9 +644,9 @@
             <span>Out For Delivery</span>
             <span class="status-filter-value">Rs {{ summary.fulfilled_filter_values.out_for_delivery|format_number }}</span>
           </button>
-          <button class="status-filter-btn" type="button" data-fulfilled-filter="undelivered">
-            <span>Undelivered</span>
-            <span class="status-filter-value">Rs {{ summary.fulfilled_filter_values.undelivered|format_number }}</span>
+          <button class="status-filter-btn" type="button" data-fulfilled-filter="in-transit">
+            <span>In-Transit</span>
+            <span class="status-filter-value">Rs {{ summary.fulfilled_filter_values.in_transit|format_number }}</span>
           </button>
         </div>
         <div class="order-list">
@@ -937,11 +936,13 @@
       }
 
       function applyFulfilledFilter(name) {
-        const filterName = name || 'all';
+        const filterName = name || 'delivered';
         let visibleCount = 0;
         fulfilledFilterButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.fulfilledFilter === filterName));
         fulfilledCards.forEach((card) => {
-          const shouldShow = filterName === 'all' || card.dataset.fulfilledStatus === filterName;
+          const shouldShow = filterName === 'in-transit'
+            ? card.dataset.fulfilledStatus !== 'delivered'
+            : card.dataset.fulfilledStatus === filterName;
           card.style.display = shouldShow ? '' : 'none';
           if (shouldShow) visibleCount += 1;
         });
@@ -956,7 +957,7 @@
       fulfilledFilterButtons.forEach((btn) => {
         btn.addEventListener('click', () => applyFulfilledFilter(btn.dataset.fulfilledFilter));
       });
-      applyFulfilledFilter('all');
+      applyFulfilledFilter('delivered');
 
       const hash = (window.location.hash || '').replace('#', '').trim();
       if (hash && tabButtons.some((btn) => btn.dataset.tabBtn === hash)) {
