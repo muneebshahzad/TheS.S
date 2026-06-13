@@ -144,9 +144,10 @@
       min-height: 48px;
       padding: 10px 12px;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 4px;
       font-size: 13px;
       font-weight: 800;
       color: var(--ink);
@@ -159,6 +160,14 @@
       box-shadow: 0 12px 24px rgba(38, 103, 255, 0.10);
       transform: translateY(-1px);
     }
+    .tab-subvalue {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .tab-btn.active .tab-subvalue { color: var(--blue); }
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
     .section {
@@ -493,9 +502,18 @@
     </div>
 
     <div class="tab-bar">
-      <button class="tab-btn active" type="button" data-tab-btn="fulfilled">Fulfilled ({{ fulfilled_orders|length }})</button>
-      <button class="tab-btn" type="button" data-tab-btn="closed">Closed ({{ closed_orders|length }})</button>
-      <button class="tab-btn" type="button" data-tab-btn="unfulfilled">Unfulfilled ({{ unfulfilled_orders|length }})</button>
+      <button class="tab-btn active" type="button" data-tab-btn="fulfilled">
+        <span>Fulfilled ({{ fulfilled_orders|length }})</span>
+        <span class="tab-subvalue">Unpaid PKR {{ summary.fulfilled_unpaid_value|format_number }}</span>
+      </button>
+      <button class="tab-btn" type="button" data-tab-btn="closed">
+        <span>Closed ({{ closed_orders|length }})</span>
+        <span class="tab-subvalue">Unpaid PKR {{ summary.closed_unpaid_value|format_number }}</span>
+      </button>
+      <button class="tab-btn" type="button" data-tab-btn="unfulfilled">
+        <span>Unfulfilled ({{ unfulfilled_orders|length }})</span>
+        <span class="tab-subvalue">Unpaid PKR {{ summary.unfulfilled_unpaid_value|format_number }}</span>
+      </button>
       <button class="tab-btn" type="button" data-tab-btn="summary">Summary</button>
     </div>
 

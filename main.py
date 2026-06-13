@@ -1024,6 +1024,18 @@ def build_aghaje_orders_page_data():
     return results, summary, ""
 
 
+def is_shopify_unpaid_order(order):
+    financial_status = str(order.get("financial_status") or "").strip().lower()
+    return financial_status not in PAID_FINANCIAL_STATUSES
+
+
+def sum_shopify_unpaid_value(orders):
+    return round(
+        sum(parse_money(order.get("order_total", 0)) for order in orders if is_shopify_unpaid_order(order)),
+        2,
+    )
+
+
 def build_aghaje_portal_page_data():
     orders, summary, error_message = build_aghaje_orders_page_data()
     orders = [order for order in orders if str(order.get("delivery_status") or "").strip() != "Cancelled"]
@@ -1083,6 +1095,9 @@ def build_aghaje_portal_page_data():
         "net_payment_received": total_cash_paid,
         "net_payment_received_auto": total_cod,
         "balance": balance,
+        "fulfilled_unpaid_value": sum_shopify_unpaid_value(fulfilled_orders),
+        "closed_unpaid_value": sum_shopify_unpaid_value(closed_orders),
+        "unfulfilled_unpaid_value": sum_shopify_unpaid_value(unfulfilled_orders),
     }
     return {
         "orders": orders,
@@ -2519,6 +2534,11 @@ def aghaje_orders():
             fulfilled_orders.append(order)
         else:
             unfulfilled_orders.append(order)
+    tab_unpaid_values = {
+        "fulfilled": sum_shopify_unpaid_value(fulfilled_orders),
+        "closed": sum_shopify_unpaid_value(closed_orders),
+        "unfulfilled": sum_shopify_unpaid_value(unfulfilled_orders),
+    }
     return render_template(
         "aghaje_orders.html",
         orders=orders,
@@ -2526,6 +2546,7 @@ def aghaje_orders():
         closed_orders=closed_orders,
         unfulfilled_orders=unfulfilled_orders,
         cancelled_orders=cancelled_orders,
+        tab_unpaid_values=tab_unpaid_values,
         summary=summary,
         error_message=error_message,
     )
