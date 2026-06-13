@@ -168,6 +168,29 @@
       text-transform: uppercase;
     }
     .tab-btn.active .tab-subvalue { color: var(--blue); }
+    .status-filter-bar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .status-filter-btn {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.82);
+      color: var(--ink);
+      border-radius: 999px;
+      min-height: 38px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 900;
+      cursor: pointer;
+      transition: background .15s ease, border-color .15s ease, color .15s ease;
+    }
+    .status-filter-btn.active {
+      background: rgba(38,103,255,.11);
+      border-color: rgba(38,103,255,.28);
+      color: var(--blue);
+    }
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
     .section {
@@ -504,16 +527,13 @@
     <div class="tab-bar">
       <button class="tab-btn active" type="button" data-tab-btn="fulfilled">
         <span>Fulfilled ({{ fulfilled_orders|length }})</span>
-        <span class="tab-subvalue">Unpaid PKR {{ summary.fulfilled_unpaid_value|format_number }}</span>
-      </button>
-      <button class="tab-btn" type="button" data-tab-btn="closed">
-        <span>Closed ({{ closed_orders|length }})</span>
-        <span class="tab-subvalue">Unpaid PKR {{ summary.closed_unpaid_value|format_number }}</span>
+        <span class="tab-subvalue">Rs {{ summary.fulfilled_unpaid_value|format_number }}</span>
       </button>
       <button class="tab-btn" type="button" data-tab-btn="unfulfilled">
         <span>Unfulfilled ({{ unfulfilled_orders|length }})</span>
-        <span class="tab-subvalue">Unpaid PKR {{ summary.unfulfilled_unpaid_value|format_number }}</span>
+        <span class="tab-subvalue">Rs {{ summary.unfulfilled_unpaid_value|format_number }}</span>
       </button>
+      <button class="tab-btn" type="button" data-tab-btn="closed">Closed ({{ closed_orders|length }})</button>
       <button class="tab-btn" type="button" data-tab-btn="summary">Summary</button>
     </div>
 
@@ -598,9 +618,15 @@
 
     <div class="tab-panel active" data-tab-panel="fulfilled">
       <div class="section">
+        <div class="status-filter-bar" aria-label="Fulfilled order status filters">
+          <button class="status-filter-btn active" type="button" data-fulfilled-filter="all">All</button>
+          <button class="status-filter-btn" type="button" data-fulfilled-filter="delivered">Delivered</button>
+          <button class="status-filter-btn" type="button" data-fulfilled-filter="out-for-delivery">Out For Delivery</button>
+        </div>
         <div class="order-list">
           {% for order in fulfilled_orders %}
-          <div class="order-card">
+          {% set fulfilled_filter_status = 'delivered' if order.delivery_status == 'Delivered' else 'out-for-delivery' if 'OUT FOR DELIVERY' in (order.delivery_status_detail or '')|upper else 'other' %}
+          <div class="order-card" data-fulfilled-status="{{ fulfilled_filter_status }}">
             <div class="order-head">
               <div>
                 <a class="order-id" href="{{ order.shopify_link }}" target="_blank">{{ order.order_id }}</a>
@@ -668,8 +694,9 @@
             </div>
           </div>
           {% else %}
-          <div class="empty">No fulfilled Aghaje orders found for the selected date range.</div>
+          <div class="empty" data-fulfilled-empty-source>No fulfilled Aghaje orders found for the selected date range.</div>
           {% endfor %}
+          <div class="empty" data-fulfilled-filter-empty style="display:none;">No fulfilled orders match this status filter.</div>
         </div>
       </div>
     </div>
@@ -873,6 +900,9 @@
       const tabButtons = Array.from(document.querySelectorAll('[data-tab-btn]'));
       const panels = Array.from(document.querySelectorAll('[data-tab-panel]'));
       if (!tabButtons.length || !panels.length) return;
+      const fulfilledFilterButtons = Array.from(document.querySelectorAll('[data-fulfilled-filter]'));
+      const fulfilledCards = Array.from(document.querySelectorAll('[data-fulfilled-status]'));
+      const fulfilledFilterEmpty = document.querySelector('[data-fulfilled-filter-empty]');
 
       function activateTab(name) {
         tabButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.tabBtn === name));
@@ -880,9 +910,27 @@
         try { window.location.hash = name; } catch (error) {}
       }
 
+      function applyFulfilledFilter(name) {
+        const filterName = name || 'all';
+        let visibleCount = 0;
+        fulfilledFilterButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.fulfilledFilter === filterName));
+        fulfilledCards.forEach((card) => {
+          const shouldShow = filterName === 'all' || card.dataset.fulfilledStatus === filterName;
+          card.style.display = shouldShow ? '' : 'none';
+          if (shouldShow) visibleCount += 1;
+        });
+        if (fulfilledFilterEmpty) {
+          fulfilledFilterEmpty.style.display = visibleCount || !fulfilledCards.length ? 'none' : '';
+        }
+      }
+
       tabButtons.forEach((btn) => {
         btn.addEventListener('click', () => activateTab(btn.dataset.tabBtn));
       });
+      fulfilledFilterButtons.forEach((btn) => {
+        btn.addEventListener('click', () => applyFulfilledFilter(btn.dataset.fulfilledFilter));
+      });
+      applyFulfilledFilter('all');
 
       const hash = (window.location.hash || '').replace('#', '').trim();
       if (hash && tabButtons.some((btn) => btn.dataset.tabBtn === hash)) {

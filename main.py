@@ -1096,7 +1096,6 @@ def build_aghaje_portal_page_data():
         "net_payment_received_auto": total_cod,
         "balance": balance,
         "fulfilled_unpaid_value": sum_shopify_unpaid_value(fulfilled_orders),
-        "closed_unpaid_value": sum_shopify_unpaid_value(closed_orders),
         "unfulfilled_unpaid_value": sum_shopify_unpaid_value(unfulfilled_orders),
     }
     return {
@@ -2536,7 +2535,6 @@ def aghaje_orders():
             unfulfilled_orders.append(order)
     tab_unpaid_values = {
         "fulfilled": sum_shopify_unpaid_value(fulfilled_orders),
-        "closed": sum_shopify_unpaid_value(closed_orders),
         "unfulfilled": sum_shopify_unpaid_value(unfulfilled_orders),
     }
     return render_template(

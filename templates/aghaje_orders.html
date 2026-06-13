@@ -92,16 +92,13 @@
     <div class="agh-tabs" role="tablist" aria-label="Aghaje order tabs">
       <button class="agh-tab-btn active" type="button" data-agh-tab="fulfilled">
         <span>Fulfilled ({{ fulfilled_orders|length }})</span>
-        <span class="agh-tab-subvalue">Unpaid PKR {{ tab_unpaid_values.fulfilled|format_number }}</span>
-      </button>
-      <button class="agh-tab-btn" type="button" data-agh-tab="closed">
-        <span>Closed ({{ closed_orders|length }})</span>
-        <span class="agh-tab-subvalue">Unpaid PKR {{ tab_unpaid_values.closed|format_number }}</span>
+        <span class="agh-tab-subvalue">Rs {{ tab_unpaid_values.fulfilled|format_number }}</span>
       </button>
       <button class="agh-tab-btn" type="button" data-agh-tab="unfulfilled">
         <span>Unfulfilled ({{ unfulfilled_orders|length }})</span>
-        <span class="agh-tab-subvalue">Unpaid PKR {{ tab_unpaid_values.unfulfilled|format_number }}</span>
+        <span class="agh-tab-subvalue">Rs {{ tab_unpaid_values.unfulfilled|format_number }}</span>
       </button>
+      <button class="agh-tab-btn" type="button" data-agh-tab="closed">Closed ({{ closed_orders|length }})</button>
       <button class="agh-tab-btn" type="button" data-agh-tab="cancelled">Cancelled ({{ cancelled_orders|length }})</button>
       <button class="agh-tab-btn" type="button" data-agh-tab="summary">Summary</button>
     </div>
