@@ -69,6 +69,7 @@ order_details = []
 product_image_cache = {}
 aghaje_product_cache = {}
 aghaje_inventory_item_cost_cache = {}
+tracking_summary_cache = {}
 RATE_LIMIT = 2
 LAST_REQUEST_TIME = 0.0
 PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
@@ -77,11 +78,22 @@ inventory_item_cost_cache = {}
 
 _TAG_STYLES = {
     "Call Courier": "background:#ede7f6;color:#4527a0",
+    "Leopards": "background:#e6f6f8;color:#0a5c6e",
     "Order Confirmed": "background:#e8f5e9;color:#1b5e20",
     "Fulfilment Not Set": "background:#fff8e1;color:#e65100",
     "No Throw": "background:#fce4ec;color:#880e4f",
     "Lahore": "background:#fff3cd;color:#8b5a00",
 }
+
+
+def is_leopards_tracking(tracking_number):
+    return str(tracking_number or "").strip().upper().startswith("LE")
+
+
+def courier_label_for_tracking(courier_name="", tracking_number=""):
+    if is_leopards_tracking(tracking_number):
+        return "Leopards"
+    return str(courier_name or "").strip()
 
 
 def normalize_scan_term(term):
@@ -642,7 +654,7 @@ def build_tracking_summary_payload(tracking_number):
     data = fetch_tracking_data_sync(tracking_number)
     summary = summarize_tracking_result(tracking_number, data)
     events = []
-    if str(tracking_number or "").startswith("LE"):
+    if is_leopards_tracking(tracking_number):
         packet_list = (data or {}).get("packet_list") or []
         packet = packet_list[0] if packet_list else {}
         for detail in list((packet or {}).get("Tracking Detail") or [])[::-1]:
@@ -658,6 +670,7 @@ def build_tracking_summary_payload(tracking_number):
             events.append({"title": title, "meta": meta, "reason": "" if reason == "OK" else reason})
     return {
         "tracking_number": tracking_number,
+        "courier": courier_label_for_tracking("", tracking_number) or "Call Courier",
         "status": summary.get("status") or "No tracking status",
         "customer": summary.get("name") or "",
         "city": summary.get("city") or "",
@@ -665,6 +678,25 @@ def build_tracking_summary_payload(tracking_number):
         "address": summary.get("address") or "",
         "events": events,
     }
+
+
+def get_tracking_summary_cached(tracking_number, ttl_seconds=300):
+    tracking_number = str(tracking_number or "").strip()
+    if not tracking_number:
+        return None
+    cache_key = tracking_number.upper()
+    cached = tracking_summary_cache.get(cache_key)
+    now = time.time()
+    if cached and now - cached.get("fetched_at", 0) < ttl_seconds:
+        return cached.get("summary")
+    try:
+        data = fetch_tracking_data_sync(tracking_number)
+        summary = summarize_tracking_result(tracking_number, data)
+    except Exception as error:
+        print(f"Could not fetch tracking summary for {tracking_number}: {error}")
+        return cached.get("summary") if cached else None
+    tracking_summary_cache[cache_key] = {"fetched_at": now, "summary": summary}
+    return summary
 
 
 def aghaje_item_cost_key(product_id=None, variant_id=None, title=""):
@@ -830,10 +862,15 @@ def build_aghaje_orders_page_data():
     for order in raw_orders:
         note_attributes = extract_note_attributes(order)
         delivery_status, delivery_detail = get_aghaje_delivery_status(order)
-        courier_name = str(note_attributes.get("hxs_courier_name") or "").strip()
         tracking_number = str(note_attributes.get("hxs_courier_tracking") or "").strip()
+        courier_name = courier_label_for_tracking(note_attributes.get("hxs_courier_name"), tracking_number)
         tracking_url = str(note_attributes.get("hxs_courier_url") or "").strip()
         courier_tracking_ready = bool(tracking_number)
+        if is_leopards_tracking(tracking_number):
+            live_summary = get_tracking_summary_cached(tracking_number)
+            if live_summary and live_summary.get("status"):
+                delivery_status, delivery_detail = classify_aghaje_delivery_status(live_summary.get("status"))
+                delivery_detail = f"Leopards: {delivery_detail}"
         customer = order.get("customer") or {}
         shipping = order.get("shipping_address") or {}
         billing = order.get("billing_address") or {}
@@ -1134,9 +1171,9 @@ def ensure_required_aghaje_webhooks():
 async def fetch_tracking_data(session_obj, tracking_number):
     if not tracking_number or tracking_number == "N/A":
         return {}
-    if str(tracking_number).startswith("LE"):
+    if is_leopards_tracking(tracking_number):
         api_key = os.getenv("LEOPARD_API_KEY")
-        api_password = os.getenv("LEOPARD_PASSWORD")
+        api_password = os.getenv("LEOPARD_PASSWORD") or os.getenv("LEOPARD_API_PASSWORD")
         url = (
             "https://merchantapi.leopardscourier.com/api/trackBookedPacket/"
             f"?api_key={api_key}&api_password={api_password}&track_numbers={tracking_number}"
@@ -1208,7 +1245,7 @@ def summarize_tracking_result(tracking_number, data):
             "city": "",
         }
 
-    if str(tracking_number).startswith("LE"):
+    if is_leopards_tracking(tracking_number):
         packet_list = (data or {}).get("packet_list") or []
         if not packet_list:
             return {"status": "Booked", "name": "", "address": "", "phone": "", "city": ""}
@@ -1268,6 +1305,7 @@ async def process_line_item(session_obj, line_item, fulfillments):
                 tracking_info.append(
                     {
                         "tracking_number": tracking_number,
+                        "courier_name": courier_label_for_tracking("", tracking_number) or "Call Courier",
                         "status": summary["status"],
                         "quantity": getattr(item, "quantity", getattr(line_item, "quantity", 1)),
                         "name": summary["name"],
@@ -1283,6 +1321,7 @@ async def process_line_item(session_obj, line_item, fulfillments):
     return [
         {
             "tracking_number": "N/A",
+            "courier_name": "",
             "status": "Un-Booked",
             "name": "",
             "address": "",
@@ -1383,6 +1422,7 @@ async def process_order(session_obj, order):
                     "line_total": line_total,
                     "line_cost_total": line_cost_total,
                     "tracking_number": info["tracking_number"],
+                    "courier_name": info.get("courier_name", ""),
                     "status": info["status"],
                     "name": info.get("name", ""),
                     "address": info.get("address", ""),

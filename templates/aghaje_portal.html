@@ -259,6 +259,7 @@
     .chip.paid { background: rgba(28, 200, 138, 0.12); color: #1b6f41; }
     .chip.notpayable { background: rgba(207, 63, 63, 0.12); color: #8f2b2b; }
     .chip.shopify { background: rgba(42, 157, 91, 0.12); color: #1b6f41; }
+    .chip.leopards { background:#e6f6f8; color:#0a5c6e; box-shadow:inset 0 0 0 1px rgba(10,92,110,.12); }
     .tracking-chip {
       border: 0;
       font-family: 'Space Mono', monospace;
@@ -595,7 +596,7 @@
               <div class="chip-row">
                 <span class="chip shopify">Shopify</span>
                 {% if order.tracking_number %}
-                <button class="chip pending tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}">{{ order.tracking_number }}</button>
+                <button class="chip {% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}leopards{% else %}pending{% endif %} tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}">{% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}Leopards · {% endif %}{{ order.tracking_number }}</button>
                 {% endif %}
               </div>
             </div>
@@ -631,7 +632,7 @@
                     {% set courier_status = order.delivery_status_detail or order.delivery_status or 'No courier status yet' %}
                     <span class="courier-status {% if order.delivery_status == 'Delivered' %}delivered{% elif order.delivery_status == 'Returned' %}returned{% elif order.delivery_status == 'Cancelled' %}cancelled{% elif order.delivery_status == 'Inprocess' %}pending{% else %}other{% endif %}">{{ courier_status }}</span>
                     {% if order.tracking_number %}
-                    <br><button class="chip pending tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}" style="margin-top:6px;">{{ order.tracking_number }}</button>
+                    <br><button class="chip {% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}leopards{% else %}pending{% endif %} tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}" style="margin-top:6px;">{% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}Leopards · {% endif %}{{ order.tracking_number }}</button>
                     {% endif %}
                   </div>
                 </div>
@@ -673,7 +674,7 @@
               <div class="chip-row">
                 <span class="chip shopify">Shopify</span>
                 {% if order.tracking_number %}
-                <button class="chip pending tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}">{{ order.tracking_number }}</button>
+                <button class="chip {% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}leopards{% else %}pending{% endif %} tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}">{% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}Leopards · {% endif %}{{ order.tracking_number }}</button>
                 {% endif %}
               </div>
             </div>
@@ -709,7 +710,7 @@
                     {% set courier_status = order.delivery_status_detail or order.delivery_status or 'No courier status yet' %}
                     <span class="courier-status {% if order.delivery_status == 'Delivered' %}delivered{% elif order.delivery_status == 'Returned' %}returned{% elif order.delivery_status == 'Inprocess' %}pending{% else %}other{% endif %}">{{ courier_status }}</span>
                     {% if order.tracking_number %}
-                    <br><button class="chip pending tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}" style="margin-top:6px;">{{ order.tracking_number }}</button>
+                    <br><button class="chip {% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}leopards{% else %}pending{% endif %} tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}" style="margin-top:6px;">{% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}Leopards · {% endif %}{{ order.tracking_number }}</button>
                     {% endif %}
                   </div>
                 </div>
@@ -751,7 +752,7 @@
               <div class="chip-row">
                 <span class="chip pending">Not Dispatched</span>
                 {% if order.tracking_number %}
-                <button class="chip shopify tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}">{{ order.tracking_number }}</button>
+                <button class="chip {% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}leopards{% else %}shopify{% endif %} tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}">{% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}Leopards · {% endif %}{{ order.tracking_number }}</button>
                 {% endif %}
               </div>
             </div>
@@ -787,7 +788,7 @@
                     {% set courier_status = order.delivery_status_detail or order.delivery_status or 'No courier status yet' %}
                     <span class="courier-status {% if order.delivery_status == 'Delivered' %}delivered{% elif order.delivery_status == 'Returned' %}returned{% elif order.delivery_status == 'Cancelled' %}cancelled{% elif order.delivery_status == 'Inprocess' %}pending{% else %}other{% endif %}">{{ courier_status }}</span>
                     {% if order.tracking_number %}
-                    <br><button class="chip pending tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}" style="margin-top:6px;">{{ order.tracking_number }}</button>
+                    <br><button class="chip {% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}leopards{% else %}pending{% endif %} tracking-chip" type="button" data-tracking-number="{{ order.tracking_number }}" style="margin-top:6px;">{% if order.courier_name == 'Leopards' or order.tracking_number[:2]|upper == 'LE' %}Leopards · {% endif %}{{ order.tracking_number }}</button>
                     {% endif %}
                   </div>
                 </div>
@@ -911,7 +912,7 @@
       });
 
       function renderTrackingDetails(tracking) {
-        const meta = [tracking.customer, tracking.city, tracking.phone].filter(Boolean).join(' · ');
+        const meta = [tracking.courier, tracking.customer, tracking.city, tracking.phone].filter(Boolean).join(' · ');
         const events = (tracking.events || []).slice(0, 10).map((event, index) => `
           <div class="tracking-event">
             <div class="tracking-dot">${index + 1}</div>
