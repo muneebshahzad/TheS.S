@@ -699,6 +699,55 @@ def get_tracking_summary_cached(tracking_number, ttl_seconds=300):
     return summary
 
 
+def get_tracking_summary_cache_only(tracking_number):
+    tracking_number = str(tracking_number or "").strip()
+    if not tracking_number:
+        return None
+    cached = tracking_summary_cache.get(tracking_number.upper())
+    return cached.get("summary") if cached else None
+
+
+def refresh_tracking_summaries_sync(tracking_numbers):
+    unique_numbers = []
+    seen = set()
+    for tracking_number in tracking_numbers:
+        tracking_number = str(tracking_number or "").strip()
+        if not tracking_number or tracking_number == "N/A":
+            continue
+        key = tracking_number.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_numbers.append(tracking_number)
+
+    async def refresh_all():
+        timeout = aiohttp.ClientTimeout(total=15)
+        semaphore = asyncio.Semaphore(6)
+        refreshed_count = 0
+        async with aiohttp.ClientSession(timeout=timeout) as session_obj:
+            async def refresh_one(tracking_number):
+                nonlocal refreshed_count
+                async with semaphore:
+                    try:
+                        data = await fetch_tracking_data(session_obj, tracking_number)
+                        summary = summarize_tracking_result(tracking_number, data)
+                    except Exception as error:
+                        print(f"Could not refresh tracking summary for {tracking_number}: {error}")
+                        return
+                    tracking_summary_cache[tracking_number.upper()] = {
+                        "fetched_at": time.time(),
+                        "summary": summary,
+                    }
+                    refreshed_count += 1
+
+            await asyncio.gather(*(refresh_one(number) for number in unique_numbers))
+        return refreshed_count
+
+    if not unique_numbers:
+        return 0
+    return asyncio.run(refresh_all())
+
+
 def aghaje_item_cost_key(product_id=None, variant_id=None, title=""):
     product_id = str(product_id or "").strip()
     variant_id = str(variant_id or "").strip()
@@ -866,10 +915,12 @@ def build_aghaje_orders_page_data():
         courier_name = courier_label_for_tracking(note_attributes.get("hxs_courier_name"), tracking_number)
         tracking_url = str(note_attributes.get("hxs_courier_url") or "").strip()
         courier_tracking_ready = bool(tracking_number)
-        if is_leopards_tracking(tracking_number):
-            live_summary = get_tracking_summary_cached(tracking_number)
-            if live_summary and live_summary.get("status"):
-                delivery_status, delivery_detail = classify_aghaje_delivery_status(live_summary.get("status"))
+        live_summary = None
+        if tracking_number:
+            live_summary = get_tracking_summary_cached(tracking_number) if is_leopards_tracking(tracking_number) else get_tracking_summary_cache_only(tracking_number)
+        if live_summary and live_summary.get("status"):
+            delivery_status, delivery_detail = classify_aghaje_delivery_status(live_summary.get("status"))
+            if is_leopards_tracking(tracking_number):
                 delivery_detail = f"Leopards: {delivery_detail}"
         customer = order.get("customer") or {}
         shipping = order.get("shipping_address") or {}
@@ -2710,8 +2761,9 @@ def aghaje_portal_refresh():
     if not aghaje_portal_is_authenticated():
         return jsonify({"success": False, "error": "Not authenticated."}), 401
     try:
-        build_aghaje_portal_page_data()
-        return jsonify({"success": True, "message": "Aghaje tracking refreshed."})
+        orders, _, _ = build_aghaje_orders_page_data()
+        refreshed_count = refresh_tracking_summaries_sync(order.get("tracking_number") for order in orders)
+        return jsonify({"success": True, "message": f"Refreshed {refreshed_count} courier shipment statuses."})
     except Exception as error:
         return jsonify({"success": False, "error": str(error)}), 500
 
