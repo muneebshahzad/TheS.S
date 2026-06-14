@@ -1054,7 +1054,7 @@ def build_aghaje_orders_page_data():
         order["payable"] = round(payable, 2)
         net_payment += order["payable"]
         total_amount_received += order["amount_received"]
-        if delivery_status != "Cancelled":
+        if delivery_status != "Cancelled" and str(order.get("fulfillment_status_raw") or "").strip().lower() == "fulfilled":
             total_cost += order["item_cost"] + order["packaging_cost"] + order["delivery_cost"]
 
     total_cash_paid = round(sum(parse_money(entry.get("amount", 0)) for entry in net_payment_received_entries), 2)
@@ -1144,6 +1144,7 @@ def build_aghaje_portal_page_data():
         sum(
             parse_money(order.get("item_cost", 0)) + parse_money(order.get("packaging_cost", 0)) + parse_money(order.get("delivery_cost", 0))
             for order in orders
+            if str(order.get("fulfillment_status_raw") or "").strip().lower() == "fulfilled"
         ),
         2,
     )
