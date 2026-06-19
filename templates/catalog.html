@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The Sleek Space - Product Catalogue</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #17213a;
+      --muted: #707789;
+      --line: #dfe5f2;
+      --soft: #f7f8fc;
+      --paper: #ffffff;
+      --blue: #4169e1;
+      --green: #20b486;
+      --gold: #d69b28;
+      --shadow: 0 20px 55px rgba(23, 33, 58, 0.10);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "DM Sans", Arial, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 0%, rgba(65, 105, 225, 0.11), transparent 30%),
+        radial-gradient(circle at 95% 12%, rgba(32, 180, 134, 0.12), transparent 26%),
+        linear-gradient(180deg, #fbfbfd 0%, #eef2f8 100%);
+      min-height: 100vh;
+    }
+
+    .catalog-shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 48px;
+    }
+
+    .hero {
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      box-shadow: var(--shadow);
+      padding: 30px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 22px;
+      align-items: center;
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .brand-logo {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      background: #0f1933;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+
+    .brand-logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      padding: 8px;
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--gold);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(34px, 6vw, 64px);
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+
+    .hero p {
+      max-width: 680px;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.55;
+    }
+
+    .hero-meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(120px, 1fr));
+      gap: 12px;
+      min-width: 280px;
+    }
+
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fff;
+      padding: 16px;
+    }
+
+    .stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .stat strong {
+      font-size: 26px;
+      color: var(--blue);
+    }
+
+    .toolbar {
+      margin: 20px 0;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .search {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      padding: 14px 16px;
+      outline: none;
+      box-shadow: 0 12px 30px rgba(23, 33, 58, 0.06);
+    }
+
+    .button {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      font-weight: 800;
+      padding: 14px 18px;
+      cursor: pointer;
+      min-height: 50px;
+      box-shadow: 0 12px 30px rgba(23, 33, 58, 0.06);
+    }
+
+    .button.primary {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #fff;
+    }
+
+    .catalog-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
+      gap: 18px;
+    }
+
+    .product-card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      overflow: hidden;
+      box-shadow: 0 14px 36px rgba(23, 33, 58, 0.08);
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+      break-inside: avoid;
+    }
+
+    .product-image {
+      aspect-ratio: 1 / 1;
+      background: var(--soft);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+
+    .product-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .placeholder {
+      width: 76px;
+      height: 76px;
+      border-radius: 22px;
+      background: #eef2ff;
+      display: grid;
+      place-items: center;
+      color: var(--blue);
+      font-size: 34px;
+      font-weight: 800;
+    }
+
+    .product-body {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex: 1;
+    }
+
+    .product-title {
+      font-size: 17px;
+      line-height: 1.28;
+      font-weight: 800;
+      min-height: 44px;
+    }
+
+    .product-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      border-radius: 999px;
+      background: #eef5ff;
+      color: #254fb5;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1;
+      overflow-wrap: anywhere;
+    }
+
+    .pill.sku {
+      background: #f3f3f5;
+      color: #606778;
+    }
+
+    .product-footer {
+      margin-top: auto;
+      padding-top: 4px;
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .price-label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .price {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--green);
+      white-space: nowrap;
+    }
+
+    .empty-state {
+      border: 1px dashed #cbd5e8;
+      border-radius: 24px;
+      padding: 46px 24px;
+      background: rgba(255, 255, 255, 0.76);
+      text-align: center;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    @media (max-width: 760px) {
+      .catalog-shell { width: min(100% - 20px, 1180px); padding-top: 12px; }
+      .hero { grid-template-columns: 1fr; padding: 22px; border-radius: 20px; }
+      .hero-meta { min-width: 0; }
+      .toolbar { grid-template-columns: 1fr; }
+      .button { width: 100%; }
+      .catalog-grid { grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 12px; }
+      .product-card { border-radius: 18px; }
+      .product-body { padding: 13px; }
+      .product-title { font-size: 14px; min-height: 38px; }
+      .price { font-size: 19px; }
+      .pill { font-size: 10px; }
+    }
+
+    @media print {
+      @page { size: A4; margin: 10mm; }
+      body { background: #fff; }
+      .catalog-shell { width: 100%; padding: 0; }
+      .hero {
+        box-shadow: none;
+        border-radius: 14px;
+        padding: 16px;
+        grid-template-columns: 1fr auto;
+      }
+      .toolbar { display: none; }
+      .catalog-grid {
+        margin-top: 14px;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+      }
+      .product-card {
+        box-shadow: none;
+        border-radius: 12px;
+      }
+      .product-body { padding: 10px; }
+      .product-title { font-size: 12px; min-height: 32px; }
+      .price { font-size: 15px; }
+      .pill { font-size: 9px; padding: 5px 7px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="catalog-shell">
+    <section class="hero">
+      <div>
+        <div class="brand-row">
+          <div class="brand-logo">
+            <img src="{{ url_for('static', filename='sleekspace-wordmark.svg') }}" alt="The Sleek Space">
+          </div>
+          <div>
+            <div class="eyebrow">Customer catalogue</div>
+            <h1>The Sleek Space</h1>
+          </div>
+        </div>
+        <p>Browse our current product and variant catalogue. Prices are shown in PKR and availability may change as orders are confirmed.</p>
+      </div>
+      <div class="hero-meta">
+        <div class="stat">
+          <span>Products</span>
+          <strong>{{ products|length }}</strong>
+        </div>
+        <div class="stat">
+          <span>Updated</span>
+          <strong style="font-size:16px;color:var(--ink);">{{ generated_at }}</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="Catalogue actions">
+      <input id="catalog-search" class="search" type="search" placeholder="Search products, variants, or SKU" autocomplete="off">
+      <button class="button" type="button" onclick="copyCatalogLink()">Copy link</button>
+      <button class="button primary" type="button" onclick="window.print()">Download PDF</button>
+    </section>
+
+    {% if products %}
+      <section id="catalog-grid" class="catalog-grid">
+        {% for product in products %}
+          <article class="product-card" data-search="{{ (product.title ~ ' ' ~ product.product_title ~ ' ' ~ product.variant_title ~ ' ' ~ product.sku)|lower }}">
+            <div class="product-image">
+              {% if product.image %}
+                <img src="{{ product.image }}" alt="{{ product.title }}">
+              {% else %}
+                <div class="placeholder">SS</div>
+              {% endif %}
+            </div>
+            <div class="product-body">
+              <div class="product-title">{{ product.title }}</div>
+              <div class="product-tags">
+                {% if product.variant_title and product.variant_title != 'Default Title' %}
+                  <span class="pill">{{ product.variant_title }}</span>
+                {% endif %}
+                {% if product.sku %}
+                  <span class="pill sku">{{ product.sku }}</span>
+                {% endif %}
+              </div>
+              <div class="product-footer">
+                <div>
+                  <span class="price-label">Price</span>
+                  <span class="price">PKR {{ product.price|format_number }}</span>
+                </div>
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      </section>
+    {% else %}
+      <div class="empty-state">No Shopify products are available for the catalogue yet.</div>
+    {% endif %}
+  </main>
+
+  <script>
+    const searchInput = document.getElementById('catalog-search');
+    const cards = Array.from(document.querySelectorAll('.product-card'));
+
+    searchInput?.addEventListener('input', () => {
+      const query = searchInput.value.trim().toLowerCase();
+      cards.forEach((card) => {
+        card.hidden = query && !(card.dataset.search || '').includes(query);
+      });
+    });
+
+    async function copyCatalogLink() {
+      try {
+        await navigator.clipboard.writeText(window.location.href);
+        showCatalogToast('Catalogue link copied');
+      } catch (error) {
+        showCatalogToast('Copy failed. Use the address bar link.');
+      }
+    }
+
+    function showCatalogToast(message) {
+      const existing = document.querySelector('.catalog-toast');
+      if (existing) existing.remove();
+      const toast = document.createElement('div');
+      toast.className = 'catalog-toast';
+      toast.textContent = message;
+      toast.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#17213a;color:#fff;border-radius:999px;padding:12px 18px;font-weight:800;box-shadow:0 16px 38px rgba(23,33,58,.22);z-index:50;';
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 2200);
+    }
+  </script>
+</body>
+</html>

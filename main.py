@@ -2229,6 +2229,31 @@ def build_product_cost_rows(limit=250):
     return sorted(rows, key=lambda row: str(row.get("title", "")).lower())
 
 
+def build_catalog_rows(limit=250):
+    rows = []
+    seen = set()
+    for product in build_product_cost_rows(limit=limit):
+        product_id = str(product.get("product_id") or "").strip()
+        variant_id = str(product.get("variant_id") or "").strip()
+        key = (product_id, variant_id, str(product.get("title", "")).strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "product_id": product.get("product_id"),
+                "variant_id": product.get("variant_id"),
+                "title": product.get("title", "") or "Product",
+                "product_title": product.get("product_title", "") or product.get("title", "") or "Product",
+                "variant_title": product.get("variant_title", "") or "",
+                "sku": product.get("sku", "") or "",
+                "image": product.get("image", "") or "",
+                "price": parse_money(product.get("price", 0)),
+            }
+        )
+    return sorted(rows, key=lambda row: str(row.get("title", "")).lower())
+
+
 def build_employee_invoice_payload(order_name, customer_name, phone, city, address, payment_method, delivery_method, catalog_items, custom_items, discount_amount, delivery_charges, advance_amount):
     items = []
     subtotal = 0.0
@@ -2638,6 +2663,16 @@ def aghaje_orders():
 @app.route("/product-costs")
 def product_costs():
     return render_template("product_costs.html", products=build_product_cost_rows())
+
+
+@app.route("/catalog")
+def catalog():
+    products = build_catalog_rows()
+    return render_template(
+        "catalog.html",
+        products=products,
+        generated_at=datetime.now().strftime("%d %b %Y, %I:%M %p"),
+    )
 
 
 @app.route("/product-costs/update", methods=["POST"])
