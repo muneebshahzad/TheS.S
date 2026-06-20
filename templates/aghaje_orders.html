@@ -22,6 +22,12 @@
   .agh-tab-subvalue { color:#858796; font-size:9px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
   .agh-tab-btn.active .agh-tab-subvalue { color:#2f63ff; }
   .agh-summary-panel[hidden], .agh-ledger-panel[hidden] { display:none !important; }
+  .agh-filter-panel { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 12px; border:1px solid #e3e6f0; background:#fff; border-radius:12px; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
+  .agh-filter-panel[hidden] { display:none !important; }
+  .agh-filter-label { font-size:10px; color:#858796; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
+  .agh-filter-chip { border:1px solid #dce2ee; background:#fff; color:#14213d; border-radius:999px; min-height:34px; padding:0 12px; font-size:11px; font-weight:800; font-family:'DM Sans', sans-serif; cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+  .agh-filter-chip.active { border-color:#b8c7f0; background:#eef3ff; color:#2f63ff; }
+  .agh-filter-chip input { margin:0; }
   .agh-btn { border-radius:8px; padding:8px 12px; font-size:11px; font-weight:700; cursor:pointer; font-family:'DM Sans', sans-serif; border:1px solid #dce2ee; background:#fff; color:#3a3b45; }
   .agh-btn.primary { border-color:#4e73df; background:#4e73df; color:#fff; }
   .agh-btn.success { border-color:#1cc88a; background:#1cc88a; color:#fff; }
@@ -46,6 +52,8 @@
   .agh-line-cost { font-size:11px; color:#3a3b45; font-weight:700; white-space:nowrap; }
   .agh-money { font-family:'DM Mono', monospace; font-size:13px; font-weight:700; color:#2d2e36; white-space:nowrap; }
   .agh-input, .agh-select { width:120px; border:1px solid #dce2ee; border-radius:8px; padding:8px 10px; font-size:12px; font-family:'DM Sans', sans-serif; color:#2d2e36; background:#fff; }
+  .agh-input.compact { width:95px; }
+  .agh-checkbox { width:16px; height:16px; accent-color:#4e73df; }
   .agh-input[disabled], .agh-select[disabled] { background:#f8f9fc; color:#858796; cursor:default; }
   .agh-summary-input { width:100%; max-width:170px; margin-top:6px; font-size:14px; font-weight:700; }
   .agh-summary-total { font-size:20px; font-weight:800; color:#2d2e36; margin-top:4px; cursor:pointer; }
@@ -101,6 +109,18 @@
       <button class="agh-tab-btn" type="button" data-agh-tab="closed">Closed ({{ closed_orders|length }})</button>
       <button class="agh-tab-btn" type="button" data-agh-tab="cancelled">Cancelled ({{ cancelled_orders|length }})</button>
       <button class="agh-tab-btn" type="button" data-agh-tab="summary">Summary</button>
+    </div>
+
+    <div class="agh-filter-panel" data-fulfilled-filter-panel>
+      <span class="agh-filter-label">Fulfilled view</span>
+      <button class="agh-filter-chip active" type="button" data-fulfilled-payment-filter="all">All</button>
+      <button class="agh-filter-chip" type="button" data-fulfilled-payment-filter="open">Open</button>
+      <button class="agh-filter-chip" type="button" data-fulfilled-payment-filter="closed">Closed</button>
+      <span class="agh-filter-label">Missing</span>
+      <label class="agh-filter-chip"><input type="checkbox" data-missing-filter="item"> Item cost</label>
+      <label class="agh-filter-chip"><input type="checkbox" data-missing-filter="packaging"> Packaging</label>
+      <label class="agh-filter-chip"><input type="checkbox" data-missing-filter="delivery"> Delivery</label>
+      <label class="agh-filter-chip"><input type="checkbox" data-missing-filter="amount"> Amount received</label>
     </div>
 
     <div class="agh-summary-panel" data-agh-summary-panel hidden>
@@ -188,6 +208,8 @@
           <div style="font-size:11px;color:#858796;margin-top:4px;">Enter the cost for each item first. The item cost total updates automatically, then save the row costs and payment fields.</div>
         </div>
         <div class="agh-toolbar">
+          <input class="agh-input compact" data-bulk-packaging-value type="number" min="0" step="1" placeholder="Packaging">
+          <button class="agh-btn success" type="button" onclick="applyBulkPackagingCost()">Apply to selected</button>
           <button class="agh-btn primary" type="button" onclick="window.location.reload()">Refresh</button>
         </div>
       </div>
@@ -195,6 +217,7 @@
         <table class="agh-table">
           <thead>
             <tr>
+              <th><input class="agh-checkbox" type="checkbox" data-select-visible aria-label="Select visible orders"></th>
               <th>Order Id</th>
               <th>Items</th>
               <th>Item Cost</th>
@@ -216,6 +239,8 @@
             <tr
               data-row-index="{{ loop.index0 }}"
               data-ledger-tab="{{ row_tab }}"
+              data-is-fulfilled="{{ '1' if order.fulfillment_status_raw == 'fulfilled' else '0' }}"
+              data-payment-state="{{ 'closed' if order.payment_status == 'Paid' else 'open' }}"
               data-order-id="{{ order.order_id }}"
               data-original-amount-received="{{ order.amount_received }}"
               data-original-packaging-cost="{{ order.packaging_cost }}"
@@ -223,6 +248,9 @@
               data-original-payment-status="{{ order.payment_status }}"
               data-original-delivery-status="{{ order.delivery_status }}"
             >
+              <td>
+                <input class="agh-checkbox" type="checkbox" data-row-select aria-label="Select {{ order.order_id }}">
+              </td>
               <td>
                 <a class="agh-order-id" href="{{ order.shopify_link }}" target="_blank">{{ order.order_id }}</a>
                 <div class="agh-order-date">{{ order.created_at }}</div>
@@ -352,6 +380,9 @@
 
 {% block extra_js %}
 <script>
+let currentAghajeTab = 'fulfilled';
+let fulfilledPaymentFilter = 'all';
+
 function aghajeMoney(value) {
   return `PKR ${Number(value || 0).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`;
 }
@@ -370,7 +401,8 @@ function getAghajeItemCostInputs(row) {
   return Array.from(row.querySelectorAll('[data-aghaje-item-cost]'));
 }
 
-function toggleAghajeRow(index, editable) {
+function toggleAghajeRow(index, editable, options = {}) {
+  const { skipFocus = false } = options;
   const row = document.querySelector(`[data-row-index="${index}"]`);
   if (!row) return;
   const inputs = getAghajeRowInputs(row);
@@ -387,6 +419,7 @@ function toggleAghajeRow(index, editable) {
     resetAghajeRow(row);
   } else {
     recalculateAghajeRow(row);
+    if (skipFocus) return;
     const firstCostInput = row.querySelector('[data-aghaje-item-cost]');
     if (firstCostInput) {
       firstCostInput.focus();
@@ -431,9 +464,11 @@ function recalculateAghajeRow(row) {
   if (!row) return;
   const inputs = getAghajeRowInputs(row);
   let itemCost = 0;
+  let hasMissingItemCost = false;
   getAghajeItemCostInputs(row).forEach((input) => {
     const unitCost = Number(input.value || 0);
     const qty = Number(input.dataset.qty || 0);
+    if (qty > 0 && unitCost <= 0) hasMissingItemCost = true;
     const lineCost = unitCost * qty;
     itemCost += lineCost;
     const lineCostEl = input.closest('.agh-item-chip')?.querySelector('[data-item-line-cost]');
@@ -461,9 +496,14 @@ function recalculateAghajeRow(row) {
     payableEl.classList.toggle('agh-positive', payable >= 0);
     payableEl.classList.toggle('agh-negative', payable < 0);
   }
+  row.dataset.missingItemCost = hasMissingItemCost || itemCost <= 0 ? '1' : '0';
+  row.dataset.missingPackagingCost = packaging <= 0 ? '1' : '0';
+  row.dataset.missingDeliveryCost = delivery <= 0 ? '1' : '0';
+  row.dataset.missingAmountReceived = amount <= 0 ? '1' : '0';
 }
 
-async function saveAghajeRow(index) {
+async function saveAghajeRow(index, options = {}) {
+  const { silent = false } = options;
   const row = document.querySelector(`[data-row-index="${index}"]`);
   if (!row) return;
   const inputs = getAghajeRowInputs(row);
@@ -509,10 +549,14 @@ async function saveAghajeRow(index) {
     getAghajeItemCostInputs(row).forEach((input) => {
       input.dataset.original = String(Number(input.value || 0));
     });
+    row.dataset.paymentState = result.payment_status === 'Paid' ? 'closed' : 'open';
     toggleAghajeRow(index, false);
-    showToast('Aghaje order updated');
+    applyAghajeLedgerFilters();
+    if (!silent) showToast('Aghaje order updated');
+    return { success: true, result };
   } catch (error) {
-    showToast('Could not save order');
+    if (!silent) showToast('Could not save order');
+    return { success: false, error: 'Could not save order' };
   } finally {
     saveBtn.disabled = false;
     saveBtn.textContent = oldLabel;
@@ -569,7 +613,52 @@ function renderReceivedLedgerEntries(entries) {
   `).join('');
 }
 
+function getActiveMissingFilters() {
+  return Array.from(document.querySelectorAll('[data-missing-filter]:checked')).map((input) => input.dataset.missingFilter);
+}
+
+function rowMatchesMissingFilters(row) {
+  const filters = getActiveMissingFilters();
+  if (!filters.length) return true;
+  return filters.every((filterName) => {
+    if (filterName === 'item') return row.dataset.missingItemCost === '1';
+    if (filterName === 'packaging') return row.dataset.missingPackagingCost === '1';
+    if (filterName === 'delivery') return row.dataset.missingDeliveryCost === '1';
+    if (filterName === 'amount') return row.dataset.missingAmountReceived === '1';
+    return true;
+  });
+}
+
+function applyAghajeLedgerFilters() {
+  const isSummary = currentAghajeTab === 'summary';
+  const filterPanel = document.querySelector('[data-fulfilled-filter-panel]');
+  if (filterPanel) filterPanel.hidden = currentAghajeTab !== 'fulfilled';
+  if (isSummary) return;
+
+  let visibleCount = 0;
+  document.querySelectorAll('[data-ledger-tab]').forEach((row) => {
+    let show = false;
+    if (currentAghajeTab === 'fulfilled') {
+      show = row.dataset.isFulfilled === '1';
+      if (show && fulfilledPaymentFilter !== 'all') {
+        show = row.dataset.paymentState === fulfilledPaymentFilter;
+      }
+      if (show) {
+        show = rowMatchesMissingFilters(row);
+      }
+    } else {
+      show = row.dataset.ledgerTab === currentAghajeTab;
+    }
+    row.hidden = !show;
+    if (show) visibleCount += 1;
+  });
+  const emptyState = document.querySelector('[data-agh-tab-empty]');
+  if (emptyState) emptyState.hidden = visibleCount > 0;
+  syncVisibleSelectCheckbox();
+}
+
 function setAghajeLedgerTab(tabName) {
+  currentAghajeTab = tabName;
   const isSummary = tabName === 'summary';
   document.querySelectorAll('[data-agh-tab]').forEach((button) => {
     button.classList.toggle('active', button.dataset.aghTab === tabName);
@@ -580,16 +669,67 @@ function setAghajeLedgerTab(tabName) {
   if (summaryPanel) summaryPanel.hidden = !isSummary;
   if (ledgerPanel) ledgerPanel.hidden = isSummary;
 
-  if (isSummary) return;
+  applyAghajeLedgerFilters();
+}
 
-  let visibleCount = 0;
-  document.querySelectorAll('[data-ledger-tab]').forEach((row) => {
-    const show = row.dataset.ledgerTab === tabName;
-    row.hidden = !show;
-    if (show) visibleCount += 1;
+function syncVisibleSelectCheckbox() {
+  const selectVisible = document.querySelector('[data-select-visible]');
+  if (!selectVisible) return;
+  const visibleRows = Array.from(document.querySelectorAll('[data-row-index]')).filter((row) => !row.hidden);
+  const selectedVisibleRows = visibleRows.filter((row) => row.querySelector('[data-row-select]')?.checked);
+  selectVisible.checked = visibleRows.length > 0 && selectedVisibleRows.length === visibleRows.length;
+  selectVisible.indeterminate = selectedVisibleRows.length > 0 && selectedVisibleRows.length < visibleRows.length;
+}
+
+function getSelectedVisibleRows() {
+  return Array.from(document.querySelectorAll('[data-row-index]')).filter((row) => {
+    return !row.hidden && row.querySelector('[data-row-select]')?.checked;
   });
-  const emptyState = document.querySelector('[data-agh-tab-empty]');
-  if (emptyState) emptyState.hidden = visibleCount > 0;
+}
+
+async function applyBulkPackagingCost() {
+  const input = document.querySelector('[data-bulk-packaging-value]');
+  const value = Number(input?.value || 0);
+  if (!Number.isFinite(value) || value < 0) {
+    showToast('Enter a valid packaging cost');
+    return;
+  }
+  const rows = getSelectedVisibleRows();
+  if (!rows.length) {
+    showToast('Select at least one visible order');
+    return;
+  }
+  const button = document.querySelector('button[onclick="applyBulkPackagingCost()"]');
+  const oldLabel = button?.textContent || 'Apply to selected';
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Saving...';
+  }
+  let saved = 0;
+  for (const row of rows) {
+    const index = row.dataset.rowIndex;
+    toggleAghajeRow(index, true, { skipFocus: true });
+    const inputs = getAghajeRowInputs(row);
+    if (inputs.packaging) inputs.packaging.value = String(value);
+    recalculateAghajeRow(row);
+    const result = await saveAghajeRow(index, { silent: true });
+    if (!result || !result.success) {
+      if (button) {
+        button.disabled = false;
+        button.textContent = oldLabel;
+      }
+      showToast(`Stopped after ${saved} saved order${saved === 1 ? '' : 's'}`);
+      return;
+    }
+    saved += 1;
+  }
+  if (input) input.value = '';
+  if (button) {
+    button.disabled = false;
+    button.textContent = oldLabel;
+  }
+  showToast(`Packaging updated for ${saved} order${saved === 1 ? '' : 's'}`);
+  applyAghajeLedgerFilters();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -601,9 +741,34 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.querySelectorAll('[data-row-index]').forEach((row) => {
     recalculateAghajeRow(row);
+    row.querySelector('[data-row-select]')?.addEventListener('change', syncVisibleSelectCheckbox);
   });
   document.querySelectorAll('[data-agh-tab]').forEach((button) => {
     button.addEventListener('click', () => setAghajeLedgerTab(button.dataset.aghTab));
+  });
+  document.querySelectorAll('[data-fulfilled-payment-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      fulfilledPaymentFilter = button.dataset.fulfilledPaymentFilter || 'all';
+      document.querySelectorAll('[data-fulfilled-payment-filter]').forEach((item) => {
+        item.classList.toggle('active', item === button);
+      });
+      applyAghajeLedgerFilters();
+    });
+  });
+  document.querySelectorAll('[data-missing-filter]').forEach((input) => {
+    input.addEventListener('change', () => {
+      input.closest('.agh-filter-chip')?.classList.toggle('active', input.checked);
+      applyAghajeLedgerFilters();
+    });
+  });
+  document.querySelector('[data-select-visible]')?.addEventListener('change', (event) => {
+    document.querySelectorAll('[data-row-index]').forEach((row) => {
+      if (!row.hidden) {
+        const checkbox = row.querySelector('[data-row-select]');
+        if (checkbox) checkbox.checked = event.target.checked;
+      }
+    });
+    syncVisibleSelectCheckbox();
   });
   setAghajeLedgerTab('fulfilled');
 });

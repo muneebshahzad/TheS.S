@@ -2612,12 +2612,13 @@ def aghaje_orders():
         is_cancelled = bool(order.get("cancelled_at")) or delivery_status == "Cancelled"
         if is_cancelled:
             cancelled_orders.append(order)
-        elif payment_status == "Paid":
-            closed_orders.append(order)
-        elif raw_fulfillment == "fulfilled":
-            fulfilled_orders.append(order)
         else:
-            unfulfilled_orders.append(order)
+            if raw_fulfillment == "fulfilled":
+                fulfilled_orders.append(order)
+            if payment_status == "Paid":
+                closed_orders.append(order)
+            elif raw_fulfillment != "fulfilled":
+                unfulfilled_orders.append(order)
     tab_unpaid_values = {
         "fulfilled": sum_shopify_unpaid_value(fulfilled_orders),
         "unfulfilled": sum_shopify_unpaid_value(unfulfilled_orders),
