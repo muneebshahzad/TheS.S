@@ -32,10 +32,12 @@ from db import (
     get_app_setting,
     init_db,
     load_aghaje_item_cost_overrides,
+    load_aghaje_order_item_cost_overrides,
     load_aghaje_order_overrides,
     load_order_statuses,
     set_app_setting,
     upsert_aghaje_item_cost_override,
+    upsert_aghaje_order_item_cost_override,
     upsert_aghaje_order_override,
     upsert_order_status,
 )
@@ -245,6 +247,87 @@ def add_aghaje_net_payment_received_entry(value):
         }
     )
     return set_app_setting(AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY, json.dumps(entries))
+
+
+def get_aghaje_daily_key(value):
+    parsed = parse_date_for_sort(value)
+    if parsed == datetime.min:
+        return "Undated"
+    return parsed.date().isoformat()
+
+
+def build_aghaje_daily_balance_ledger(orders, cash_entries):
+    daily = {}
+
+    def get_day(day_key):
+        return daily.setdefault(
+            day_key or "Undated",
+            {
+                "date": day_key or "Undated",
+                "order_count": 0,
+                "cod": 0.0,
+                "cost": 0.0,
+                "cash_paid": 0.0,
+                "change": 0.0,
+                "running_balance": 0.0,
+                "details": [],
+            },
+        )
+
+    for order in orders or []:
+        if str(order.get("delivery_status") or "").strip() == "Cancelled":
+            continue
+        day = get_day(get_aghaje_daily_key(order.get("created_at")))
+        amount_received = parse_money(order.get("amount_received", 0))
+        order_cost = 0.0
+        if str(order.get("fulfillment_status_raw") or "").strip().lower() == "fulfilled":
+            order_cost = (
+                parse_money(order.get("item_cost", 0))
+                + parse_money(order.get("packaging_cost", 0))
+                + parse_money(order.get("delivery_cost", 0))
+            )
+        day["order_count"] += 1
+        day["cod"] += amount_received
+        day["cost"] += order_cost
+        day["details"].append(
+            {
+                "type": "order",
+                "label": order.get("order_id") or "Order",
+                "status": order.get("delivery_status") or order.get("fulfillment_status") or "",
+                "cod": round(amount_received, 2),
+                "cost": round(order_cost, 2),
+            }
+        )
+
+    for entry in cash_entries or []:
+        amount = parse_money(entry.get("amount", 0))
+        if amount == 0:
+            continue
+        day = get_day(get_aghaje_daily_key(entry.get("created_at")))
+        day["cash_paid"] += amount
+        day["details"].append(
+            {
+                "type": "cash",
+                "label": "Cash paid entry",
+                "status": entry.get("created_at") or "",
+                "cod": 0.0,
+                "cost": 0.0,
+                "cash_paid": round(amount, 2),
+            }
+        )
+
+    running_balance = 0.0
+    rows = []
+    for day_key in sorted(daily.keys()):
+        row = daily[day_key]
+        row["cod"] = round(row["cod"], 2)
+        row["cost"] = round(row["cost"], 2)
+        row["cash_paid"] = round(row["cash_paid"], 2)
+        row["change"] = round(row["cod"] + row["cash_paid"] - row["cost"], 2)
+        running_balance = round(running_balance + row["change"], 2)
+        row["running_balance"] = running_balance
+        rows.append(row)
+    return list(reversed(rows))
 
 
 def product_cost_key(product_id=None, variant_id=None, title=""):
@@ -894,6 +977,7 @@ def load_aghaje_order_sync_state():
 def build_aghaje_orders_page_data():
     overrides = load_aghaje_order_sync_state()
     item_cost_overrides = load_aghaje_item_cost_overrides()
+    order_item_cost_overrides = load_aghaje_order_item_cost_overrides()
     net_payment_received_entries = get_aghaje_net_payment_received_entries()
     created_at_min = get_aghaje_created_at_min()
     fetch_status = get_aghaje_fetch_status()
@@ -909,6 +993,7 @@ def build_aghaje_orders_page_data():
     shop_name = ((parsed_shop.netloc or parsed_shop.path) if parsed_shop else "").split(".")[0]
 
     for order in raw_orders:
+        order_id = order.get("name") or f"#{order.get('order_number', '')}"
         note_attributes = extract_note_attributes(order)
         delivery_status, delivery_detail = get_aghaje_delivery_status(order)
         tracking_number = str(note_attributes.get("hxs_courier_tracking") or "").strip()
@@ -948,8 +1033,15 @@ def build_aghaje_orders_page_data():
             product_title = line_item.get("title") or line_item.get("name") or "Product"
             display_title = f"{product_title} - {variant_title}" if variant_title and variant_title != "Default Title" else product_title
             cost_key = aghaje_item_cost_key(product_id=product_id, variant_id=variant_id, title=display_title)
-            item_cost_override = item_cost_overrides.get(cost_key) or {}
-            unit_cost = parse_money(item_cost_override.get("cost", 0))
+            default_item_cost_override = item_cost_overrides.get(cost_key) or {}
+            order_item_cost_override = (order_item_cost_overrides.get(order_id) or {}).get(cost_key) or {}
+            unit_cost = parse_money(
+                order_item_cost_override.get(
+                    "cost",
+                    default_item_cost_override.get("cost", 0),
+                )
+            )
+            default_unit_cost = parse_money(default_item_cost_override.get("cost", 0))
 
             item_rows.append(
                 {
@@ -962,6 +1054,8 @@ def build_aghaje_orders_page_data():
                     "unit_price": unit_price,
                     "line_price": round(unit_price * quantity, 2),
                     "unit_cost": unit_cost,
+                    "default_unit_cost": default_unit_cost,
+                    "has_order_cost_override": bool(order_item_cost_override),
                     "line_cost": round(unit_cost * quantity, 2),
                 }
             )
@@ -977,7 +1071,7 @@ def build_aghaje_orders_page_data():
 
         results.append(
             {
-                "order_id": order.get("name") or f"#{order.get('order_number', '')}",
+                "order_id": order_id,
                 "shopify_order_id": order.get("id"),
                 "shopify_link": f"https://admin.shopify.com/store/{shop_name}/orders/{order.get('id')}" if shop_name else "#",
                 "created_at": order.get("created_at", ""),
@@ -1072,6 +1166,7 @@ def build_aghaje_orders_page_data():
         "net_payment_received_auto": total_cod,
         "net_payment_received_entries": net_payment_received_entries,
     }
+    summary["daily_ledger"] = build_aghaje_daily_balance_ledger(results, net_payment_received_entries)
     return results, summary, ""
 
 
@@ -2705,19 +2800,33 @@ def update_aghaje_order():
         delivery_cost = 0.0
 
     try:
+        existing_default_item_costs = load_aghaje_item_cost_overrides()
         for item in item_costs:
             item_key = str(item.get("cost_key") or "").strip()
             title = str(item.get("title") or "").strip()
             if not item_key or not title:
                 continue
-            if not upsert_aghaje_item_cost_override(
+            submitted_cost = parse_money(item.get("cost", 0))
+            if not upsert_aghaje_order_item_cost_override(
+                order_id=order_id,
                 item_key=item_key,
                 title=title,
-                cost=parse_money(item.get("cost", 0)),
+                cost=submitted_cost,
                 product_id=item.get("product_id"),
                 variant_id=item.get("variant_id"),
             ):
                 raise RuntimeError(f"Could not save item cost for {title}.")
+
+            existing_default = existing_default_item_costs.get(item_key) or {}
+            if submitted_cost != 0 and parse_money(existing_default.get("cost", 0)) == 0:
+                if not upsert_aghaje_item_cost_override(
+                    item_key=item_key,
+                    title=title,
+                    cost=submitted_cost,
+                    product_id=item.get("product_id"),
+                    variant_id=item.get("variant_id"),
+                ):
+                    raise RuntimeError(f"Could not save default item cost for {title}.")
 
         if not upsert_aghaje_order_override(
             order_id,

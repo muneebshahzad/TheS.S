@@ -74,6 +74,18 @@
   .agh-entry-row { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid #f0f2f7; font-size:13px; }
   .agh-entry-row:last-child { border-bottom:0; }
   .agh-entry-date { color:#858796; font-size:11px; }
+  .agh-daily-card { margin-top:16px; }
+  .agh-daily-wrap { overflow:auto; }
+  .agh-daily-table { width:100%; border-collapse:collapse; min-width:980px; }
+  .agh-daily-table th, .agh-daily-table td { padding:12px 14px; border-bottom:1px solid #eef0f6; text-align:left; vertical-align:top; }
+  .agh-daily-table th { background:#f8f9fc; font-size:10px; font-weight:800; color:#858796; text-transform:uppercase; letter-spacing:.06em; }
+  .agh-daily-table td { font-size:12px; color:#2d2e36; }
+  .agh-daily-date { font-weight:800; color:#14213d; white-space:nowrap; }
+  .agh-daily-note { color:#858796; font-size:10px; margin-top:3px; }
+  .agh-daily-details { display:flex; flex-direction:column; gap:5px; min-width:260px; }
+  .agh-daily-detail-row { display:grid; grid-template-columns:minmax(90px, 1fr) minmax(90px, 1.2fr) auto; gap:8px; align-items:center; padding:6px 8px; border-radius:8px; background:#fafbff; }
+  .agh-daily-pill { display:inline-flex; width:max-content; align-items:center; border-radius:999px; padding:3px 8px; font-size:10px; font-weight:800; background:#eef3ff; color:#2f63ff; }
+  .agh-daily-muted { color:#858796; font-size:10px; }
   .agh-positive { color:#1cc88a; }
   .agh-negative { color:#e74a3b; }
   .agh-neutral { color:#6f7280; }
@@ -176,6 +188,72 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div class="agh-card agh-daily-card">
+      <div class="agh-card-head">
+        <div>
+          <div style="font-size:14px;font-weight:800;color:#3a3b45;">Daily balance record</div>
+          <div class="agh-detail" style="max-width:none;">Order rows use Shopify order date. Cash paid entries use the date you added them.</div>
+        </div>
+      </div>
+      <div class="agh-daily-wrap">
+        <table class="agh-daily-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>COD</th>
+              <th>Cost</th>
+              <th>Cash Paid</th>
+              <th>Balance Change</th>
+              <th>Running Balance</th>
+              <th>How it changed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for day in summary.daily_ledger %}
+            <tr>
+              <td>
+                <div class="agh-daily-date">{{ day.date }}</div>
+                <div class="agh-daily-note">{{ day.order_count }} order{{ '' if day.order_count == 1 else 's' }}</div>
+              </td>
+              <td><span class="agh-money">PKR {{ day.cod|format_number }}</span></td>
+              <td><span class="agh-money">PKR {{ day.cost|format_number }}</span></td>
+              <td><span class="agh-money">PKR {{ day.cash_paid|format_number }}</span></td>
+              <td><span class="agh-money {{ 'agh-positive' if day.change >= 0 else 'agh-negative' }}">PKR {{ day.change|format_number }}</span></td>
+              <td><span class="agh-money {{ 'agh-positive' if day.running_balance >= 0 else 'agh-negative' }}">PKR {{ day.running_balance|format_number }}</span></td>
+              <td>
+                <details>
+                  <summary class="agh-daily-pill">View details</summary>
+                  <div class="agh-daily-details" style="margin-top:8px;">
+                    {% for detail in day.details %}
+                    <div class="agh-daily-detail-row">
+                      <div>
+                        <strong>{{ detail.label }}</strong>
+                        <div class="agh-daily-muted">{{ detail.type|title }}</div>
+                      </div>
+                      <div class="agh-daily-muted">{{ detail.status }}</div>
+                      <div class="agh-money">
+                        {% if detail.type == 'cash' %}
+                          Cash {{ detail.cash_paid|format_number }}
+                        {% else %}
+                          COD {{ detail.cod|format_number }} · Cost {{ detail.cost|format_number }}
+                        {% endif %}
+                      </div>
+                    </div>
+                    {% endfor %}
+                  </div>
+                </details>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7"><div class="agh-empty">No daily balance entries yet.</div></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
     </div>

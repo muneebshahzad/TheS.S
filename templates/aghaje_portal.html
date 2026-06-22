@@ -257,6 +257,19 @@
     .summary-card.red .value { color: var(--red); }
     .summary-card.teal .value { color: var(--teal); }
     .summary-card.gold .value { color: var(--gold); }
+    .daily-ledger { margin-top:18px; display:grid; gap:12px; }
+    .daily-row { border:1px solid var(--line); border-radius:20px; background:rgba(255,255,255,.72); padding:16px; }
+    .daily-row-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:12px; }
+    .daily-date { font-size:18px; font-weight:900; color:var(--ink); }
+    .daily-change { font-size:20px; font-weight:900; }
+    .daily-metrics { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:10px; }
+    .daily-metric { border-radius:14px; background:rgba(247,247,245,.9); padding:10px; }
+    .daily-metric span { display:block; color:var(--muted); font-size:11px; font-weight:900; letter-spacing:.06em; text-transform:uppercase; margin-bottom:4px; }
+    .daily-metric strong { color:var(--ink); font-size:14px; font-weight:900; }
+    .daily-details { margin-top:12px; color:var(--soft); font-size:13px; }
+    .daily-details summary { cursor:pointer; color:var(--blue); font-weight:900; }
+    .daily-detail-line { display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid rgba(20,33,61,.08); }
+    .daily-detail-line:last-child { border-bottom:0; }
     .order-list, .account-grid, .metric-grid {
       display: flex;
       flex-direction: column;
@@ -497,6 +510,7 @@
     @media (max-width: 820px) {
       .order-body { grid-template-columns: 1fr; }
       .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .daily-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 640px) {
       body { padding: 12px 10px 24px; }
@@ -634,6 +648,50 @@
               <div class="value">{{ summary.other_status_orders }}</div>
               <div class="small">Courier statuses that are neither delivered nor returned.</div>
             </div>
+          </div>
+        </div>
+
+        <div class="card" style="padding:14px;">
+          <div class="mini-label">Daily balance record</div>
+          <div class="small" style="margin-bottom:12px;">COD, fulfilled costs, cash paid entries, and balance movement by date.</div>
+          <div class="daily-ledger">
+            {% for day in summary.daily_ledger %}
+            <div class="daily-row">
+              <div class="daily-row-head">
+                <div>
+                  <div class="daily-date">{{ day.date }}</div>
+                  <div class="small">{{ day.order_count }} order{{ '' if day.order_count == 1 else 's' }}</div>
+                </div>
+                <div class="daily-change {% if day.change >= 0 %}positive{% else %}red{% endif %}">PKR {{ day.change|format_number }}</div>
+              </div>
+              <div class="daily-metrics">
+                <div class="daily-metric"><span>COD</span><strong>PKR {{ day.cod|format_number }}</strong></div>
+                <div class="daily-metric"><span>Cost</span><strong>PKR {{ day.cost|format_number }}</strong></div>
+                <div class="daily-metric"><span>Cash Paid</span><strong>PKR {{ day.cash_paid|format_number }}</strong></div>
+                <div class="daily-metric"><span>Running</span><strong>PKR {{ day.running_balance|format_number }}</strong></div>
+              </div>
+              <details class="daily-details">
+                <summary>View details</summary>
+                {% for detail in day.details %}
+                <div class="daily-detail-line">
+                  <div>
+                    <strong>{{ detail.label }}</strong>
+                    <div>{{ detail.status }}</div>
+                  </div>
+                  <div>
+                    {% if detail.type == 'cash' %}
+                      Cash {{ detail.cash_paid|format_number }}
+                    {% else %}
+                      COD {{ detail.cod|format_number }} · Cost {{ detail.cost|format_number }}
+                    {% endif %}
+                  </div>
+                </div>
+                {% endfor %}
+              </details>
+            </div>
+            {% else %}
+            <div class="empty">No daily balance entries yet.</div>
+            {% endfor %}
           </div>
         </div>
       </div>
