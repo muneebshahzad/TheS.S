@@ -2935,11 +2935,6 @@ def protected_data_status():
     return jsonify(get_protected_data_config_status())
 
 
-@app.route("/shopify/protected-data")
-def protected_data_status_alias():
-    return redirect(url_for("protected_data_status"))
-
-
 @app.route("/shopify/install")
 def shopify_install():
     state = create_oauth_state()
