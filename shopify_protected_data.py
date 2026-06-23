@@ -399,7 +399,11 @@ def fetch_protected_order_details(order_ids: list[int | str]) -> tuple[dict[str,
         headers=headers,
         timeout=30,
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as error:
+        return {}, [f"Protected order detail batch failed: {error}"]
+
     payload = response.json()
 
     errors = [error.get("message", "Unknown Shopify GraphQL error") for error in payload.get("errors") or []]
