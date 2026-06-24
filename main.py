@@ -1124,8 +1124,7 @@ def build_aghaje_orders_page_data():
         packaging_cost = parse_money(override.get("packaging_cost", order.get("packaging_cost", 0)))
         delivery_cost = parse_money(override.get("delivery_cost", order.get("delivery_cost", 0)))
         financial_status = str(order.get("financial_status") or "").strip().lower()
-        default_amount_received = order["order_total"] if delivery_status == "Delivered" else 0.0
-        amount_received = parse_money(override.get("amount_received", default_amount_received))
+        amount_received = parse_money(override.get("amount_received", 0.0))
         default_payment_status = "Not Payable" if delivery_status == "Cancelled" else "Pending"
         payment_status = str(override.get("payment_status") or default_payment_status).strip() or default_payment_status
 
@@ -1178,6 +1177,22 @@ def is_shopify_unpaid_order(order):
 def sum_shopify_unpaid_value(orders):
     return round(
         sum(parse_money(order.get("order_total", 0)) for order in orders if is_shopify_unpaid_order(order)),
+        2,
+    )
+
+
+def aghaje_order_cost_total(order):
+    return round(
+        parse_money(order.get("item_cost", 0))
+        + parse_money(order.get("packaging_cost", 0))
+        + parse_money(order.get("delivery_cost", 0)),
+        2,
+    )
+
+
+def sum_aghaje_delivered_net_value(orders):
+    return round(
+        sum(parse_money(order.get("price", order.get("order_total", 0))) - aghaje_order_cost_total(order) for order in orders),
         2,
     )
 
@@ -1275,7 +1290,9 @@ def build_aghaje_portal_page_data():
         "unfulfilled_unpaid_value": sum_shopify_unpaid_value(unfulfilled_orders),
         "closed_received_value": closed_received_value,
         "fulfilled_filter_values": {
-            key: sum_shopify_unpaid_value(group) for key, group in fulfilled_filter_orders.items()
+            "delivered": sum_aghaje_delivered_net_value(fulfilled_filter_orders["delivered"]),
+            "out_for_delivery": sum_shopify_unpaid_value(fulfilled_filter_orders["out_for_delivery"]),
+            "in_transit": sum_shopify_unpaid_value(fulfilled_filter_orders["in_transit"]),
         },
     }
     return {
