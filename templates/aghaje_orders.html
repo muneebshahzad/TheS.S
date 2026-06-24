@@ -15,7 +15,8 @@
   .agh-stat-icon { width:42px; height:42px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0; }
   .agh-stat-label { font-size:10px; color:#858796; font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
   .agh-stat-value { font-size:22px; font-weight:800; margin-top:2px; }
-  .agh-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+	  .agh-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+	  .agh-bulk-edit { display:grid; grid-template-columns:repeat(4, minmax(105px, 1fr)) auto auto; gap:8px; align-items:center; max-width:760px; }
   .agh-tabs { position:sticky; top:52px; z-index:4; display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:10px; padding:10px; border:1px solid #e3e6f0; background:#fff; border-radius:12px; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
   .agh-tab-btn { border:1px solid #dce2ee; background:#fff; color:#14213d; border-radius:10px; min-height:46px; font-size:12px; font-weight:800; font-family:'DM Sans', sans-serif; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; }
   .agh-tab-btn.active { border-color:#b8c7f0; background:#eef3ff; color:#2f63ff; box-shadow:inset 0 0 0 1px rgba(78,115,223,0.08); }
@@ -89,12 +90,13 @@
   .agh-positive { color:#1cc88a; }
   .agh-negative { color:#e74a3b; }
   .agh-neutral { color:#6f7280; }
-  @media (max-width: 767px) {
+	  @media (max-width: 767px) {
     .agh-topbar { padding:0 14px; }
     .agh-scroll { padding:12px; }
     .agh-stats { grid-template-columns:1fr; }
-    .agh-tabs { grid-template-columns:1fr 1fr; }
-  }
+	    .agh-tabs { grid-template-columns:1fr 1fr; }
+	    .agh-bulk-edit { grid-template-columns:1fr 1fr; width:100%; }
+	  }
 </style>
 
 <div class="agh-shell">
@@ -284,12 +286,15 @@
         <div>
           <div style="font-size:14px;font-weight:700;color:#3a3b45;">Aghaje order ledger</div>
           <div style="font-size:11px;color:#858796;margin-top:4px;">Enter the cost for each item first. The item cost total updates automatically, then save the row costs and payment fields.</div>
-        </div>
-        <div class="agh-toolbar">
-          <input class="agh-input compact" data-bulk-packaging-value type="number" min="0" step="1" placeholder="Packaging">
-          <button class="agh-btn success" type="button" onclick="applyBulkPackagingCost()">Apply to selected</button>
-          <button class="agh-btn primary" type="button" onclick="window.location.reload()">Refresh</button>
-        </div>
+	        </div>
+	        <div class="agh-toolbar agh-bulk-edit">
+	          <input class="agh-input compact" data-bulk-item-cost-value type="number" min="0" step="1" placeholder="Item cost">
+	          <input class="agh-input compact" data-bulk-packaging-value type="number" min="0" step="1" placeholder="Packaging">
+	          <input class="agh-input compact" data-bulk-delivery-value type="number" min="0" step="1" placeholder="Delivery">
+	          <input class="agh-input compact" data-bulk-amount-value type="number" min="0" step="1" placeholder="Received">
+	          <button class="agh-btn success" type="button" data-bulk-apply onclick="applyBulkAghajeValues()">Apply to selected</button>
+	          <button class="agh-btn primary" type="button" onclick="window.location.reload()">Refresh</button>
+	        </div>
       </div>
       <div class="agh-table-wrap">
         <table class="agh-table">
@@ -765,32 +770,60 @@ function getSelectedVisibleRows() {
   });
 }
 
-async function applyBulkPackagingCost() {
-  const input = document.querySelector('[data-bulk-packaging-value]');
-  const value = Number(input?.value || 0);
-  if (!Number.isFinite(value) || value < 0) {
-    showToast('Enter a valid packaging cost');
-    return;
-  }
-  const rows = getSelectedVisibleRows();
-  if (!rows.length) {
-    showToast('Select at least one visible order');
-    return;
-  }
-  const button = document.querySelector('button[onclick="applyBulkPackagingCost()"]');
-  const oldLabel = button?.textContent || 'Apply to selected';
-  if (button) {
-    button.disabled = true;
+	function readBulkNumber(selector, label) {
+	  const input = document.querySelector(selector);
+	  const rawValue = String(input?.value ?? '').trim();
+	  if (!rawValue) return { input, hasValue: false, value: null };
+	  const value = Number(rawValue);
+	  if (!Number.isFinite(value) || value < 0) {
+	    return { input, hasValue: true, value: null, error: `Enter a valid ${label}` };
+	  }
+	  return { input, hasValue: true, value };
+	}
+
+	async function applyBulkAghajeValues() {
+	  const bulkValues = {
+	    itemCost: readBulkNumber('[data-bulk-item-cost-value]', 'item cost'),
+	    packaging: readBulkNumber('[data-bulk-packaging-value]', 'packaging cost'),
+	    delivery: readBulkNumber('[data-bulk-delivery-value]', 'delivery cost'),
+	    amount: readBulkNumber('[data-bulk-amount-value]', 'amount received'),
+	  };
+	  const invalidValue = Object.values(bulkValues).find((entry) => entry.error);
+	  if (invalidValue) {
+	    showToast(invalidValue.error);
+	    return;
+	  }
+	  const hasAnyValue = Object.values(bulkValues).some((entry) => entry.hasValue);
+	  if (!hasAnyValue) {
+	    showToast('Add at least one bulk value');
+	    return;
+	  }
+	  const rows = getSelectedVisibleRows();
+	  if (!rows.length) {
+	    showToast('Select at least one visible order');
+	    return;
+	  }
+	  const button = document.querySelector('[data-bulk-apply]');
+	  const oldLabel = button?.textContent || 'Apply to selected';
+	  if (button) {
+	    button.disabled = true;
     button.textContent = 'Saving...';
   }
   let saved = 0;
   for (const row of rows) {
-    const index = row.dataset.rowIndex;
-    toggleAghajeRow(index, true, { skipFocus: true });
-    const inputs = getAghajeRowInputs(row);
-    if (inputs.packaging) inputs.packaging.value = String(value);
-    recalculateAghajeRow(row);
-    const result = await saveAghajeRow(index, { silent: true });
+	    const index = row.dataset.rowIndex;
+	    toggleAghajeRow(index, true, { skipFocus: true });
+	    const inputs = getAghajeRowInputs(row);
+	    if (bulkValues.itemCost.hasValue) {
+	      getAghajeItemCostInputs(row).forEach((input) => {
+	        input.value = String(bulkValues.itemCost.value);
+	      });
+	    }
+	    if (bulkValues.packaging.hasValue && inputs.packaging) inputs.packaging.value = String(bulkValues.packaging.value);
+	    if (bulkValues.delivery.hasValue && inputs.delivery) inputs.delivery.value = String(bulkValues.delivery.value);
+	    if (bulkValues.amount.hasValue && inputs.amount) inputs.amount.value = String(bulkValues.amount.value);
+	    recalculateAghajeRow(row);
+	    const result = await saveAghajeRow(index, { silent: true });
     if (!result || !result.success) {
       if (button) {
         button.disabled = false;
@@ -801,14 +834,16 @@ async function applyBulkPackagingCost() {
     }
     saved += 1;
   }
-  if (input) input.value = '';
-  if (button) {
-    button.disabled = false;
-    button.textContent = oldLabel;
-  }
-  showToast(`Packaging updated for ${saved} order${saved === 1 ? '' : 's'}`);
-  applyAghajeLedgerFilters();
-}
+	  Object.values(bulkValues).forEach((entry) => {
+	    if (entry.input) entry.input.value = '';
+	  });
+	  if (button) {
+	    button.disabled = false;
+	    button.textContent = oldLabel;
+	  }
+	  showToast(`Bulk values updated for ${saved} order${saved === 1 ? '' : 's'}`);
+	  applyAghajeLedgerFilters();
+	}
 
 document.addEventListener('DOMContentLoaded', () => {
   const ledgerModal = document.querySelector('[data-received-ledger-modal]');
