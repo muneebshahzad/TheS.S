@@ -17,12 +17,12 @@
   .agh-stat-value { font-size:22px; font-weight:800; margin-top:2px; }
 	  .agh-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 	  .agh-bulk-edit { display:grid; grid-template-columns:repeat(4, minmax(105px, 1fr)) auto auto; gap:8px; align-items:center; max-width:760px; }
-  .agh-tabs { position:sticky; top:52px; z-index:4; display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:10px; padding:10px; border:1px solid #e3e6f0; background:#fff; border-radius:12px; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
+	  .agh-tabs { position:sticky; top:52px; z-index:4; display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; padding:10px; border:1px solid #e3e6f0; background:#fff; border-radius:12px; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
   .agh-tab-btn { border:1px solid #dce2ee; background:#fff; color:#14213d; border-radius:10px; min-height:46px; font-size:12px; font-weight:800; font-family:'DM Sans', sans-serif; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; }
   .agh-tab-btn.active { border-color:#b8c7f0; background:#eef3ff; color:#2f63ff; box-shadow:inset 0 0 0 1px rgba(78,115,223,0.08); }
   .agh-tab-subvalue { color:#858796; font-size:9px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
   .agh-tab-btn.active .agh-tab-subvalue { color:#2f63ff; }
-  .agh-summary-panel[hidden], .agh-ledger-panel[hidden] { display:none !important; }
+	  .agh-summary-panel[hidden], .agh-ledger-panel[hidden], .agh-readonly-panel[hidden] { display:none !important; }
   .agh-filter-panel { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 12px; border:1px solid #e3e6f0; background:#fff; border-radius:12px; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
   .agh-filter-panel[hidden] { display:none !important; }
   .agh-filter-label { font-size:10px; color:#858796; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
@@ -37,8 +37,16 @@
   .agh-table-wrap { overflow:auto; }
   .agh-table { width:100%; border-collapse:collapse; min-width:1680px; }
   .agh-table th, .agh-table td { padding:12px 14px; border-bottom:1px solid #eef0f6; text-align:left; vertical-align:top; }
-  .agh-table th { background:#f8f9fc; font-size:11px; font-weight:700; color:#858796; text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
-  .agh-table tbody tr:hover { background:#fafbff; }
+	  .agh-table th { background:#f8f9fc; font-size:11px; font-weight:700; color:#858796; text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
+	  .agh-table tbody tr:hover { background:#fafbff; }
+	  .agh-total-row th, .agh-total-row td { background:#eef3ff; color:#14213d; font-weight:800; border-bottom:1px solid #dce5ff; }
+	  .agh-table tfoot td { border-top:2px solid #dce2ee; border-bottom:0; }
+	  .agh-readonly-table .agh-item-chip { grid-template-columns:38px minmax(0,1fr) auto; }
+	  .agh-readonly-table .agh-item-chip img { width:38px; height:38px; }
+	  .agh-pill { display:inline-flex; align-items:center; width:max-content; border-radius:999px; padding:4px 9px; background:#f0f2f7; color:#14213d; font-size:11px; font-weight:800; white-space:nowrap; }
+	  .agh-pill.good { background:#e7f7ee; color:#146c43; }
+	  .agh-pill.warn { background:#fff4d8; color:#8b5a00; }
+	  .agh-pill.bad { background:#fde8e5; color:#a0281f; }
   .agh-order-id { font-size:13px; font-weight:700; color:#4e73df; text-decoration:none; white-space:nowrap; }
   .agh-order-date { font-size:10px; color:#858796; margin-top:4px; white-space:nowrap; }
   .agh-chip-list { display:flex; flex-direction:column; gap:8px; }
@@ -111,10 +119,14 @@
     <div class="agh-banner">Could not fetch Aghaje orders: {{ error_message }}</div>
     {% endif %}
 
-    <div class="agh-tabs" role="tablist" aria-label="Aghaje order tabs">
-      <button class="agh-tab-btn active" type="button" data-agh-tab="fulfilled">
-        <span>Fulfilled ({{ fulfilled_orders|length }})</span>
-        <span class="agh-tab-subvalue">Rs {{ tab_unpaid_values.fulfilled|format_number }}</span>
+	    <div class="agh-tabs" role="tablist" aria-label="Aghaje order tabs">
+	      <button class="agh-tab-btn" type="button" data-agh-tab="all-orders">
+	        <span>All Orders ({{ orders|length }})</span>
+	        <span class="agh-tab-subvalue">View only</span>
+	      </button>
+	      <button class="agh-tab-btn active" type="button" data-agh-tab="fulfilled">
+	        <span>Fulfilled ({{ fulfilled_orders|length }})</span>
+	        <span class="agh-tab-subvalue">Rs {{ tab_unpaid_values.fulfilled|format_number }}</span>
       </button>
       <button class="agh-tab-btn" type="button" data-agh-tab="unfulfilled">
         <span>Unfulfilled ({{ unfulfilled_orders|length }})</span>
@@ -260,7 +272,7 @@
     </div>
     </div>
 
-    <div class="agh-modal-backdrop" data-received-ledger-modal>
+	    <div class="agh-modal-backdrop" data-received-ledger-modal>
       <div class="agh-modal" role="dialog" aria-modal="true" aria-labelledby="received-ledger-title">
         <div class="agh-modal-head">
           <div class="agh-modal-title" id="received-ledger-title">Net Payment Received Entries</div>
@@ -279,9 +291,143 @@
           {% endfor %}
         </div>
       </div>
-    </div>
+	    </div>
 
-    <div class="agh-card agh-ledger-panel" data-agh-ledger-panel>
+	    <div class="agh-card agh-readonly-panel" data-agh-readonly-panel hidden>
+	      <div class="agh-card-head">
+	        <div>
+	          <div style="font-size:14px;font-weight:700;color:#3a3b45;">All orders overview</div>
+	          <div style="font-size:11px;color:#858796;margin-top:4px;">View-only ledger across every Aghaje order. Totals are repeated at the top and bottom for quick checking.</div>
+	        </div>
+	        <label class="agh-filter-chip">
+	          <input type="checkbox" data-hide-unfulfilled-readonly onchange="applyReadonlyOrderFilters()">
+	          Hide unfulfilled
+	        </label>
+	      </div>
+	      <div class="agh-table-wrap">
+	        <table class="agh-table agh-readonly-table">
+	          <thead>
+	            <tr>
+	              <th>Order Id</th>
+	              <th>Items</th>
+	              <th>Fulfillment</th>
+	              <th>Delivery</th>
+	              <th>Payment</th>
+	              <th>Item Cost</th>
+	              <th>Packaging Cost</th>
+	              <th>Delivery Cost</th>
+	              <th>Price</th>
+	              <th>Order Total</th>
+	              <th>Amount Received</th>
+	              <th>Payable</th>
+	            </tr>
+	            <tr class="agh-total-row" data-readonly-total-mode="all">
+	              <th>Totals · {{ all_order_totals.count|format_number }} orders</th>
+	              <th>{{ all_order_totals.item_qty|format_number }} item{{ '' if all_order_totals.item_qty == 1 else 's' }}</th>
+	              <th></th>
+	              <th></th>
+	              <th></th>
+	              <th>PKR {{ all_order_totals.item_cost|format_number }}</th>
+	              <th>PKR {{ all_order_totals.packaging_cost|format_number }}</th>
+	              <th>PKR {{ all_order_totals.delivery_cost|format_number }}</th>
+	              <th>PKR {{ all_order_totals.price|format_number }}</th>
+	              <th>PKR {{ all_order_totals.order_total|format_number }}</th>
+	              <th>PKR {{ all_order_totals.amount_received|format_number }}</th>
+	              <th>PKR {{ all_order_totals.payable|format_number }}</th>
+	            </tr>
+	            <tr class="agh-total-row" data-readonly-total-mode="fulfilled" hidden>
+	              <th>Fulfilled totals · {{ all_order_fulfilled_totals.count|format_number }} orders</th>
+	              <th>{{ all_order_fulfilled_totals.item_qty|format_number }} item{{ '' if all_order_fulfilled_totals.item_qty == 1 else 's' }}</th>
+	              <th></th>
+	              <th></th>
+	              <th></th>
+	              <th>PKR {{ all_order_fulfilled_totals.item_cost|format_number }}</th>
+	              <th>PKR {{ all_order_fulfilled_totals.packaging_cost|format_number }}</th>
+	              <th>PKR {{ all_order_fulfilled_totals.delivery_cost|format_number }}</th>
+	              <th>PKR {{ all_order_fulfilled_totals.price|format_number }}</th>
+	              <th>PKR {{ all_order_fulfilled_totals.order_total|format_number }}</th>
+	              <th>PKR {{ all_order_fulfilled_totals.amount_received|format_number }}</th>
+	              <th>PKR {{ all_order_fulfilled_totals.payable|format_number }}</th>
+	            </tr>
+	          </thead>
+	          <tbody>
+	            {% for order in orders %}
+	            {% set is_cancelled = order.cancelled_at or order.delivery_status == 'Cancelled' %}
+	            <tr data-readonly-order-row data-readonly-fulfilled="{{ '1' if order.fulfillment_status_raw == 'fulfilled' else '0' }}">
+	              <td>
+	                <a class="agh-order-id" href="{{ order.shopify_link }}" target="_blank">{{ order.order_id }}</a>
+	                <div class="agh-order-date">{{ order.created_at }}</div>
+	              </td>
+	              <td>
+	                <div class="agh-chip-list">
+	                  {% for item in order['items'] %}
+	                  <div class="agh-item-chip">
+	                    <img src="{{ item.image }}" alt="">
+	                    <div class="agh-item-body">
+	                      <div class="agh-item-title">{{ item.title }}</div>
+	                      <div class="agh-item-meta">Qty {{ item.qty }}</div>
+	                      <div class="agh-item-meta">Cost PKR {{ item.line_cost|format_number }}</div>
+	                    </div>
+	                    <div class="agh-money">PKR {{ item.line_price|format_number }}</div>
+	                  </div>
+	                  {% endfor %}
+	                </div>
+	              </td>
+	              <td>
+	                <span class="agh-pill {{ 'good' if order.fulfillment_status_raw == 'fulfilled' else 'warn' }}">
+	                  {{ 'Fulfilled' if order.fulfillment_status_raw == 'fulfilled' else 'Unfulfilled' }}
+	                </span>
+	              </td>
+	              <td>
+	                <span class="agh-pill {{ 'bad' if is_cancelled else 'good' if order.delivery_status == 'Delivered' else 'warn' }}">{{ order.delivery_status }}</span>
+	                <div class="agh-detail">{{ order.delivery_status_detail or 'No courier status yet' }}</div>
+	              </td>
+	              <td><span class="agh-pill {{ 'good' if order.payment_status == 'Paid' else 'warn' if order.payment_status == 'Pending' else 'bad' }}">{{ order.payment_status }}</span></td>
+	              <td><span class="agh-money">PKR {{ order.item_cost|format_number }}</span></td>
+	              <td><span class="agh-money">PKR {{ order.packaging_cost|format_number }}</span></td>
+	              <td><span class="agh-money">PKR {{ order.delivery_cost|format_number }}</span></td>
+	              <td><span class="agh-money">PKR {{ order.price|format_number }}</span></td>
+	              <td><span class="agh-money">PKR {{ order.order_total|format_number }}</span></td>
+	              <td><span class="agh-money">PKR {{ order.amount_received|format_number }}</span></td>
+	              <td><span class="agh-payable">PKR {{ order.payable|format_number }}</span></td>
+	            </tr>
+	            {% endfor %}
+	          </tbody>
+	          <tfoot>
+	            <tr class="agh-total-row" data-readonly-total-mode="all">
+	              <td>Totals · {{ all_order_totals.count|format_number }} orders</td>
+	              <td>{{ all_order_totals.item_qty|format_number }} item{{ '' if all_order_totals.item_qty == 1 else 's' }}</td>
+	              <td></td>
+	              <td></td>
+	              <td></td>
+	              <td>PKR {{ all_order_totals.item_cost|format_number }}</td>
+	              <td>PKR {{ all_order_totals.packaging_cost|format_number }}</td>
+	              <td>PKR {{ all_order_totals.delivery_cost|format_number }}</td>
+	              <td>PKR {{ all_order_totals.price|format_number }}</td>
+	              <td>PKR {{ all_order_totals.order_total|format_number }}</td>
+	              <td>PKR {{ all_order_totals.amount_received|format_number }}</td>
+	              <td>PKR {{ all_order_totals.payable|format_number }}</td>
+	            </tr>
+	            <tr class="agh-total-row" data-readonly-total-mode="fulfilled" hidden>
+	              <td>Fulfilled totals · {{ all_order_fulfilled_totals.count|format_number }} orders</td>
+	              <td>{{ all_order_fulfilled_totals.item_qty|format_number }} item{{ '' if all_order_fulfilled_totals.item_qty == 1 else 's' }}</td>
+	              <td></td>
+	              <td></td>
+	              <td></td>
+	              <td>PKR {{ all_order_fulfilled_totals.item_cost|format_number }}</td>
+	              <td>PKR {{ all_order_fulfilled_totals.packaging_cost|format_number }}</td>
+	              <td>PKR {{ all_order_fulfilled_totals.delivery_cost|format_number }}</td>
+	              <td>PKR {{ all_order_fulfilled_totals.price|format_number }}</td>
+	              <td>PKR {{ all_order_fulfilled_totals.order_total|format_number }}</td>
+	              <td>PKR {{ all_order_fulfilled_totals.amount_received|format_number }}</td>
+	              <td>PKR {{ all_order_fulfilled_totals.payable|format_number }}</td>
+	            </tr>
+	          </tfoot>
+	        </table>
+	      </div>
+	    </div>
+
+	    <div class="agh-card agh-ledger-panel" data-agh-ledger-panel>
       <div class="agh-card-head">
         <div>
           <div style="font-size:14px;font-weight:700;color:#3a3b45;">Aghaje order ledger</div>
@@ -714,9 +860,10 @@ function rowMatchesMissingFilters(row) {
 
 function applyAghajeLedgerFilters() {
   const isSummary = currentAghajeTab === 'summary';
+  const isAllOrders = currentAghajeTab === 'all-orders';
   const filterPanel = document.querySelector('[data-fulfilled-filter-panel]');
   if (filterPanel) filterPanel.hidden = currentAghajeTab !== 'fulfilled';
-  if (isSummary) return;
+  if (isSummary || isAllOrders) return;
 
   let visibleCount = 0;
   document.querySelectorAll('[data-ledger-tab]').forEach((row) => {
@@ -743,16 +890,32 @@ function applyAghajeLedgerFilters() {
 function setAghajeLedgerTab(tabName) {
   currentAghajeTab = tabName;
   const isSummary = tabName === 'summary';
+  const isAllOrders = tabName === 'all-orders';
   document.querySelectorAll('[data-agh-tab]').forEach((button) => {
     button.classList.toggle('active', button.dataset.aghTab === tabName);
   });
 
   const summaryPanel = document.querySelector('[data-agh-summary-panel]');
   const ledgerPanel = document.querySelector('[data-agh-ledger-panel]');
+  const readonlyPanel = document.querySelector('[data-agh-readonly-panel]');
   if (summaryPanel) summaryPanel.hidden = !isSummary;
-  if (ledgerPanel) ledgerPanel.hidden = isSummary;
+  if (ledgerPanel) ledgerPanel.hidden = isSummary || isAllOrders;
+  if (readonlyPanel) readonlyPanel.hidden = !isAllOrders;
 
   applyAghajeLedgerFilters();
+  if (isAllOrders) applyReadonlyOrderFilters();
+}
+
+function applyReadonlyOrderFilters() {
+  const hideUnfulfilled = document.querySelector('[data-hide-unfulfilled-readonly]')?.checked || false;
+  document.querySelectorAll('[data-readonly-order-row]').forEach((row) => {
+    row.hidden = hideUnfulfilled && row.dataset.readonlyFulfilled !== '1';
+  });
+  document.querySelectorAll('[data-readonly-total-mode]').forEach((row) => {
+    row.hidden = hideUnfulfilled
+      ? row.dataset.readonlyTotalMode !== 'fulfilled'
+      : row.dataset.readonlyTotalMode !== 'all';
+  });
 }
 
 function syncVisibleSelectCheckbox() {

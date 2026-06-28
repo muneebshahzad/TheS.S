@@ -1251,6 +1251,33 @@ def sum_aghaje_delivered_order_total(orders):
     )
 
 
+def build_aghaje_orders_total_row(orders):
+    totals = {
+        "count": len(orders),
+        "item_qty": 0,
+        "item_cost": 0.0,
+        "packaging_cost": 0.0,
+        "delivery_cost": 0.0,
+        "price": 0.0,
+        "order_total": 0.0,
+        "amount_received": 0.0,
+        "payable": 0.0,
+    }
+    for order in orders:
+        totals["item_qty"] += sum(int(item.get("qty") or 0) for item in order.get("items", []))
+        for field in (
+            "item_cost",
+            "packaging_cost",
+            "delivery_cost",
+            "price",
+            "order_total",
+            "amount_received",
+            "payable",
+        ):
+            totals[field] += parse_money(order.get(field, 0))
+    return {key: round(value, 2) if isinstance(value, float) else value for key, value in totals.items()}
+
+
 def fulfilled_status_filter_bucket(order):
     delivery_status = str(order.get("delivery_status") or "").strip()
     detail = str(order.get("delivery_status_detail") or "").upper()
@@ -2789,6 +2816,10 @@ def aghaje_orders():
         "fulfilled": sum_shopify_unpaid_value(fulfilled_orders),
         "unfulfilled": sum_shopify_unpaid_value(unfulfilled_orders),
     }
+    all_order_totals = build_aghaje_orders_total_row(orders)
+    all_order_fulfilled_totals = build_aghaje_orders_total_row(
+        [order for order in orders if str(order.get("fulfillment_status_raw") or "").strip().lower() == "fulfilled"]
+    )
     return render_template(
         "aghaje_orders.html",
         orders=orders,
@@ -2797,6 +2828,8 @@ def aghaje_orders():
         unfulfilled_orders=unfulfilled_orders,
         cancelled_orders=cancelled_orders,
         tab_unpaid_values=tab_unpaid_values,
+        all_order_totals=all_order_totals,
+        all_order_fulfilled_totals=all_order_fulfilled_totals,
         summary=summary,
         error_message=error_message,
     )
