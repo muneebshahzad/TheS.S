@@ -1244,18 +1244,9 @@ def sum_shopify_unpaid_value(orders):
     )
 
 
-def aghaje_order_cost_total(order):
+def sum_aghaje_delivered_order_total(orders):
     return round(
-        parse_money(order.get("item_cost", 0))
-        + parse_money(order.get("packaging_cost", 0))
-        + parse_money(order.get("delivery_cost", 0)),
-        2,
-    )
-
-
-def sum_aghaje_delivered_net_value(orders):
-    return round(
-        sum(parse_money(order.get("price", order.get("order_total", 0))) - aghaje_order_cost_total(order) for order in orders),
+        sum(parse_money(order.get("order_total", order.get("price", 0))) for order in orders),
         2,
     )
 
@@ -1353,7 +1344,7 @@ def build_aghaje_portal_page_data():
         "unfulfilled_unpaid_value": sum_shopify_unpaid_value(unfulfilled_orders),
         "closed_received_value": closed_received_value,
         "fulfilled_filter_values": {
-            "delivered": sum_aghaje_delivered_net_value(fulfilled_filter_orders["delivered"]),
+            "delivered": sum_aghaje_delivered_order_total(fulfilled_filter_orders["delivered"]),
             "out_for_delivery": sum_shopify_unpaid_value(fulfilled_filter_orders["out_for_delivery"]),
             "in_transit": sum_shopify_unpaid_value(fulfilled_filter_orders["in_transit"]),
         },
