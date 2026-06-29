@@ -2835,6 +2835,19 @@ def aghaje_orders():
     )
 
 
+@app.route("/aghaje-orders/paid-order-ids")
+def aghaje_paid_order_ids():
+    orders, _, error_message = build_aghaje_orders_page_data()
+    if error_message:
+        return jsonify({"success": False, "error": error_message, "paid_order_ids": []}), 502
+    paid_order_ids = [
+        str(order.get("order_id") or "").strip()
+        for order in orders
+        if str(order.get("payment_status") or "").strip().lower() == "paid"
+    ]
+    return jsonify({"success": True, "paid_order_ids": paid_order_ids})
+
+
 @app.route("/product-costs")
 def product_costs():
     return render_template("product_costs.html", products=build_product_cost_rows())
