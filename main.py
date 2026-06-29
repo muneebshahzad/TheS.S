@@ -785,7 +785,8 @@ def get_tracking_summary_cached(tracking_number, ttl_seconds=300):
     except Exception as error:
         print(f"Could not fetch tracking summary for {tracking_number}: {error}")
         return cached.get("summary") if cached else None
-    tracking_summary_cache[cache_key] = {"fetched_at": now, "summary": summary}
+    if summary and summary.get("status"):
+        tracking_summary_cache[cache_key] = {"fetched_at": time.time(), "summary": summary}
     return summary
 
 
@@ -833,6 +834,8 @@ def refresh_tracking_summaries_sync(
     async def refresh_all():
         timeout = aiohttp.ClientTimeout(total=TRACKING_REFRESH_PER_SHIPMENT_TIMEOUT_SECONDS)
         semaphore = asyncio.Semaphore(8)
+        refreshed_at = time.time()
+        updates = {}
         async with aiohttp.ClientSession(timeout=timeout) as session_obj:
             async def refresh_one(tracking_number):
                 async with semaphore:
@@ -844,12 +847,10 @@ def refresh_tracking_summaries_sync(
                         summary = summarize_tracking_result(tracking_number, data)
                     except Exception as error:
                         print(f"Could not refresh tracking summary for {tracking_number}: {error}")
-                        return 0
-                    tracking_summary_cache[tracking_number.upper()] = {
-                        "fetched_at": time.time(),
-                        "summary": summary,
-                    }
-                    return 1
+                        return None
+                    if not summary or not summary.get("status"):
+                        return None
+                    return tracking_number.upper(), summary
 
             tasks = [asyncio.create_task(refresh_one(number)) for number in stale_numbers]
             done, pending = await asyncio.wait(tasks, timeout=deadline_seconds)
@@ -860,9 +861,19 @@ def refresh_tracking_summaries_sync(
             refreshed_count = 0
             for task in done:
                 try:
-                    refreshed_count += int(task.result() or 0)
+                    result = task.result()
+                    if not result:
+                        continue
+                    cache_key, summary = result
+                    updates[cache_key] = {
+                        "fetched_at": refreshed_at,
+                        "summary": summary,
+                    }
+                    refreshed_count += 1
                 except Exception as error:
                     print(f"Could not complete tracking refresh task: {error}")
+            if updates:
+                tracking_summary_cache.update(updates)
             if pending:
                 print(f"Tracking refresh deadline hit; skipped {len(pending)} pending shipment(s).")
             return refreshed_count
@@ -1065,7 +1076,7 @@ def build_aghaje_orders_page_data():
         courier_tracking_ready = bool(tracking_number)
         live_summary = None
         if tracking_number:
-            live_summary = get_tracking_summary_cached(tracking_number) if is_leopards_tracking(tracking_number) else get_tracking_summary_cache_only(tracking_number)
+            live_summary = get_tracking_summary_cache_only(tracking_number)
         if live_summary and live_summary.get("status"):
             delivery_status, delivery_detail = classify_aghaje_delivery_status(live_summary.get("status"))
             if is_leopards_tracking(tracking_number):
