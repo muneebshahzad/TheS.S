@@ -64,6 +64,9 @@
   .agh-input.compact { width:95px; }
   .agh-checkbox { width:16px; height:16px; accent-color:#4e73df; }
   .agh-input[disabled], .agh-select[disabled] { background:#f8f9fc; color:#858796; cursor:default; }
+  .agh-postex-locked { background:#f1f3f7 !important; color:#858796 !important; border-color:#e2e6ef !important; }
+  .agh-postex-note { font-size:10px; color:#858796; margin-top:5px; max-width:130px; line-height:1.35; }
+  .agh-postex-muted { color:#858796; opacity:.7; }
   .agh-summary-input { width:100%; max-width:170px; margin-top:6px; font-size:14px; font-weight:700; }
   .agh-summary-total { font-size:20px; font-weight:800; color:#2d2e36; margin-top:4px; cursor:pointer; }
   .agh-summary-add-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
@@ -142,6 +145,7 @@
       <button class="agh-filter-chip active" type="button" data-fulfilled-payment-filter="all">All</button>
       <button class="agh-filter-chip" type="button" data-fulfilled-payment-filter="open">Open</button>
       <button class="agh-filter-chip" type="button" data-fulfilled-payment-filter="closed">Closed</button>
+      <label class="agh-filter-chip"><input type="checkbox" data-courier-filter="postex"> PostEx</label>
       <span class="agh-filter-label">Missing</span>
       <label class="agh-filter-chip"><input type="checkbox" data-missing-filter="item"> Item cost</label>
       <label class="agh-filter-chip"><input type="checkbox" data-missing-filter="packaging"> Packaging</label>
@@ -385,10 +389,16 @@
 	              <td><span class="agh-pill {{ 'good' if order.payment_status == 'Paid' else 'warn' if order.payment_status == 'Pending' else 'bad' }}">{{ order.payment_status }}</span></td>
 	              <td><span class="agh-money">PKR {{ order.item_cost|format_number }}</span></td>
 	              <td><span class="agh-money">PKR {{ order.packaging_cost|format_number }}</span></td>
-	              <td><span class="agh-money">PKR {{ order.delivery_cost|format_number }}</span></td>
+	              <td>
+	                <span class="agh-money {{ 'agh-postex-muted' if order.is_postex else '' }}">PKR {{ order.delivery_cost|format_number }}</span>
+	                {% if order.is_postex %}<div class="agh-postex-note">PostEx - ignored</div>{% endif %}
+	              </td>
 	              <td><span class="agh-money">PKR {{ order.price|format_number }}</span></td>
 	              <td><span class="agh-money">PKR {{ order.order_total|format_number }}</span></td>
-	              <td><span class="agh-money">PKR {{ order.amount_received|format_number }}</span></td>
+	              <td>
+	                <span class="agh-money {{ 'agh-postex-muted' if order.is_postex else '' }}">PKR {{ order.amount_received|format_number }}</span>
+	                {% if order.is_postex %}<div class="agh-postex-note">PostEx - ignored</div>{% endif %}
+	              </td>
 	              <td><span class="agh-payable">PKR {{ order.payable|format_number }}</span></td>
 	            </tr>
 	            {% endfor %}
@@ -476,6 +486,7 @@
               data-original-delivery-cost="{{ order.delivery_cost }}"
               data-original-payment-status="{{ order.payment_status }}"
               data-original-delivery-status="{{ order.delivery_status }}"
+              data-is-postex="{{ '1' if order.is_postex else '0' }}"
             >
               <td>
                 <input class="agh-checkbox" type="checkbox" data-row-select aria-label="Select {{ order.order_id }}">
@@ -534,7 +545,7 @@
               </td>
               <td>
                 <input
-                  class="agh-input"
+                  class="agh-input {{ 'agh-postex-locked' if order.is_postex else '' }}"
                   data-aghaje-field="delivery_cost"
                   type="number"
                   min="0"
@@ -543,12 +554,13 @@
                   disabled
                   oninput="recalculateAghajeRow(this.closest('tr'))"
                 >
+                {% if order.is_postex %}<div class="agh-postex-note">PostEx delivery cost is ignored.</div>{% endif %}
               </td>
               <td><span class="agh-money">PKR {{ order.price|format_number }}</span></td>
               <td><span class="agh-money">PKR {{ order.order_total|format_number }}</span></td>
               <td>
                 <input
-                  class="agh-input"
+                  class="agh-input {{ 'agh-postex-locked' if order.is_postex else '' }}"
                   data-aghaje-field="amount_received"
                   type="number"
                   min="0"
@@ -557,6 +569,7 @@
                   disabled
                   oninput="recalculateAghajeRow(this.closest('tr'))"
                 >
+                {% if order.is_postex %}<div class="agh-postex-note">PostEx amount received is ignored.</div>{% endif %}
               </td>
               <td>
                 <span class="agh-payable" data-payable-value="{{ order.payable }}">PKR {{ order.payable|format_number }}</span>
@@ -611,6 +624,7 @@
 <script>
 let currentAghajeTab = 'fulfilled';
 let fulfilledPaymentFilter = 'all';
+let postexOnlyFilter = false;
 
 function aghajeMoney(value) {
   return `PKR ${Number(value || 0).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`;
@@ -630,6 +644,23 @@ function getAghajeItemCostInputs(row) {
   return Array.from(row.querySelectorAll('[data-aghaje-item-cost]'));
 }
 
+function isPostexRow(row) {
+  return row?.dataset?.isPostex === '1';
+}
+
+function applyPostexLocks(row) {
+  if (!isPostexRow(row)) return;
+  const inputs = getAghajeRowInputs(row);
+  if (inputs.amount) {
+    inputs.amount.value = '0';
+    inputs.amount.disabled = true;
+  }
+  if (inputs.delivery) {
+    inputs.delivery.value = '0';
+    inputs.delivery.disabled = true;
+  }
+}
+
 function toggleAghajeRow(index, editable, options = {}) {
   const { skipFocus = false } = options;
   const row = document.querySelector(`[data-row-index="${index}"]`);
@@ -638,6 +669,7 @@ function toggleAghajeRow(index, editable, options = {}) {
   Object.values(inputs).forEach((el) => {
     if (el) el.disabled = !editable;
   });
+  applyPostexLocks(row);
   getAghajeItemCostInputs(row).forEach((el) => {
     el.disabled = !editable;
   });
@@ -673,6 +705,7 @@ function resetAghajeRow(row) {
     const lineCostEl = input.closest('.agh-item-chip')?.querySelector('[data-item-line-cost]');
     if (lineCostEl) lineCostEl.textContent = Number(lineCost).toLocaleString('en-PK', { maximumFractionDigits: 0 });
   });
+  applyPostexLocks(row);
   recalculateAghajeRow(row);
 }
 
@@ -686,6 +719,7 @@ function handleAghajeStatusChange(row) {
     if (inputs.delivery) inputs.delivery.value = '0';
     if (inputs.payment) inputs.payment.value = 'Not Payable';
   }
+  applyPostexLocks(row);
   recalculateAghajeRow(row);
 }
 
@@ -709,9 +743,11 @@ function recalculateAghajeRow(row) {
   if (itemCostSummary) {
     itemCostSummary.textContent = aghajeMoney(itemCost);
   }
-  const amount = Number(inputs.amount?.value || 0);
+  const postexRow = isPostexRow(row);
+  if (postexRow) applyPostexLocks(row);
+  const amount = postexRow ? 0 : Number(inputs.amount?.value || 0);
   const packaging = Number(inputs.packaging?.value || 0);
-  const delivery = Number(inputs.delivery?.value || 0);
+  const delivery = postexRow ? 0 : Number(inputs.delivery?.value || 0);
   const deliveryStatus = String(inputs.deliveryStatus?.value || '');
   const paymentStatus = String(inputs.payment?.value || '');
   let payable = 0;
@@ -727,8 +763,8 @@ function recalculateAghajeRow(row) {
   }
   row.dataset.missingItemCost = hasMissingItemCost || itemCost <= 0 ? '1' : '0';
   row.dataset.missingPackagingCost = packaging <= 0 ? '1' : '0';
-  row.dataset.missingDeliveryCost = delivery <= 0 ? '1' : '0';
-  row.dataset.missingAmountReceived = amount <= 0 ? '1' : '0';
+  row.dataset.missingDeliveryCost = !postexRow && delivery <= 0 ? '1' : '0';
+  row.dataset.missingAmountReceived = !postexRow && amount <= 0 ? '1' : '0';
 }
 
 async function saveAghajeRow(index, options = {}) {
@@ -738,11 +774,12 @@ async function saveAghajeRow(index, options = {}) {
   const inputs = getAghajeRowInputs(row);
   const payload = {
     order_id: row.dataset.orderId,
-    amount_received: Number(inputs.amount?.value || 0),
+    amount_received: isPostexRow(row) ? 0 : Number(inputs.amount?.value || 0),
     packaging_cost: Number(inputs.packaging?.value || 0),
-    delivery_cost: Number(inputs.delivery?.value || 0),
+    delivery_cost: isPostexRow(row) ? 0 : Number(inputs.delivery?.value || 0),
     payment_status: inputs.payment?.value || 'Pending',
     delivery_status: inputs.deliveryStatus?.value || 'Inprocess',
+    is_postex: isPostexRow(row),
     item_costs: getAghajeItemCostInputs(row).map((input) => ({
       cost_key: input.dataset.costKey || '',
       product_id: input.dataset.productId || null,
@@ -858,6 +895,11 @@ function rowMatchesMissingFilters(row) {
   });
 }
 
+function rowMatchesCourierFilters(row) {
+  if (!postexOnlyFilter) return true;
+  return isPostexRow(row);
+}
+
 function applyAghajeLedgerFilters() {
   const isSummary = currentAghajeTab === 'summary';
   const isAllOrders = currentAghajeTab === 'all-orders';
@@ -872,6 +914,9 @@ function applyAghajeLedgerFilters() {
       show = row.dataset.isFulfilled === '1';
       if (show && fulfilledPaymentFilter !== 'all') {
         show = row.dataset.paymentState === fulfilledPaymentFilter;
+      }
+      if (show) {
+        show = rowMatchesCourierFilters(row);
       }
       if (show) {
         show = rowMatchesMissingFilters(row);
@@ -983,8 +1028,9 @@ function getSelectedVisibleRows() {
 	      });
 	    }
 	    if (bulkValues.packaging.hasValue && inputs.packaging) inputs.packaging.value = String(bulkValues.packaging.value);
-	    if (bulkValues.delivery.hasValue && inputs.delivery) inputs.delivery.value = String(bulkValues.delivery.value);
-	    if (bulkValues.amount.hasValue && inputs.amount) inputs.amount.value = String(bulkValues.amount.value);
+	    if (bulkValues.delivery.hasValue && inputs.delivery && !isPostexRow(row)) inputs.delivery.value = String(bulkValues.delivery.value);
+	    if (bulkValues.amount.hasValue && inputs.amount && !isPostexRow(row)) inputs.amount.value = String(bulkValues.amount.value);
+	    applyPostexLocks(row);
 	    recalculateAghajeRow(row);
 	    const result = await saveAghajeRow(index, { silent: true });
     if (!result || !result.success) {
@@ -1033,6 +1079,13 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.querySelectorAll('[data-missing-filter]').forEach((input) => {
     input.addEventListener('change', () => {
+      input.closest('.agh-filter-chip')?.classList.toggle('active', input.checked);
+      applyAghajeLedgerFilters();
+    });
+  });
+  document.querySelectorAll('[data-courier-filter]').forEach((input) => {
+    input.addEventListener('change', () => {
+      postexOnlyFilter = input.checked;
       input.closest('.agh-filter-chip')?.classList.toggle('active', input.checked);
       applyAghajeLedgerFilters();
     });

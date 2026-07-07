@@ -105,6 +105,11 @@ def courier_label_for_tracking(courier_name="", tracking_number=""):
     return str(courier_name or "").strip()
 
 
+def is_postex_courier(courier_name=""):
+    normalized = str(courier_name or "").strip().lower().replace(" ", "").replace("-", "")
+    return "postex" in normalized
+
+
 def normalize_scan_term(term):
     return (term or "").strip().lower().replace("#", "")
 
@@ -1201,9 +1206,14 @@ def build_aghaje_orders_page_data():
         amount_received = parse_money(override.get("amount_received", 0.0))
         default_payment_status = "Not Payable" if delivery_status == "Cancelled" else "Pending"
         payment_status = str(override.get("payment_status") or default_payment_status).strip() or default_payment_status
+        is_postex = is_postex_courier(order.get("courier_name"))
 
         if financial_status in PAID_FINANCIAL_STATUSES and "amount_received" not in override:
             amount_received = 0.0
+
+        if is_postex:
+            amount_received = 0.0
+            delivery_cost = 0.0
 
         if delivery_status == "Cancelled":
             payment_status = "Not Payable"
@@ -1218,6 +1228,7 @@ def build_aghaje_orders_page_data():
         order["amount_received"] = round(amount_received, 2)
         order["payment_status"] = payment_status
         order["delivery_status"] = delivery_status
+        order["is_postex"] = is_postex
         order["payable"] = round(payable, 2)
         net_payment += order["payable"]
         total_amount_received += order["amount_received"]
@@ -2919,7 +2930,12 @@ def update_aghaje_order():
     amount_received = parse_money(data.get("amount_received", 0))
     packaging_cost = parse_money(data.get("packaging_cost", 0))
     delivery_cost = parse_money(data.get("delivery_cost", 0))
+    is_postex = bool(data.get("is_postex")) or is_postex_courier(data.get("courier_name"))
     item_costs = data.get("item_costs") or []
+
+    if is_postex:
+        amount_received = 0.0
+        delivery_cost = 0.0
 
     if delivery_status == "Cancelled":
         payment_status = "Not Payable"
