@@ -362,7 +362,7 @@
 	          <tbody>
 	            {% for order in orders %}
 	            {% set is_cancelled = order.delivery_status == 'Cancelled' %}
-	            <tr data-readonly-order-row data-readonly-fulfilled="{{ '1' if order.fulfillment_status_raw == 'fulfilled' else '0' }}">
+	            <tr data-readonly-order-row data-readonly-fulfilled="{{ '1' if order.fulfillment_status_raw in ['fulfilled', 'partial', 'partially fulfilled'] else '0' }}">
 	              <td>
 	                <a class="agh-order-id" href="{{ order.shopify_link }}" target="_blank">{{ order.order_id }}</a>
 	                <div class="agh-order-date">{{ order.created_at }}</div>
@@ -383,8 +383,8 @@
 	                </div>
 	              </td>
 	              <td>
-	                <span class="agh-pill {{ 'good' if order.fulfillment_status_raw == 'fulfilled' else 'warn' }}">
-	                  {{ 'Fulfilled' if order.fulfillment_status_raw == 'fulfilled' else 'Unfulfilled' }}
+	                <span class="agh-pill {{ 'good' if order.fulfillment_status_raw in ['fulfilled', 'partial', 'partially fulfilled'] else 'warn' }}">
+	                  {{ 'Fulfilled' if order.fulfillment_status_raw == 'fulfilled' else 'Partially fulfilled' if order.fulfillment_status_raw in ['partial', 'partially fulfilled'] else 'Unfulfilled' }}
 	                </span>
 	              </td>
 	              <td>
@@ -480,11 +480,12 @@
             {% for order in orders %}
             {% set is_cancelled = order.delivery_status == 'Cancelled' %}
             {% set is_returned = order.delivery_status == 'Returned' %}
-            {% set row_tab = 'cancelled' if is_cancelled else 'returned' if is_returned else 'closed' if order.payment_status == 'Paid' else 'fulfilled' if order.fulfillment_status_raw == 'fulfilled' else 'unfulfilled' %}
+            {% set is_fulfilled_or_partial = order.fulfillment_status_raw in ['fulfilled', 'partial', 'partially fulfilled'] %}
+            {% set row_tab = 'cancelled' if is_cancelled else 'returned' if is_returned else 'closed' if order.payment_status == 'Paid' else 'fulfilled' if is_fulfilled_or_partial else 'unfulfilled' %}
             <tr
               data-row-index="{{ loop.index0 }}"
               data-ledger-tab="{{ row_tab }}"
-              data-is-fulfilled="{{ '1' if order.fulfillment_status_raw == 'fulfilled' else '0' }}"
+              data-is-fulfilled="{{ '1' if is_fulfilled_or_partial else '0' }}"
               data-payment-state="{{ 'closed' if order.payment_status == 'Paid' else 'open' }}"
               data-order-id="{{ order.order_id }}"
               data-original-amount-received="{{ order.amount_received }}"

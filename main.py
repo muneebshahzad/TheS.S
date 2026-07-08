@@ -739,6 +739,11 @@ def classify_aghaje_delivery_status(raw_status):
     return "Other status", raw_status
 
 
+def is_aghaje_fulfilled_or_partial(status):
+    normalized = str(status or "").strip().lower().replace("_", " ")
+    return normalized in {"fulfilled", "partial", "partially fulfilled"}
+
+
 def fetch_tracking_data_sync(tracking_number):
     async def run_lookup():
         timeout = aiohttp.ClientTimeout(total=8)
@@ -1238,7 +1243,7 @@ def build_aghaje_orders_page_data():
         order["payable"] = round(payable, 2)
         net_payment += order["payable"]
         total_amount_received += order["amount_received"]
-        if delivery_status != "Cancelled" and str(order.get("fulfillment_status_raw") or "").strip().lower() == "fulfilled":
+        if delivery_status != "Cancelled" and is_aghaje_fulfilled_or_partial(order.get("fulfillment_status_raw")):
             total_cost += order["item_cost"] + order["packaging_cost"] + order["delivery_cost"]
 
     total_cash_paid = round(sum(parse_money(entry.get("amount", 0)) for entry in net_payment_received_entries), 2)
@@ -1342,7 +1347,7 @@ def build_aghaje_portal_page_data():
         raw_fulfillment = str(order.get("fulfillment_status_raw") or "").strip().lower()
         if payment_status == "Paid":
             closed_orders.append(order)
-        elif raw_fulfillment == "fulfilled":
+        elif is_aghaje_fulfilled_or_partial(raw_fulfillment):
             order["fulfilled_filter_status"] = fulfilled_status_filter_bucket(order)
             fulfilled_orders.append(order)
         else:
@@ -1363,7 +1368,7 @@ def build_aghaje_portal_page_data():
         sum(
             parse_money(order.get("item_cost", 0)) + parse_money(order.get("packaging_cost", 0)) + parse_money(order.get("delivery_cost", 0))
             for order in orders
-            if str(order.get("fulfillment_status_raw") or "").strip().lower() == "fulfilled"
+            if is_aghaje_fulfilled_or_partial(order.get("fulfillment_status_raw"))
         ),
         2,
     )
@@ -2838,11 +2843,11 @@ def aghaje_orders():
         elif is_returned:
             returned_orders.append(order)
         else:
-            if raw_fulfillment == "fulfilled":
+            if is_aghaje_fulfilled_or_partial(raw_fulfillment):
                 fulfilled_orders.append(order)
             if payment_status == "Paid":
                 closed_orders.append(order)
-            elif raw_fulfillment != "fulfilled":
+            elif not is_aghaje_fulfilled_or_partial(raw_fulfillment):
                 unfulfilled_orders.append(order)
     tab_unpaid_values = {
         "fulfilled": sum_shopify_unpaid_value(fulfilled_orders),
@@ -2850,7 +2855,7 @@ def aghaje_orders():
     }
     all_order_totals = build_aghaje_orders_total_row(orders)
     all_order_fulfilled_totals = build_aghaje_orders_total_row(
-        [order for order in orders if str(order.get("fulfillment_status_raw") or "").strip().lower() == "fulfilled"]
+        [order for order in orders if is_aghaje_fulfilled_or_partial(order.get("fulfillment_status_raw"))]
     )
     return render_template(
         "aghaje_orders.html",
