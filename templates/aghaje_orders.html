@@ -454,7 +454,7 @@
 	          <input class="agh-input compact" data-bulk-delivery-value type="number" min="0" step="1" placeholder="Delivery">
 	          <input class="agh-input compact" data-bulk-amount-value type="number" min="0" step="1" placeholder="Received">
 	          <button class="agh-btn success" type="button" data-bulk-apply onclick="applyBulkAghajeValues()">Apply to selected</button>
-	          <button class="agh-btn primary" type="button" onclick="window.location.reload()">Refresh</button>
+	          <button class="agh-btn primary" type="button" data-refresh-tracking onclick="refreshAghajeTrackingStatuses()">Refresh statuses</button>
 	        </div>
       </div>
       <div class="agh-table-wrap">
@@ -871,6 +871,32 @@ async function saveAghajeSummaryReceived() {
     showToast('Could not add received amount');
   } finally {
     input.disabled = false;
+  }
+}
+
+async function refreshAghajeTrackingStatuses() {
+  const button = document.querySelector('[data-refresh-tracking]');
+  const oldLabel = button?.textContent || 'Refresh statuses';
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Refreshing...';
+  }
+  try {
+    const response = await fetch('/aghaje-orders/refresh', { method: 'POST' });
+    const result = await response.json();
+    if (!result.success) {
+      showToast(result.error || 'Could not refresh statuses');
+      return;
+    }
+    showToast(result.message || 'Statuses refreshed');
+    setTimeout(() => window.location.reload(), 700);
+  } catch (error) {
+    showToast('Could not refresh statuses');
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldLabel;
+    }
   }
 }
 

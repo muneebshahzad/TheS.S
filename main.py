@@ -2881,6 +2881,23 @@ def aghaje_paid_order_ids():
     return jsonify({"success": True, "paid_order_ids": paid_order_ids})
 
 
+@app.route("/aghaje-orders/refresh", methods=["POST"])
+def refresh_aghaje_orders_tracking():
+    try:
+        orders, _, error_message = build_aghaje_orders_page_data()
+        if error_message:
+            return jsonify({"success": False, "error": error_message}), 502
+        tracking_numbers = normalize_tracking_numbers(order.get("tracking_number") for order in orders)
+        refreshed_count = refresh_tracking_summaries_sync(tracking_numbers, fresh_seconds=0)
+        background_started = start_tracking_summaries_background_refresh(tracking_numbers)
+        message = f"Refreshed {refreshed_count} courier shipment statuses."
+        if background_started:
+            message += " Remaining shipments will continue updating in the background."
+        return jsonify({"success": True, "message": message, "refreshed_count": refreshed_count})
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 500
+
+
 @app.route("/product-costs")
 def product_costs():
     return render_template("product_costs.html", products=build_product_cost_rows())
