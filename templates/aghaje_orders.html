@@ -149,6 +149,8 @@
       <button class="agh-filter-chip" type="button" data-fulfilled-payment-filter="open">Open</button>
       <button class="agh-filter-chip" type="button" data-fulfilled-payment-filter="closed">Closed</button>
       <label class="agh-filter-chip"><input type="checkbox" data-courier-filter="postex"> PostEx</label>
+      <label class="agh-filter-chip"><input type="checkbox" data-courier-filter="call-courier"> Call Courier</label>
+      <label class="agh-filter-chip"><input type="checkbox" data-courier-filter="leopards"> Leopards</label>
       <span class="agh-filter-label">Product</span>
       <input class="agh-product-filter" type="search" data-product-filter placeholder="Filter by product">
       <span class="agh-filter-label">Missing</span>
@@ -494,6 +496,7 @@
               data-original-payment-status="{{ order.payment_status }}"
               data-original-delivery-status="{{ order.delivery_status }}"
               data-is-postex="{{ '1' if order.is_postex else '0' }}"
+              data-courier-name="{{ order.courier_name|lower }}"
               data-product-titles="{{ order['items']|map(attribute='title')|join(' ')|lower }}"
             >
               <td>
@@ -632,7 +635,7 @@
 <script>
 let currentAghajeTab = 'fulfilled';
 let fulfilledPaymentFilter = 'all';
-let postexOnlyFilter = false;
+let courierFilters = new Set();
 let productFilterTerm = '';
 
 function aghajeMoney(value) {
@@ -935,8 +938,14 @@ function rowMatchesMissingFilters(row) {
 }
 
 function rowMatchesCourierFilters(row) {
-  if (!postexOnlyFilter) return true;
-  return isPostexRow(row);
+  if (!courierFilters.size) return true;
+  const courierName = normalizeProductFilterText(row.dataset.courierName);
+  return Array.from(courierFilters).some((filterName) => {
+    if (filterName === 'postex') return isPostexRow(row) || courierName.includes('postex');
+    if (filterName === 'call-courier') return courierName.includes('call') && courierName.includes('courier');
+    if (filterName === 'leopards') return courierName.includes('leopard');
+    return false;
+  });
 }
 
 function rowMatchesProductFilter(row) {
@@ -1132,7 +1141,11 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.querySelectorAll('[data-courier-filter]').forEach((input) => {
     input.addEventListener('change', () => {
-      postexOnlyFilter = input.checked;
+      if (input.checked) {
+        courierFilters.add(input.dataset.courierFilter);
+      } else {
+        courierFilters.delete(input.dataset.courierFilter);
+      }
       input.closest('.agh-filter-chip')?.classList.toggle('active', input.checked);
       applyAghajeLedgerFilters();
     });
