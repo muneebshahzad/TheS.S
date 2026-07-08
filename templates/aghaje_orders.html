@@ -360,7 +360,7 @@
 	          </thead>
 	          <tbody>
 	            {% for order in orders %}
-	            {% set is_cancelled = order.cancelled_at or order.delivery_status == 'Cancelled' %}
+	            {% set is_cancelled = order.delivery_status == 'Cancelled' %}
 	            <tr data-readonly-order-row data-readonly-fulfilled="{{ '1' if order.fulfillment_status_raw == 'fulfilled' else '0' }}">
 	              <td>
 	                <a class="agh-order-id" href="{{ order.shopify_link }}" target="_blank">{{ order.order_id }}</a>
@@ -477,7 +477,7 @@
           </thead>
           <tbody>
             {% for order in orders %}
-            {% set is_cancelled = order.cancelled_at or order.delivery_status == 'Cancelled' %}
+            {% set is_cancelled = order.delivery_status == 'Cancelled' %}
             {% set row_tab = 'cancelled' if is_cancelled else 'closed' if order.payment_status == 'Paid' else 'fulfilled' if order.fulfillment_status_raw == 'fulfilled' else 'unfulfilled' %}
             <tr
               data-row-index="{{ loop.index0 }}"

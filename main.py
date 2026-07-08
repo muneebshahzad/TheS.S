@@ -706,15 +706,18 @@ def extract_note_attributes(order):
 
 
 def get_aghaje_delivery_status(order):
-    if (order or {}).get("cancelled_at"):
-        return "Cancelled", "Order cancelled in Shopify."
-
     note_attributes = extract_note_attributes(order)
     raw_status = str(note_attributes.get("hxs_courier_status") or "").strip()
     if raw_status:
         return classify_aghaje_delivery_status(raw_status)
 
+    tracking_number = str(note_attributes.get("hxs_courier_tracking") or "").strip()
     fulfillment_status = str((order or {}).get("fulfillment_status") or "").strip().lower()
+    if (order or {}).get("cancelled_at"):
+        if tracking_number or fulfillment_status in {"fulfilled", "partial"}:
+            return "Returned", "Order cancelled in Shopify after dispatch; courier/order costs remain applied."
+        return "Cancelled", "Order cancelled in Shopify."
+
     if fulfillment_status == "fulfilled":
         return "Inprocess", "Fulfilled in Shopify; courier status not available yet."
     if fulfillment_status == "partial":
@@ -1196,10 +1199,13 @@ def build_aghaje_orders_page_data():
 
         order_id = str(order.get("order_id") or "")
         override = overrides.get(order_id) or {}
-        if order.get("courier_tracking_ready"):
+        override_delivery_status = str(override.get("delivery_status") or "").strip()
+        if override_delivery_status:
+            delivery_status = override_delivery_status
+        elif order.get("courier_tracking_ready"):
             delivery_status = str(order.get("delivery_status") or "Inprocess").strip() or "Inprocess"
         else:
-            delivery_status = str(override.get("delivery_status") or order.get("delivery_status") or "Inprocess").strip() or "Inprocess"
+            delivery_status = str(order.get("delivery_status") or "Inprocess").strip() or "Inprocess"
         packaging_cost = parse_money(override.get("packaging_cost", order.get("packaging_cost", 0)))
         delivery_cost = parse_money(override.get("delivery_cost", order.get("delivery_cost", 0)))
         financial_status = str(order.get("financial_status") or "").strip().lower()
@@ -2824,7 +2830,7 @@ def aghaje_orders():
         payment_status = str(order.get("payment_status") or "Pending").strip() or "Pending"
         raw_fulfillment = str(order.get("fulfillment_status_raw") or "").strip().lower()
         delivery_status = str(order.get("delivery_status") or "").strip()
-        is_cancelled = bool(order.get("cancelled_at")) or delivery_status == "Cancelled"
+        is_cancelled = delivery_status == "Cancelled"
         if is_cancelled:
             cancelled_orders.append(order)
         else:
