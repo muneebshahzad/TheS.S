@@ -16,7 +16,7 @@
   .agh-stat-label { font-size:10px; color:#858796; font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
   .agh-stat-value { font-size:22px; font-weight:800; margin-top:2px; }
 	  .agh-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-	  .agh-bulk-edit { display:grid; grid-template-columns:repeat(4, minmax(105px, 1fr)) auto auto; gap:8px; align-items:center; max-width:760px; }
+	  .agh-bulk-edit { display:grid; grid-template-columns:repeat(6, minmax(105px, 1fr)) auto auto; gap:8px; align-items:center; max-width:1040px; }
 	  .agh-tabs { position:sticky; top:52px; z-index:4; display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:10px; padding:10px; border:1px solid #e3e6f0; background:#fff; border-radius:12px; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
   .agh-tab-btn { border:1px solid #dce2ee; background:#fff; color:#14213d; border-radius:10px; min-height:46px; font-size:12px; font-weight:800; font-family:'DM Sans', sans-serif; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; }
   .agh-tab-btn.active { border-color:#b8c7f0; background:#eef3ff; color:#2f63ff; box-shadow:inset 0 0 0 1px rgba(78,115,223,0.08); }
@@ -460,6 +460,18 @@
 	          <input class="agh-input compact" data-bulk-packaging-value type="number" min="0" step="1" placeholder="Packaging">
 	          <input class="agh-input compact" data-bulk-delivery-value type="number" min="0" step="1" placeholder="Delivery">
 	          <input class="agh-input compact" data-bulk-amount-value type="number" min="0" step="1" placeholder="Received">
+	          <select class="agh-select compact" data-bulk-delivery-status>
+	            <option value="">Delivery status</option>
+	            {% for option in ['Inprocess', 'Delivered', 'Returned', 'Cancelled', 'Other status'] %}
+	            <option value="{{ option }}">{{ option }}</option>
+	            {% endfor %}
+	          </select>
+	          <select class="agh-select compact" data-bulk-payment-status>
+	            <option value="">Payment status</option>
+	            {% for option in ['Pending', 'Paid', 'Not Payable'] %}
+	            <option value="{{ option }}">{{ option }}</option>
+	            {% endfor %}
+	          </select>
 	          <button class="agh-btn success" type="button" data-bulk-apply onclick="applyBulkAghajeValues()">Apply to selected</button>
 	          <button class="agh-btn primary" type="button" data-refresh-tracking onclick="refreshAghajeTrackingStatuses()">Refresh statuses</button>
 	        </div>
@@ -1121,12 +1133,16 @@ function getSelectedVisibleRows() {
 	    delivery: readBulkNumber('[data-bulk-delivery-value]', 'delivery cost'),
 	    amount: readBulkNumber('[data-bulk-amount-value]', 'amount received'),
 	  };
+	  const bulkDeliveryStatus = document.querySelector('[data-bulk-delivery-status]');
+	  const bulkPaymentStatus = document.querySelector('[data-bulk-payment-status]');
+	  const deliveryStatusValue = bulkDeliveryStatus?.value || '';
+	  const paymentStatusValue = bulkPaymentStatus?.value || '';
 	  const invalidValue = Object.values(bulkValues).find((entry) => entry.error);
 	  if (invalidValue) {
 	    showToast(invalidValue.error);
 	    return;
 	  }
-	  const hasAnyValue = Object.values(bulkValues).some((entry) => entry.hasValue);
+	  const hasAnyValue = Object.values(bulkValues).some((entry) => entry.hasValue) || deliveryStatusValue || paymentStatusValue;
 	  if (!hasAnyValue) {
 	    showToast('Add at least one bulk value');
 	    return;
@@ -1155,6 +1171,9 @@ function getSelectedVisibleRows() {
 	    if (bulkValues.packaging.hasValue && inputs.packaging) inputs.packaging.value = String(bulkValues.packaging.value);
 	    if (bulkValues.delivery.hasValue && inputs.delivery && !isPostexRow(row)) inputs.delivery.value = String(bulkValues.delivery.value);
 	    if (bulkValues.amount.hasValue && inputs.amount && !isPostexRow(row)) inputs.amount.value = String(bulkValues.amount.value);
+	    if (deliveryStatusValue && inputs.deliveryStatus) inputs.deliveryStatus.value = deliveryStatusValue;
+	    if (paymentStatusValue && inputs.payment) inputs.payment.value = paymentStatusValue;
+	    if (deliveryStatusValue) handleAghajeStatusChange(row);
 	    applyPostexLocks(row);
 	    recalculateAghajeRow(row);
 	    const result = await saveAghajeRow(index, { silent: true });
@@ -1171,6 +1190,8 @@ function getSelectedVisibleRows() {
 	  Object.values(bulkValues).forEach((entry) => {
 	    if (entry.input) entry.input.value = '';
 	  });
+	  if (bulkDeliveryStatus) bulkDeliveryStatus.value = '';
+	  if (bulkPaymentStatus) bulkPaymentStatus.value = '';
 	  if (button) {
 	    button.disabled = false;
 	    button.textContent = oldLabel;
