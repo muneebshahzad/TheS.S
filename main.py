@@ -72,11 +72,13 @@ product_image_cache = {}
 aghaje_product_cache = {}
 aghaje_inventory_item_cost_cache = {}
 tracking_summary_cache = {}
+tracking_summary_cache_loaded = False
 tracking_refresh_lock = threading.Lock()
 RATE_LIMIT = 2
 LAST_REQUEST_TIME = 0.0
 PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
 AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY = "aghaje_net_payment_received_v1"
+TRACKING_SUMMARY_CACHE_SETTING_KEY = "tracking_summary_cache_v1"
 inventory_item_cost_cache = {}
 TRACKING_REFRESH_SYNC_LIMIT = int(os.getenv("TRACKING_REFRESH_SYNC_LIMIT", "24"))
 TRACKING_REFRESH_BACKGROUND_LIMIT = int(os.getenv("TRACKING_REFRESH_BACKGROUND_LIMIT", "250"))
@@ -798,10 +800,60 @@ def build_tracking_summary_payload(tracking_number):
     }
 
 
+def normalize_tracking_summary_cache_entry(entry):
+    if not isinstance(entry, dict):
+        return None
+    summary = entry.get("summary")
+    if not isinstance(summary, dict) or not summary.get("status"):
+        return None
+    try:
+        fetched_at = float(entry.get("fetched_at") or time.time())
+    except (TypeError, ValueError):
+        fetched_at = time.time()
+    return {"fetched_at": fetched_at, "summary": summary}
+
+
+def load_persisted_tracking_summary_cache():
+    raw = get_app_setting(TRACKING_SUMMARY_CACHE_SETTING_KEY, "{}")
+    try:
+        payload = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    loaded = {}
+    for tracking_number, entry in payload.items():
+        key = str(tracking_number or "").strip().upper()
+        normalized = normalize_tracking_summary_cache_entry(entry)
+        if key and normalized:
+            loaded[key] = normalized
+    return loaded
+
+
+def ensure_tracking_summary_cache_loaded():
+    global tracking_summary_cache_loaded
+    if tracking_summary_cache_loaded:
+        return
+    persisted = load_persisted_tracking_summary_cache()
+    if persisted:
+        tracking_summary_cache.update(persisted)
+    tracking_summary_cache_loaded = True
+
+
+def persist_tracking_summary_cache():
+    payload = {
+        key: entry
+        for key, entry in tracking_summary_cache.items()
+        if normalize_tracking_summary_cache_entry(entry)
+    }
+    return set_app_setting(TRACKING_SUMMARY_CACHE_SETTING_KEY, json.dumps(payload))
+
+
 def get_tracking_summary_cached(tracking_number, ttl_seconds=300):
     tracking_number = str(tracking_number or "").strip()
     if not tracking_number:
         return None
+    ensure_tracking_summary_cache_loaded()
     cache_key = tracking_number.upper()
     cached = tracking_summary_cache.get(cache_key)
     now = time.time()
@@ -815,6 +867,7 @@ def get_tracking_summary_cached(tracking_number, ttl_seconds=300):
         return cached.get("summary") if cached else None
     if summary and summary.get("status"):
         tracking_summary_cache[cache_key] = {"fetched_at": time.time(), "summary": summary}
+        persist_tracking_summary_cache()
     return summary
 
 
@@ -822,6 +875,7 @@ def get_tracking_summary_cache_only(tracking_number):
     tracking_number = str(tracking_number or "").strip()
     if not tracking_number:
         return None
+    ensure_tracking_summary_cache_loaded()
     cached = tracking_summary_cache.get(tracking_number.upper())
     return cached.get("summary") if cached else None
 
@@ -849,6 +903,7 @@ def refresh_tracking_summaries_sync(
     deadline_seconds=TRACKING_REFRESH_SYNC_DEADLINE_SECONDS,
 ):
     unique_numbers = normalize_tracking_numbers(tracking_numbers)
+    ensure_tracking_summary_cache_loaded()
     now = time.time()
     stale_numbers = []
     for tracking_number in unique_numbers:
@@ -902,6 +957,7 @@ def refresh_tracking_summaries_sync(
                     print(f"Could not complete tracking refresh task: {error}")
             if updates:
                 tracking_summary_cache.update(updates)
+                persist_tracking_summary_cache()
             if pending:
                 print(f"Tracking refresh deadline hit; skipped {len(pending)} pending shipment(s).")
             return refreshed_count
