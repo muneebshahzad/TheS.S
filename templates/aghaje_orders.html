@@ -54,6 +54,7 @@
 	  .agh-pill.good { background:#e7f7ee; color:#146c43; }
 	  .agh-pill.warn { background:#fff4d8; color:#8b5a00; }
 	  .agh-pill.bad { background:#fde8e5; color:#a0281f; }
+	  .agh-pill.lahore { background:#fff3cd; color:#8b5a00; margin-top:6px; }
   .agh-order-id { font-size:13px; font-weight:700; color:#4e73df; text-decoration:none; white-space:nowrap; }
   .agh-order-date { font-size:10px; color:#858796; margin-top:4px; white-space:nowrap; }
   .agh-chip-list { display:flex; flex-direction:column; gap:8px; }
@@ -156,6 +157,7 @@
       <label class="agh-filter-chip"><input type="checkbox" data-courier-filter="postex"> PostEx</label>
       <label class="agh-filter-chip"><input type="checkbox" data-courier-filter="call-courier"> Call Courier</label>
       <label class="agh-filter-chip"><input type="checkbox" data-courier-filter="leopards"> Leopards</label>
+      <label class="agh-filter-chip"><input type="checkbox" data-courier-filter="lahore"> Lahore</label>
       <span class="agh-filter-label">Product</span>
       <input class="agh-product-filter" type="search" data-product-filter placeholder="Filter by product">
       <span class="agh-filter-label">Missing</span>
@@ -513,6 +515,7 @@
               data-original-payment-status="{{ order.payment_status }}"
               data-original-delivery-status="{{ order.delivery_status }}"
               data-is-postex="{{ '1' if order.is_postex else '0' }}"
+              data-is-lahore="{{ '1' if order.is_lahore else '0' }}"
               data-courier-name="{{ order.courier_name|lower }}"
               data-product-titles="{{ order['items']|map(attribute='title')|join(' ')|lower }}"
               data-price="{{ order.price }}"
@@ -615,6 +618,7 @@
                   <option value="{{ option }}" {% if order.delivery_status == option %}selected{% endif %}>{{ option }}</option>
                   {% endfor %}
                 </select>
+                {% if order.is_lahore %}<div><span class="agh-pill lahore">Lahore</span></div>{% endif %}
                 <div class="agh-detail">{{ order.delivery_status_detail or 'No courier status yet' }}</div>
               </td>
               <td>
@@ -687,6 +691,10 @@ function normalizeProductFilterText(value) {
 
 function isPostexRow(row) {
   return row?.dataset?.isPostex === '1';
+}
+
+function isLahoreRow(row) {
+  return row?.dataset?.isLahore === '1';
 }
 
 function applyPostexLocks(row) {
@@ -969,6 +977,7 @@ function rowMatchesCourierFilters(row) {
     if (filterName === 'postex') return isPostexRow(row) || courierName.includes('postex');
     if (filterName === 'call-courier') return courierName.includes('call') && courierName.includes('courier');
     if (filterName === 'leopards') return courierName.includes('leopard');
+    if (filterName === 'lahore') return isLahoreRow(row);
     return false;
   });
 }

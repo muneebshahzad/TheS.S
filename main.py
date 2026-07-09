@@ -1155,6 +1155,7 @@ def build_aghaje_orders_page_data():
             fulfillment_status_label = "Partially fulfilled"
         else:
             fulfillment_status_label = "Unfulfilled"
+        is_lahore_order = is_aghaje_fulfilled_or_partial(raw_fulfillment_status) and not tracking_number
 
         results.append(
             {
@@ -1172,6 +1173,7 @@ def build_aghaje_orders_page_data():
                 "tracking_number": tracking_number,
                 "tracking_url": tracking_url,
                 "courier_tracking_ready": courier_tracking_ready,
+                "is_lahore": is_lahore_order,
                 "items": item_rows,
                 "item_cost": 0.0,
                 "item_qty": item_qty_total,
