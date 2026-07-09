@@ -187,6 +187,21 @@ def parse_money(value, default=0.0):
         return round(float(default), 2)
 
 
+def active_shopify_line_item_quantity(line_item):
+    if isinstance(line_item, dict) and line_item.get("current_quantity") is not None:
+        raw_quantity = line_item.get("current_quantity")
+    elif hasattr(line_item, "current_quantity"):
+        raw_quantity = getattr(line_item, "current_quantity")
+    elif isinstance(line_item, dict):
+        raw_quantity = line_item.get("quantity")
+    else:
+        raw_quantity = getattr(line_item, "quantity", 0)
+    try:
+        return max(int(raw_quantity or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def parse_date_for_sort(value):
     if not value:
         return datetime.min
@@ -1104,6 +1119,9 @@ def build_aghaje_orders_page_data():
         item_rows = []
         item_qty_total = 0
         for line_item in order.get("line_items", []) or []:
+            quantity = active_shopify_line_item_quantity(line_item)
+            if quantity <= 0:
+                continue
             product_id = line_item.get("product_id")
             variant_id = line_item.get("variant_id")
             try:
@@ -1115,7 +1133,6 @@ def build_aghaje_orders_page_data():
             image_src = variant_payload.get("image_src") or (product_payload or {}).get("image") or "/static/sleekspace-wordmark.svg"
             variant_title = variant_payload.get("variant_title") or ""
 
-            quantity = int(line_item.get("quantity") or 0)
             unit_price = parse_money(line_item.get("price", 0))
             product_title = line_item.get("title") or line_item.get("name") or "Product"
             display_title = f"{product_title} - {variant_title}" if variant_title and variant_title != "Default Title" else product_title
