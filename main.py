@@ -189,8 +189,10 @@ def parse_money(value, default=0.0):
         return round(float(default), 2)
 
 
-def active_shopify_line_item_quantity(line_item):
-    if isinstance(line_item, dict) and line_item.get("current_quantity") is not None:
+def active_shopify_line_item_quantity(line_item, *, use_original_quantity=False):
+    if use_original_quantity:
+        raw_quantity = line_item.get("quantity") if isinstance(line_item, dict) else getattr(line_item, "quantity", 0)
+    elif isinstance(line_item, dict) and line_item.get("current_quantity") is not None:
         raw_quantity = line_item.get("current_quantity")
     elif hasattr(line_item, "current_quantity"):
         raw_quantity = getattr(line_item, "current_quantity")
@@ -1174,8 +1176,12 @@ def build_aghaje_orders_page_data():
 
         item_rows = []
         item_qty_total = 0
+        use_original_item_quantities = bool(order.get("cancelled_at"))
         for line_item in order.get("line_items", []) or []:
-            quantity = active_shopify_line_item_quantity(line_item)
+            quantity = active_shopify_line_item_quantity(
+                line_item,
+                use_original_quantity=use_original_item_quantities,
+            )
             if quantity <= 0:
                 continue
             product_id = line_item.get("product_id")
