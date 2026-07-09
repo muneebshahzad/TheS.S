@@ -40,6 +40,11 @@
   .agh-table { width:100%; border-collapse:collapse; min-width:1680px; }
   .agh-table th, .agh-table td { padding:12px 14px; border-bottom:1px solid #eef0f6; text-align:left; vertical-align:top; }
 	  .agh-table th { background:#f8f9fc; font-size:11px; font-weight:700; color:#858796; text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
+  .agh-sort-btn { width:100%; border:0; background:transparent; color:inherit; cursor:pointer; padding:0; font:inherit; letter-spacing:inherit; text-transform:inherit; text-align:left; display:inline-flex; align-items:center; gap:5px; }
+  .agh-sort-btn::after { content:'↕'; font-size:10px; opacity:.45; }
+  .agh-sort-btn.active { color:#2f63ff; }
+  .agh-sort-btn.active.asc::after { content:'↑'; opacity:1; }
+  .agh-sort-btn.active.desc::after { content:'↓'; opacity:1; }
 	  .agh-table tbody tr:hover { background:#fafbff; }
 	  .agh-total-row th, .agh-total-row td { background:#eef3ff; color:#14213d; font-weight:800; border-bottom:1px solid #dce5ff; }
 	  .agh-table tfoot td { border-top:2px solid #dce2ee; border-bottom:0; }
@@ -464,17 +469,17 @@
           <thead>
             <tr>
               <th><input class="agh-checkbox" type="checkbox" data-select-visible aria-label="Select visible orders"></th>
-              <th>Order Id</th>
-              <th>Items</th>
-              <th>Item Cost</th>
-              <th>Packaging Cost</th>
-              <th>Delivery Cost</th>
-              <th>Price</th>
-              <th>Order Total</th>
-              <th>Amount Received</th>
-              <th>Payable</th>
-              <th>Delivery Status</th>
-              <th>Payment Status</th>
+              <th><button class="agh-sort-btn" type="button" data-sort-key="order">Order Id</button></th>
+              <th><button class="agh-sort-btn" type="button" data-sort-key="items">Items</button></th>
+              <th><button class="agh-sort-btn" type="button" data-sort-key="item_cost">Item Cost</button></th>
+              <th><button class="agh-sort-btn" type="button" data-sort-key="packaging_cost">Packaging Cost</button></th>
+              <th><button class="agh-sort-btn" type="button" data-sort-key="delivery_cost">Delivery Cost</button></th>
+              <th><button class="agh-sort-btn" type="button" data-sort-key="price">Price</button></th>
+              <th><button class="agh-sort-btn" type="button" data-sort-key="order_total">Order Total</button></th>
+              <th><button class="agh-sort-btn" type="button" data-sort-key="amount_received">Amount Received</button></th>
+              <th><button class="agh-sort-btn" type="button" data-sort-key="payable">Payable</button></th>
+              <th><button class="agh-sort-btn" type="button" data-sort-key="delivery_status">Delivery Status</button></th>
+              <th><button class="agh-sort-btn" type="button" data-sort-key="payment_status">Payment Status</button></th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -498,6 +503,8 @@
               data-is-postex="{{ '1' if order.is_postex else '0' }}"
               data-courier-name="{{ order.courier_name|lower }}"
               data-product-titles="{{ order['items']|map(attribute='title')|join(' ')|lower }}"
+              data-price="{{ order.price }}"
+              data-order-total="{{ order.order_total }}"
             >
               <td>
                 <input class="agh-checkbox" type="checkbox" data-row-select aria-label="Select {{ order.order_id }}">
@@ -637,9 +644,15 @@ let currentAghajeTab = 'fulfilled';
 let fulfilledPaymentFilter = 'all';
 let courierFilters = new Set();
 let productFilterTerm = '';
+let currentLedgerSort = { key: '', direction: 'asc' };
 
 function aghajeMoney(value) {
   return `PKR ${Number(value || 0).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`;
+}
+
+function parseAghajeNumber(value) {
+  const parsed = Number(String(value || '').replace(/[^\d.-]/g, ''));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function getAghajeRowInputs(row) {
@@ -953,6 +966,61 @@ function rowMatchesProductFilter(row) {
   return normalizeProductFilterText(row.dataset.productTitles).includes(productFilterTerm);
 }
 
+function getAghajeSortValue(row, key) {
+  const inputs = getAghajeRowInputs(row);
+  if (key === 'order') return normalizeProductFilterText(row.dataset.orderId);
+  if (key === 'items') return normalizeProductFilterText(row.dataset.productTitles);
+  if (key === 'item_cost') return parseAghajeNumber(row.querySelector('[data-item-cost-summary]')?.textContent);
+  if (key === 'packaging_cost') return parseAghajeNumber(inputs.packaging?.value);
+  if (key === 'delivery_cost') return parseAghajeNumber(inputs.delivery?.value);
+  if (key === 'price') return parseAghajeNumber(row.dataset.price);
+  if (key === 'order_total') return parseAghajeNumber(row.dataset.orderTotal);
+  if (key === 'amount_received') return parseAghajeNumber(inputs.amount?.value);
+  if (key === 'payable') return parseAghajeNumber(row.querySelector('[data-payable-value]')?.dataset.payableValue);
+  if (key === 'delivery_status') {
+    return normalizeProductFilterText(`${inputs.deliveryStatus?.value || ''} ${row.querySelector('[data-aghaje-field="delivery_status"]')?.nextElementSibling?.textContent || ''}`);
+  }
+  if (key === 'payment_status') return normalizeProductFilterText(inputs.payment?.value);
+  return '';
+}
+
+function updateAghajeSortIndicators() {
+  document.querySelectorAll('[data-sort-key]').forEach((button) => {
+    const active = button.dataset.sortKey === currentLedgerSort.key;
+    button.classList.toggle('active', active);
+    button.classList.toggle('asc', active && currentLedgerSort.direction === 'asc');
+    button.classList.toggle('desc', active && currentLedgerSort.direction === 'desc');
+  });
+}
+
+function applyAghajeLedgerSort() {
+  if (!currentLedgerSort.key) return;
+  const tbody = document.querySelector('.agh-ledger-panel tbody');
+  if (!tbody) return;
+  const direction = currentLedgerSort.direction === 'desc' ? -1 : 1;
+  const rows = Array.from(tbody.querySelectorAll('[data-row-index]'));
+  rows.sort((a, b) => {
+    const aValue = getAghajeSortValue(a, currentLedgerSort.key);
+    const bValue = getAghajeSortValue(b, currentLedgerSort.key);
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      return (aValue - bValue) * direction;
+    }
+    return String(aValue).localeCompare(String(bValue), undefined, { numeric: true, sensitivity: 'base' }) * direction;
+  });
+  rows.forEach((row) => tbody.appendChild(row));
+  syncVisibleSelectCheckbox();
+}
+
+function setAghajeLedgerSort(key) {
+  if (currentLedgerSort.key === key) {
+    currentLedgerSort.direction = currentLedgerSort.direction === 'asc' ? 'desc' : 'asc';
+  } else {
+    currentLedgerSort = { key, direction: 'asc' };
+  }
+  updateAghajeSortIndicators();
+  applyAghajeLedgerSort();
+}
+
 function applyAghajeLedgerFilters() {
   const isSummary = currentAghajeTab === 'summary';
   const isAllOrders = currentAghajeTab === 'all-orders';
@@ -985,6 +1053,7 @@ function applyAghajeLedgerFilters() {
   });
   const emptyState = document.querySelector('[data-agh-tab-empty]');
   if (emptyState) emptyState.hidden = visibleCount > 0;
+  applyAghajeLedgerSort();
   syncVisibleSelectCheckbox();
 }
 
@@ -1123,6 +1192,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.querySelectorAll('[data-agh-tab]').forEach((button) => {
     button.addEventListener('click', () => setAghajeLedgerTab(button.dataset.aghTab));
+  });
+  document.querySelectorAll('[data-sort-key]').forEach((button) => {
+    button.addEventListener('click', () => setAghajeLedgerSort(button.dataset.sortKey));
   });
   document.querySelectorAll('[data-fulfilled-payment-filter]').forEach((button) => {
     button.addEventListener('click', () => {
