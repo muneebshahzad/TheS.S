@@ -296,6 +296,8 @@ def build_aghaje_daily_balance_ledger(orders, cash_entries):
             {
                 "date": day_key or "Undated",
                 "order_count": 0,
+                "cod_order_count": 0,
+                "cash_entry_count": 0,
                 "cod": 0.0,
                 "cost": 0.0,
                 "cash_paid": 0.0,
@@ -308,33 +310,52 @@ def build_aghaje_daily_balance_ledger(orders, cash_entries):
     for order in orders or []:
         if str(order.get("delivery_status") or "").strip() == "Cancelled":
             continue
-        day = get_day(get_aghaje_daily_key(order.get("created_at")))
         amount_received = parse_money(order.get("amount_received", 0))
         order_cost = 0.0
-        if str(order.get("fulfillment_status_raw") or "").strip().lower() == "fulfilled":
+        if is_aghaje_fulfilled_or_partial(order.get("fulfillment_status_raw")):
             order_cost = (
                 parse_money(order.get("item_cost", 0))
                 + parse_money(order.get("packaging_cost", 0))
                 + parse_money(order.get("delivery_cost", 0))
             )
-        day["order_count"] += 1
-        day["cod"] += amount_received
-        day["cost"] += order_cost
-        day["details"].append(
-            {
-                "type": "order",
-                "label": order.get("order_id") or "Order",
-                "status": order.get("delivery_status") or order.get("fulfillment_status") or "",
-                "cod": round(amount_received, 2),
-                "cost": round(order_cost, 2),
-            }
-        )
+        status_label = order.get("delivery_status") or order.get("fulfillment_status") or ""
+        if order_cost:
+            cost_day = get_day(get_aghaje_daily_key(order.get("created_at")))
+            cost_day["order_count"] += 1
+            cost_day["cost"] += order_cost
+            cost_day["details"].append(
+                {
+                    "type": "cost",
+                    "label": order.get("order_id") or "Order",
+                    "status": status_label,
+                    "cod": 0.0,
+                    "cost": round(order_cost, 2),
+                    "cash_paid": 0.0,
+                    "note": "Product, packaging, and delivery cost applied from Shopify order date.",
+                }
+            )
+        if amount_received:
+            cod_day = get_day(get_aghaje_daily_key(order.get("amount_received_updated_at") or order.get("created_at")))
+            cod_day["cod_order_count"] += 1
+            cod_day["cod"] += amount_received
+            cod_day["details"].append(
+                {
+                    "type": "cod",
+                    "label": order.get("order_id") or "Order",
+                    "status": status_label,
+                    "cod": round(amount_received, 2),
+                    "cost": 0.0,
+                    "cash_paid": 0.0,
+                    "note": "Amount received saved on this date.",
+                }
+            )
 
     for entry in cash_entries or []:
         amount = parse_money(entry.get("amount", 0))
         if amount == 0:
             continue
         day = get_day(get_aghaje_daily_key(entry.get("created_at")))
+        day["cash_entry_count"] += 1
         day["cash_paid"] += amount
         day["details"].append(
             {
@@ -344,6 +365,7 @@ def build_aghaje_daily_balance_ledger(orders, cash_entries):
                 "cod": 0.0,
                 "cost": 0.0,
                 "cash_paid": round(amount, 2),
+                "note": "Manual cash payment entry.",
             }
         )
 
@@ -1285,6 +1307,7 @@ def build_aghaje_orders_page_data():
 
         order_id = str(order.get("order_id") or "")
         override = overrides.get(order_id) or {}
+        override_updated_at = override.get("updated_at")
         override_delivery_status = str(override.get("delivery_status") or "").strip()
         if override_delivery_status:
             delivery_status = override_delivery_status
@@ -1318,6 +1341,7 @@ def build_aghaje_orders_page_data():
         order["packaging_cost"] = round(packaging_cost, 2)
         order["delivery_cost"] = round(delivery_cost, 2)
         order["amount_received"] = round(amount_received, 2)
+        order["amount_received_updated_at"] = override_updated_at
         order["payment_status"] = payment_status
         order["delivery_status"] = delivery_status
         order["is_postex"] = is_postex

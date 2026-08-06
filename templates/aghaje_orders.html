@@ -226,8 +226,8 @@
     <div class="agh-card agh-daily-card">
       <div class="agh-card-head">
         <div>
-          <div style="font-size:14px;font-weight:800;color:#3a3b45;">Daily balance record</div>
-          <div class="agh-detail" style="max-width:none;">Order rows use Shopify order date. Cash paid entries use the date you added them.</div>
+          <div style="font-size:14px;font-weight:800;color:#3a3b45;">Balance movement ledger</div>
+          <div class="agh-detail" style="max-width:none;">Costs use Shopify order date. COD uses the date the amount received row was saved. Cash paid uses the entry date.</div>
         </div>
       </div>
       <div class="agh-daily-wrap">
@@ -235,10 +235,10 @@
           <thead>
             <tr>
               <th>Date</th>
-              <th>COD</th>
-              <th>Cost</th>
+              <th>COD Received</th>
+              <th>Costs Added</th>
               <th>Cash Paid</th>
-              <th>Balance Change</th>
+              <th>Net Movement</th>
               <th>Running Balance</th>
               <th>How it changed</th>
             </tr>
@@ -248,7 +248,11 @@
             <tr>
               <td>
                 <div class="agh-daily-date">{{ day.date }}</div>
-                <div class="agh-daily-note">{{ day.order_count }} order{{ '' if day.order_count == 1 else 's' }}</div>
+                <div class="agh-daily-note">
+                  {{ day.order_count }} cost order{{ '' if day.order_count == 1 else 's' }}
+                  · {{ day.cod_order_count }} COD
+                  · {{ day.cash_entry_count }} cash
+                </div>
               </td>
               <td><span class="agh-money">PKR {{ day.cod|format_number }}</span></td>
               <td><span class="agh-money">PKR {{ day.cost|format_number }}</span></td>
@@ -263,12 +267,16 @@
                     <div class="agh-daily-detail-row">
                       <div>
                         <strong>{{ detail.label }}</strong>
-                        <div class="agh-daily-muted">{{ detail.type|title }}</div>
+                        <div class="agh-daily-muted">{{ detail.note or detail.type|title }}</div>
                       </div>
                       <div class="agh-daily-muted">{{ detail.status }}</div>
                       <div class="agh-money">
                         {% if detail.type == 'cash' %}
                           Cash {{ detail.cash_paid|format_number }}
+                        {% elif detail.type == 'cod' %}
+                          COD {{ detail.cod|format_number }}
+                        {% elif detail.type == 'cost' %}
+                          Cost {{ detail.cost|format_number }}
                         {% else %}
                           COD {{ detail.cod|format_number }} · Cost {{ detail.cost|format_number }}
                         {% endif %}

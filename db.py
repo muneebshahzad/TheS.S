@@ -230,7 +230,7 @@ def load_aghaje_order_overrides() -> dict:
                 _ensure_aghaje_order_overrides_table(cur)
                 cur.execute(
                     """
-                    SELECT order_id, amount_received, packaging_cost, delivery_cost, payment_status, delivery_status
+                    SELECT order_id, amount_received, packaging_cost, delivery_cost, payment_status, delivery_status, updated_at
                     FROM aghaje_order_overrides
                     """
                 )
