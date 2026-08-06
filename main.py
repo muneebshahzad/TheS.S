@@ -83,6 +83,7 @@ inventory_item_cost_cache = {}
 TRACKING_REFRESH_SYNC_LIMIT = int(os.getenv("TRACKING_REFRESH_SYNC_LIMIT", "24"))
 TRACKING_REFRESH_BACKGROUND_LIMIT = int(os.getenv("TRACKING_REFRESH_BACKGROUND_LIMIT", "250"))
 TRACKING_REFRESH_FRESH_SECONDS = int(os.getenv("TRACKING_REFRESH_FRESH_SECONDS", "45"))
+AGHAJE_AUTO_TRACK_FRESH_SECONDS = int(os.getenv("AGHAJE_AUTO_TRACK_FRESH_SECONDS", "1800"))
 TRACKING_REFRESH_SYNC_DEADLINE_SECONDS = float(os.getenv("TRACKING_REFRESH_SYNC_DEADLINE_SECONDS", "16"))
 TRACKING_REFRESH_BACKGROUND_DEADLINE_SECONDS = float(os.getenv("TRACKING_REFRESH_BACKGROUND_DEADLINE_SECONDS", "90"))
 TRACKING_REFRESH_PER_SHIPMENT_TIMEOUT_SECONDS = float(os.getenv("TRACKING_REFRESH_PER_SHIPMENT_TIMEOUT_SECONDS", "8"))
@@ -991,7 +992,13 @@ def refresh_tracking_summaries_sync(
     return asyncio.run(refresh_all())
 
 
-def start_tracking_summaries_background_refresh(tracking_numbers):
+def start_tracking_summaries_background_refresh(
+    tracking_numbers,
+    *,
+    limit=TRACKING_REFRESH_BACKGROUND_LIMIT,
+    fresh_seconds=TRACKING_REFRESH_FRESH_SECONDS,
+    deadline_seconds=TRACKING_REFRESH_BACKGROUND_DEADLINE_SECONDS,
+):
     unique_numbers = normalize_tracking_numbers(tracking_numbers)
     if not unique_numbers:
         return False
@@ -1002,15 +1009,47 @@ def start_tracking_summaries_background_refresh(tracking_numbers):
         try:
             refresh_tracking_summaries_sync(
                 unique_numbers,
-                limit=TRACKING_REFRESH_BACKGROUND_LIMIT,
-                fresh_seconds=TRACKING_REFRESH_FRESH_SECONDS,
-                deadline_seconds=TRACKING_REFRESH_BACKGROUND_DEADLINE_SECONDS,
+                limit=limit,
+                fresh_seconds=fresh_seconds,
+                deadline_seconds=deadline_seconds,
             )
         finally:
             tracking_refresh_lock.release()
 
     threading.Thread(target=run_background_refresh, daemon=True).start()
     return True
+
+
+def is_final_aghaje_delivery_status(status):
+    normalized = str(status or "").strip().lower()
+    return normalized in {"delivered", "returned", "cancelled"}
+
+
+def get_active_aghaje_tracking_numbers(orders):
+    return normalize_tracking_numbers(
+        order.get("tracking_number")
+        for order in orders or []
+        if not is_final_aghaje_delivery_status(order.get("delivery_status"))
+    )
+
+
+def start_aghaje_active_tracking_auto_refresh(orders):
+    tracking_numbers = get_active_aghaje_tracking_numbers(orders)
+    if not tracking_numbers:
+        return False
+    ensure_tracking_summary_cache_loaded()
+    now = time.time()
+    tracking_numbers = [
+        tracking_number
+        for tracking_number in tracking_numbers
+        if now - (tracking_summary_cache.get(tracking_number.upper()) or {}).get("fetched_at", 0) >= AGHAJE_AUTO_TRACK_FRESH_SECONDS
+    ]
+    if not tracking_numbers:
+        return False
+    return start_tracking_summaries_background_refresh(
+        tracking_numbers,
+        fresh_seconds=AGHAJE_AUTO_TRACK_FRESH_SECONDS,
+    )
 
 
 def aghaje_item_cost_key(product_id=None, variant_id=None, title=""):
@@ -2932,6 +2971,7 @@ def pending_orders():
 @app.route("/aghaje-orders")
 def aghaje_orders():
     orders, summary, error_message = build_aghaje_orders_page_data()
+    start_aghaje_active_tracking_auto_refresh(orders)
     fulfilled_orders = []
     closed_orders = []
     unfulfilled_orders = []
@@ -2997,10 +3037,10 @@ def refresh_aghaje_orders_tracking():
         orders, _, error_message = build_aghaje_orders_page_data()
         if error_message:
             return jsonify({"success": False, "error": error_message}), 502
-        tracking_numbers = normalize_tracking_numbers(order.get("tracking_number") for order in orders)
+        tracking_numbers = get_active_aghaje_tracking_numbers(orders)
         refreshed_count = refresh_tracking_summaries_sync(tracking_numbers, fresh_seconds=0)
         background_started = start_tracking_summaries_background_refresh(tracking_numbers)
-        message = f"Refreshed {refreshed_count} courier shipment statuses."
+        message = f"Refreshed {refreshed_count} active courier shipment statuses."
         if background_started:
             message += " Remaining shipments will continue updating in the background."
         return jsonify({"success": True, "message": message, "refreshed_count": refreshed_count})
@@ -3169,6 +3209,7 @@ def aghaje_portal():
         return render_template("aghaje_portal.html", view="login", login_error="")
 
     portal_data = build_aghaje_portal_page_data()
+    start_aghaje_active_tracking_auto_refresh(portal_data["orders"])
     return render_template(
         "aghaje_portal.html",
         view="portal",
@@ -3188,10 +3229,10 @@ def aghaje_portal_refresh():
         return jsonify({"success": False, "error": "Not authenticated."}), 401
     try:
         orders, _, _ = build_aghaje_orders_page_data()
-        tracking_numbers = normalize_tracking_numbers(order.get("tracking_number") for order in orders)
-        refreshed_count = refresh_tracking_summaries_sync(tracking_numbers)
+        tracking_numbers = get_active_aghaje_tracking_numbers(orders)
+        refreshed_count = refresh_tracking_summaries_sync(tracking_numbers, fresh_seconds=0)
         background_started = start_tracking_summaries_background_refresh(tracking_numbers)
-        message = f"Refreshed {refreshed_count} courier shipment statuses."
+        message = f"Refreshed {refreshed_count} active courier shipment statuses."
         if background_started:
             message += " Remaining stale shipments will continue updating in the background."
         return jsonify({"success": True, "message": message, "refreshed_count": refreshed_count})
