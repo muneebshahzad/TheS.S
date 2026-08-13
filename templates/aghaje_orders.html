@@ -160,6 +160,8 @@
       <label class="agh-filter-chip"><input type="checkbox" data-courier-filter="lahore"> Lahore</label>
       <span class="agh-filter-label">Product</span>
       <input class="agh-product-filter" type="search" data-product-filter placeholder="Filter by product">
+      <span class="agh-filter-label">Courier status</span>
+      <input class="agh-product-filter" type="search" data-courier-status-filter placeholder="Filter by courier status">
       <span class="agh-filter-label">Missing</span>
       <label class="agh-filter-chip"><input type="checkbox" data-missing-filter="item"> Item cost</label>
       <label class="agh-filter-chip"><input type="checkbox" data-missing-filter="packaging"> Packaging</label>
@@ -525,6 +527,7 @@
               data-is-postex="{{ '1' if order.is_postex else '0' }}"
               data-is-lahore="{{ '1' if order.is_lahore else '0' }}"
               data-courier-name="{{ order.courier_name|lower }}"
+              data-courier-status="{{ (order.delivery_status_detail or '')|lower }}"
               data-product-titles="{{ order['items']|map(attribute='title')|join(' ')|lower }}"
               data-price="{{ order.price }}"
               data-order-total="{{ order.order_total }}"
@@ -627,7 +630,7 @@
                   {% endfor %}
                 </select>
                 {% if order.is_lahore %}<div><span class="agh-pill lahore">Lahore</span></div>{% endif %}
-                <div class="agh-detail">{{ order.delivery_status_detail or 'No courier status yet' }}</div>
+                <div class="agh-detail" data-courier-status-detail>{{ order.delivery_status_detail or 'No courier status yet' }}</div>
               </td>
               <td>
                 <select
@@ -668,6 +671,7 @@ let currentAghajeTab = 'fulfilled';
 let fulfilledPaymentFilter = 'all';
 let courierFilters = new Set();
 let productFilterTerm = '';
+let courierStatusFilterTerm = '';
 let currentLedgerSort = { key: '', direction: 'asc' };
 
 function aghajeMoney(value) {
@@ -995,6 +999,19 @@ function rowMatchesProductFilter(row) {
   return normalizeProductFilterText(row.dataset.productTitles).includes(productFilterTerm);
 }
 
+function getActualCourierStatusText(row) {
+  return normalizeProductFilterText(
+    row.dataset.courierStatus
+    || row.querySelector('[data-courier-status-detail]')?.textContent
+    || ''
+  );
+}
+
+function rowMatchesCourierStatusFilter(row) {
+  if (!courierStatusFilterTerm) return true;
+  return getActualCourierStatusText(row).includes(courierStatusFilterTerm);
+}
+
 function getAghajeSortValue(row, key) {
   const inputs = getAghajeRowInputs(row);
   if (key === 'order') return normalizeProductFilterText(row.dataset.orderId);
@@ -1007,7 +1024,7 @@ function getAghajeSortValue(row, key) {
   if (key === 'amount_received') return parseAghajeNumber(inputs.amount?.value);
   if (key === 'payable') return parseAghajeNumber(row.querySelector('[data-payable-value]')?.dataset.payableValue);
   if (key === 'delivery_status') {
-    return normalizeProductFilterText(`${inputs.deliveryStatus?.value || ''} ${row.querySelector('[data-aghaje-field="delivery_status"]')?.nextElementSibling?.textContent || ''}`);
+    return getActualCourierStatusText(row) || normalizeProductFilterText(inputs.deliveryStatus?.value);
   }
   if (key === 'payment_status') return normalizeProductFilterText(inputs.payment?.value);
   return '';
@@ -1070,6 +1087,9 @@ function applyAghajeLedgerFilters() {
       }
       if (show) {
         show = rowMatchesProductFilter(row);
+      }
+      if (show) {
+        show = rowMatchesCourierStatusFilter(row);
       }
       if (show) {
         show = rowMatchesMissingFilters(row);
@@ -1262,6 +1282,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.querySelector('[data-product-filter]')?.addEventListener('input', (event) => {
     productFilterTerm = normalizeProductFilterText(event.target.value);
+    applyAghajeLedgerFilters();
+  });
+  document.querySelector('[data-courier-status-filter]')?.addEventListener('input', (event) => {
+    courierStatusFilterTerm = normalizeProductFilterText(event.target.value);
     applyAghajeLedgerFilters();
   });
   document.querySelector('[data-select-visible]')?.addEventListener('change', (event) => {
