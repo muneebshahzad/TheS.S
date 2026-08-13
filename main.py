@@ -798,6 +798,7 @@ def fetch_tracking_data_sync(tracking_number):
 def build_tracking_summary_payload(tracking_number):
     data = fetch_tracking_data_sync(tracking_number)
     summary = summarize_tracking_result(tracking_number, data)
+    remember_tracking_summary(tracking_number, summary)
     events = []
     if is_leopards_tracking(tracking_number):
         packet_list = (data or {}).get("packet_list") or []
@@ -872,6 +873,18 @@ def persist_tracking_summary_cache():
         if normalize_tracking_summary_cache_entry(entry)
     }
     return set_app_setting(TRACKING_SUMMARY_CACHE_SETTING_KEY, json.dumps(payload))
+
+
+def remember_tracking_summary(tracking_number, summary, fetched_at=None):
+    tracking_number = str(tracking_number or "").strip()
+    if not tracking_number or not summary or not summary.get("status"):
+        return False
+    ensure_tracking_summary_cache_loaded()
+    tracking_summary_cache[tracking_number.upper()] = {
+        "fetched_at": fetched_at or time.time(),
+        "summary": summary,
+    }
+    return persist_tracking_summary_cache()
 
 
 def get_tracking_summary_cached(tracking_number, ttl_seconds=300):
@@ -1207,6 +1220,22 @@ def build_aghaje_orders_page_data():
     except Exception as error:
         print(f"Could not fetch Aghaje orders: {error}")
         return [], {"total_orders": 0, "total_items_qty": 0, "net_payment": 0.0}, str(error)
+
+    active_tracking_candidates = []
+    for raw_order in raw_orders:
+        note_attributes = extract_note_attributes(raw_order)
+        tracking_number = str(note_attributes.get("hxs_courier_tracking") or "").strip()
+        if not tracking_number:
+            continue
+        delivery_status, _ = get_aghaje_delivery_status(raw_order)
+        if not is_final_aghaje_delivery_status(delivery_status):
+            active_tracking_candidates.append(tracking_number)
+    refresh_tracking_summaries_sync(
+        active_tracking_candidates,
+        limit=TRACKING_REFRESH_SYNC_LIMIT,
+        fresh_seconds=AGHAJE_AUTO_TRACK_FRESH_SECONDS,
+        deadline_seconds=TRACKING_REFRESH_SYNC_DEADLINE_SECONDS,
+    )
 
     results = []
     shop_domain = get_aghaje_shop_domain()
@@ -2950,6 +2979,8 @@ def display_tracking(tracking_num):
             return await fetch_tracking_data(session_obj, tracking_num)
 
     data = asyncio.run(run_lookup())
+    summary = summarize_tracking_result(tracking_num, data)
+    remember_tracking_summary(tracking_num, summary)
     matched_order = find_shopify_order_by_tracking_number(tracking_num)
     return render_template("trackingdata.html", data=data, tracking_number=tracking_num, matched_order=matched_order)
 
