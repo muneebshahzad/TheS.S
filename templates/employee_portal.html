@@ -279,6 +279,7 @@
       white-space: nowrap;
     }
     .badge.shopify { background: rgba(42, 157, 91, 0.12); color: #1b6f41; }
+    .badge.aghaje { background: rgba(38, 103, 255, 0.12); color: #1746b8; }
     .badge.daraz { background: rgba(242, 182, 50, 0.18); color: #8b5a00; }
     .order-meta {
       display: grid;
@@ -638,12 +639,12 @@
           reportBtn.className = 'primary-btn dispatch';
           queueTitle.textContent = 'Dispatch Queue';
         } else if (mode === 'dispatch') {
-          helper.textContent = 'Scan Shopify orders one by one. Report creation tags Shopify orders as Dispatched (today).';
+          helper.textContent = 'Scan Sleek Space or AghaJe orders one by one. Report creation tags the right Shopify store as Dispatched (today).';
           reportBtn.textContent = 'Create Dispatch Report';
           reportBtn.className = 'primary-btn dispatch';
           queueTitle.textContent = 'Dispatch Queue';
         } else {
-          helper.textContent = 'Scan returned parcels one by one. Report creation tags Shopify orders as Return Received (today).';
+          helper.textContent = 'Scan returned Sleek Space or AghaJe parcels. Report creation tags the right Shopify store as Return Received (today).';
           reportBtn.textContent = 'Create Return Report';
           reportBtn.className = 'primary-btn return';
           queueTitle.textContent = 'Return Queue';
@@ -715,13 +716,14 @@
 
       function renderResult(order) {
         const resultCard = document.getElementById('resultCard');
-        const sourceClass = order.source === 'shopify' ? 'shopify' : 'daraz';
+        const sourceClass = order.source === 'aghaje' ? 'aghaje' : order.source === 'shopify' ? 'shopify' : 'daraz';
+        const sourceLabel = order.source_label || (order.source === 'aghaje' ? 'AghaJe' : order.source === 'shopify' ? 'Sleek Space' : order.source);
         const pieces = (order.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
 
         resultCard.innerHTML = `
           <div class="result-head">
             <div class="result-title">Order Details</div>
-            <span class="badge ${sourceClass}">${order.source}</span>
+            <span class="badge ${sourceClass}">${escapeHtml(sourceLabel)}</span>
           </div>
           <div class="order-meta">
             <div>
@@ -772,7 +774,7 @@
               <div class="queue-index">${index + 1}</div>
               <div>
                 <div class="queue-order">${escapeHtml(order.order_id)}</div>
-                <div class="queue-sub">${escapeHtml(order.source)} • ${productCount} pcs</div>
+                <div class="queue-sub">${escapeHtml(order.source_label || order.source)} • ${productCount} pcs</div>
               </div>
               <button class="icon-btn" onclick="removeFromQueue('${escapeJs(order.source)}','${escapeJs(order.order_id)}')" aria-label="Remove order">x</button>
             </div>
@@ -821,7 +823,10 @@
         }
 
         const label = currentMode === 'dispatch' ? 'dispatch' : 'return';
-        showToast(`Created ${label} report • ${result.tagged_count} Shopify tagged`, true);
+        const sourceCounts = Object.entries(result.tagged_by_source || {})
+          .map(([source, count]) => `${count} ${source}`)
+          .join(', ');
+        showToast(`Created ${label} report • ${sourceCounts || result.tagged_count + ' tagged'}`, true);
         queue = [];
         renderQueue();
       }

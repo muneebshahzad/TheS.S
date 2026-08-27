@@ -2136,6 +2136,7 @@ def serialize_shopify_order_for_employee(order):
     customer = order.get("customer_details") or {}
     return {
         "source": "shopify",
+        "source_label": "Sleek Space",
         "shopify_id": order.get("id"),
         "order_id": str(order.get("order_id", "")),
         "status": order.get("status", ""),
@@ -2157,8 +2158,95 @@ def serialize_shopify_order_for_employee(order):
     }
 
 
+def serialize_aghaje_order_for_employee(order):
+    return {
+        "source": "aghaje",
+        "source_label": "AghaJe",
+        "shopify_id": order.get("shopify_order_id"),
+        "order_id": str(order.get("order_id", "")),
+        "status": order.get("delivery_status") or order.get("fulfillment_status") or "",
+        "customer_name": order.get("customer_name", ""),
+        "customer_phone": order.get("customer_phone", ""),
+        "customer_city": order.get("customer_city", ""),
+        "total_price": order.get("order_total", 0),
+        "created_at": order.get("created_at", ""),
+        "items": [
+            {
+                "title": item.get("title", ""),
+                "quantity": item.get("qty", 0),
+                "image": item.get("image", ""),
+                "tracking_number": order.get("tracking_number") or "N/A",
+                "status": order.get("delivery_status_detail") or order.get("delivery_status", ""),
+            }
+            for item in order.get("items", [])
+        ],
+    }
+
+
+def build_aghaje_employee_portal_orders():
+    try:
+        orders, _, error_message = build_aghaje_orders_page_data()
+    except Exception as error:
+        print(f"Could not load AghaJe employee portal orders: {error}")
+        return []
+    if error_message:
+        print(f"Could not load AghaJe employee portal orders: {error_message}")
+        return []
+    return [serialize_aghaje_order_for_employee(order) for order in orders]
+
+
 def build_employee_portal_orders():
-    return [serialize_shopify_order_for_employee(order) for order in order_details]
+    employee_orders = [serialize_shopify_order_for_employee(order) for order in order_details]
+    employee_orders.extend(build_aghaje_employee_portal_orders())
+    return sorted(
+        employee_orders,
+        key=lambda order: parse_date_for_sort(order.get("created_at")),
+        reverse=True,
+    )
+
+
+def apply_aghaje_order_tag(order_id, tag, include_date=False):
+    order_id = str(order_id or "").strip()
+    if not order_id:
+        return False
+    clean_tag = tag.strip()
+    if include_date:
+        clean_tag = f"{clean_tag} ({datetime.now().strftime('%Y-%m-%d')})"
+
+    base_url = aghaje_rest_base_url()
+    headers = aghaje_rest_headers()
+    response = requests.get(f"{base_url}/orders/{order_id}.json", headers=headers, params={"fields": "id,tags"}, timeout=20)
+    response.raise_for_status()
+    order = response.json().get("order") or {}
+    tags = [item.strip() for item in str(order.get("tags") or "").split(",") if item.strip()]
+    if clean_tag not in tags:
+        tags.append(clean_tag)
+    update_response = requests.put(
+        f"{base_url}/orders/{order_id}.json",
+        headers=headers,
+        json={"order": {"id": order_id, "tags": ", ".join(tags)}},
+        timeout=20,
+    )
+    update_response.raise_for_status()
+    return True
+
+
+def apply_employee_portal_order_tag(source, order_id, tag_name):
+    source = str(source or "").strip().lower()
+    if source == "aghaje":
+        return apply_aghaje_order_tag(order_id, tag_name, include_date=True)
+    if source in {"shopify", "sleekspace", "sleek-space"}:
+        return apply_shopify_order_tag(order_id, tag_name, include_date=True)
+    return False
+
+
+def employee_portal_source_label(source):
+    source = str(source or "").strip().lower()
+    if source == "aghaje":
+        return "AghaJe"
+    if source in {"shopify", "sleekspace", "sleek-space"}:
+        return "Sleek Space"
+    return source or "Unknown"
 
 
 def build_pending_orders_mobile_data():
@@ -3614,17 +3702,49 @@ def employee_portal_report():
         return jsonify({"success": False, "error": "No scanned orders provided."}), 400
     tag_name = "Dispatched" if mode == "dispatch" else "Return Received"
     tagged_count = 0
-    seen_shopify_ids = set()
+    skipped_count = 0
+    failed = []
+    seen_order_keys = set()
+    tagged_by_source = {}
     for entry in scanned_orders:
-        if entry.get("source") != "shopify":
+        source = str(entry.get("source") or "").strip().lower()
+        shopify_id = str(entry.get("shopify_id") or "").strip()
+        if not source or not shopify_id:
+            skipped_count += 1
             continue
-        shopify_id = entry.get("shopify_id")
-        if not shopify_id or shopify_id in seen_shopify_ids:
+        order_key = (source, shopify_id)
+        if order_key in seen_order_keys:
+            skipped_count += 1
             continue
-        seen_shopify_ids.add(shopify_id)
-        if apply_shopify_order_tag(shopify_id, tag_name, include_date=True):
+        seen_order_keys.add(order_key)
+        try:
+            tagged = apply_employee_portal_order_tag(source, shopify_id, tag_name)
+        except Exception as error:
+            failed.append(
+                {
+                    "source": source,
+                    "order_id": entry.get("order_id") or shopify_id,
+                    "error": str(error),
+                }
+            )
+            continue
+        if tagged:
             tagged_count += 1
-    return jsonify({"success": True, "tagged_count": tagged_count, "skipped_count": len(scanned_orders) - tagged_count, "tag_name": tag_name})
+            label = employee_portal_source_label(source)
+            tagged_by_source[label] = tagged_by_source.get(label, 0) + 1
+        else:
+            skipped_count += 1
+    return jsonify(
+        {
+            "success": not failed,
+            "tagged_count": tagged_count,
+            "skipped_count": skipped_count,
+            "failed_count": len(failed),
+            "failed": failed[:5],
+            "tagged_by_source": tagged_by_source,
+            "tag_name": tag_name,
+        }
+    ), 207 if failed else 200
 
 
 @app.route("/admin_portal", methods=["GET", "POST"])
