@@ -2205,6 +2205,29 @@ def build_employee_portal_orders():
     )
 
 
+def build_safe_employee_portal_orders():
+    employee_orders = []
+    try:
+        employee_orders = [serialize_shopify_order_for_employee(order) for order in order_details]
+    except Exception as error:
+        print(f"Could not load Sleek Space employee portal orders: {error}")
+
+    try:
+        employee_orders.extend(build_aghaje_employee_portal_orders())
+    except Exception as error:
+        print(f"Could not load AghaJe employee portal orders: {error}")
+
+    try:
+        return sorted(
+            employee_orders,
+            key=lambda order: parse_date_for_sort(order.get("created_at")),
+            reverse=True,
+        )
+    except Exception as error:
+        print(f"Could not sort employee portal orders: {error}")
+        return employee_orders
+
+
 def apply_aghaje_order_tag(order_id, tag, include_date=False):
     order_id = str(order_id or "").strip()
     if not order_id:
@@ -2414,7 +2437,7 @@ def find_employee_portal_order(term):
     normalized = normalize_scan_term(term)
     if not normalized:
         return None
-    for order in build_employee_portal_orders():
+    for order in build_safe_employee_portal_orders():
         if normalize_scan_term(order.get("order_id")) == normalized:
             return order
         for item in order.get("items", []):
@@ -3527,12 +3550,12 @@ def search():
 
 @app.route("/dispatch", methods=["GET"])
 def dispatch():
-    return jsonify(build_employee_portal_orders())
+    return jsonify(build_safe_employee_portal_orders())
 
 
 @app.route("/return", methods=["GET"])
 def return_orders():
-    return jsonify(build_employee_portal_orders())
+    return jsonify(build_safe_employee_portal_orders())
 
 
 @app.route("/update_status", methods=["POST"])
@@ -3608,7 +3631,7 @@ def employee_portal():
         return render_template("employee_portal.html", view="login", login_error="Wrong password. Try again.", next_url=next_url), 401
     if not employee_portal_is_authenticated():
         return render_template("employee_portal.html", view="login", login_error="", next_url=next_url)
-    return render_template("employee_portal.html", view="portal", employee_orders=build_employee_portal_orders())
+    return render_template("employee_portal.html", view="portal", employee_orders=build_safe_employee_portal_orders())
 
 
 @app.route("/employee_portal/orders")
@@ -3657,7 +3680,7 @@ def employee_portal_logout():
 def employee_portal_updates():
     if not employee_portal_is_authenticated():
         return jsonify({"success": False, "error": "Unauthorized"}), 401
-    orders = build_employee_portal_orders()
+    orders = build_safe_employee_portal_orders()
     summaries = [
         {
             "id": f"{order.get('source')}:{order.get('order_id')}",
