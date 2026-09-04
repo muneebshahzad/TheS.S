@@ -309,14 +309,34 @@ def as_dict(value):
     return value if isinstance(value, dict) else {}
 
 
+def first_dict(*values):
+    for value in values:
+        if isinstance(value, dict) and value:
+            return value
+    return {}
+
+
+def join_nonempty(values, separator=" "):
+    return separator.join(str(value).strip() for value in values if str(value or "").strip())
+
+
 def get_customer_phone_candidates(checkout, shipping, billing, customer):
     default_address = as_dict(checkout.get("default_address"))
+    customer_default_address = as_dict(customer.get("default_address") or customer.get("defaultAddress"))
+    buyer_identity = as_dict(checkout.get("buyer_identity") or checkout.get("buyerIdentity"))
     return [
         checkout.get("phone"),
+        checkout.get("customer_phone"),
+        checkout.get("sms_marketing_phone"),
+        checkout.get("phone_number"),
         shipping.get("phone"),
         billing.get("phone"),
         customer.get("phone"),
+        customer.get("customer_phone"),
+        as_dict(customer.get("default_phone_number") or customer.get("defaultPhoneNumber")).get("phoneNumber"),
         default_address.get("phone"),
+        customer_default_address.get("phone"),
+        buyer_identity.get("phone"),
     ]
 
 
@@ -325,6 +345,105 @@ def first_present(values):
         if value:
             return value
     return ""
+
+
+def get_checkout_customer_blocks(checkout):
+    customer = first_dict(
+        checkout.get("customer"),
+        checkout.get("customer_details"),
+        checkout.get("customerDetails"),
+        checkout.get("buyer_identity"),
+        checkout.get("buyerIdentity"),
+    )
+    shipping = first_dict(
+        checkout.get("shipping_address"),
+        checkout.get("shippingAddress"),
+        checkout.get("shippingAddressV2"),
+        as_dict(customer.get("default_address") or customer.get("defaultAddress")),
+    )
+    billing = first_dict(
+        checkout.get("billing_address"),
+        checkout.get("billingAddress"),
+        checkout.get("billingAddressV2"),
+    )
+    return customer, shipping, billing
+
+
+def get_checkout_customer_name(checkout, shipping, billing, customer):
+    customer_name = join_nonempty(
+        [
+            customer.get("first_name") or customer.get("firstName"),
+            customer.get("last_name") or customer.get("lastName"),
+        ]
+    )
+    return first_present(
+        [
+            shipping.get("name"),
+            billing.get("name"),
+            customer.get("name"),
+            customer_name,
+            checkout.get("customer_name"),
+            checkout.get("name"),
+            checkout.get("email"),
+            checkout.get("phone"),
+            "No customer",
+        ]
+    )
+
+
+def get_checkout_customer_email(checkout, customer):
+    return first_present(
+        [
+            checkout.get("email"),
+            checkout.get("customer_email"),
+            customer.get("email"),
+            as_dict(checkout.get("buyer_identity") or checkout.get("buyerIdentity")).get("email"),
+        ]
+    )
+
+
+def get_checkout_country(shipping, billing, checkout):
+    return first_present(
+        [
+            shipping.get("country"),
+            shipping.get("country_name"),
+            shipping.get("countryName"),
+            billing.get("country"),
+            billing.get("country_name"),
+            billing.get("countryName"),
+            checkout.get("country"),
+        ]
+    )
+
+
+def get_checkout_country_code(shipping, billing, checkout, country):
+    return normalize_country_code(
+        first_present(
+            [
+                shipping.get("country_code"),
+                shipping.get("countryCodeV2"),
+                shipping.get("countryCode"),
+                billing.get("country_code"),
+                billing.get("countryCodeV2"),
+                billing.get("countryCode"),
+                checkout.get("buyer_accepts_sms_marketing_country"),
+                checkout.get("country_code"),
+                infer_country_code(country),
+            ]
+        )
+    )
+
+
+def get_checkout_customer_address(shipping, billing):
+    address = first_present(
+        [
+            join_nonempty([shipping.get("address1"), shipping.get("address2")]),
+            join_nonempty([billing.get("address1"), billing.get("address2")]),
+            shipping.get("address"),
+            billing.get("address"),
+        ]
+    )
+    return address
 
 
 def format_currency_amount(value, currency="PKR"):
@@ -737,8 +856,10 @@ def shopify_rest_base_url():
     return f"https://{host}/admin/api/{api_version}"
 
 
-def shopify_rest_headers():
-    token = (os.getenv("PASSWORD") or "").strip() or get_graphql_token()
+def shopify_rest_headers(prefer_graphql_token=False):
+    graphql_token = get_graphql_token()
+    legacy_token = (os.getenv("PASSWORD") or "").strip()
+    token = (graphql_token or legacy_token) if prefer_graphql_token else (legacy_token or graphql_token)
     if not token:
         raise RuntimeError("Shopify admin token is missing.")
     return {
@@ -748,19 +869,31 @@ def shopify_rest_headers():
     }
 
 
-async def async_shopify_fetch(session_obj, resource_path, params=None):
+async def async_shopify_fetch(session_obj, resource_path, params=None, prefer_graphql_token=False):
     query = f"?{urlencode(params)}" if params else ""
     url = f"{shopify_rest_base_url()}/{resource_path}{query}"
-    async with session_obj.get(url, headers=shopify_rest_headers(), timeout=30) as response:
+    async with session_obj.get(url, headers=shopify_rest_headers(prefer_graphql_token=prefer_graphql_token), timeout=30) as response:
         response.raise_for_status()
         return await response.json()
 
 
-async def fetch_shopify_rest_resource(session_obj, resource_path, params=None):
-    return await async_shopify_fetch(session_obj, resource_path, params)
+async def fetch_shopify_rest_resource(session_obj, resource_path, params=None, prefer_graphql_token=False):
+    return await async_shopify_fetch(
+        session_obj,
+        resource_path,
+        params,
+        prefer_graphql_token=prefer_graphql_token,
+    )
 
 
-async def fetch_shopify_paginated_rest(session_obj, resource_path, params=None, root_key=None, max_pages=10):
+async def fetch_shopify_paginated_rest(
+    session_obj,
+    resource_path,
+    params=None,
+    root_key=None,
+    max_pages=10,
+    prefer_graphql_token=False,
+):
     collected = []
     since_id = None
     params = dict(params or {})
@@ -768,7 +901,12 @@ async def fetch_shopify_paginated_rest(session_obj, resource_path, params=None, 
         page_params = dict(params)
         if since_id:
             page_params["since_id"] = since_id
-        payload = await fetch_shopify_rest_resource(session_obj, resource_path, page_params)
+        payload = await fetch_shopify_rest_resource(
+            session_obj,
+            resource_path,
+            page_params,
+            prefer_graphql_token=prefer_graphql_token,
+        )
         if not payload:
             break
         rows = payload.get(root_key) if root_key else None
@@ -782,6 +920,65 @@ async def fetch_shopify_paginated_rest(session_obj, resource_path, params=None, 
         if not since_id:
             break
     return collected
+
+
+def checkout_has_customer_contact(checkout):
+    checkout = as_dict(checkout)
+    customer, shipping, billing = get_checkout_customer_blocks(checkout)
+    return bool(
+        get_checkout_customer_name(checkout, shipping, billing, customer) != "No customer"
+        or get_checkout_customer_email(checkout, customer)
+        or first_present(get_customer_phone_candidates(checkout, shipping, billing, customer))
+        or get_checkout_customer_address(shipping, billing)
+    )
+
+
+def merge_checkout_detail(summary_checkout, detail_checkout):
+    summary_checkout = as_dict(summary_checkout)
+    detail_checkout = as_dict(detail_checkout)
+    merged = dict(summary_checkout)
+    for key, value in detail_checkout.items():
+        if value not in (None, "", [], {}):
+            merged[key] = value
+    return merged
+
+
+async def hydrate_shopify_abandoned_checkout(session_obj, checkout):
+    checkout = as_dict(checkout)
+    if checkout_has_customer_contact(checkout):
+        return checkout
+
+    identifiers = [
+        checkout.get("id"),
+        checkout.get("token"),
+        checkout.get("cart_token"),
+    ]
+    for identifier in identifiers:
+        if not identifier:
+            continue
+        payload = None
+        for prefer_graphql_token in (True, False):
+            try:
+                payload = await fetch_shopify_rest_resource(
+                    session_obj,
+                    f"checkouts/{identifier}.json",
+                    prefer_graphql_token=prefer_graphql_token,
+                )
+                break
+            except Exception as error:
+                print(f"Could not hydrate abandoned checkout {identifier}: {error}")
+        if not payload:
+            continue
+        detailed_checkout = as_dict(
+            payload.get("checkout")
+            or payload.get("abandoned_checkout")
+            or payload.get("abandonedCheckout")
+            or payload
+        )
+        merged = merge_checkout_detail(checkout, detailed_checkout)
+        if checkout_has_customer_contact(merged):
+            return merged
+    return checkout
 
 
 def get_checkout_image_url(line_item):
@@ -810,6 +1007,224 @@ def get_checkout_shipping_total(checkout):
     if total > subtotal:
         return round(total - subtotal, 2)
     return 0.0
+
+
+def money_bag_to_amount_and_currency(money_bag):
+    money_bag = as_dict(money_bag)
+    money = as_dict(money_bag.get("presentmentMoney")) or as_dict(money_bag.get("shopMoney"))
+    return parse_money(money.get("amount"), 0), (money.get("currencyCode") or "PKR")
+
+
+def graphql_address_to_rest(address):
+    address = as_dict(address)
+    return {
+        "name": address.get("name") or join_nonempty([address.get("firstName"), address.get("lastName")]),
+        "address1": address.get("address1") or "",
+        "address2": address.get("address2") or "",
+        "city": address.get("city") or "",
+        "country": address.get("country") or "",
+        "country_code": address.get("countryCodeV2") or address.get("countryCode") or "",
+        "phone": address.get("phone") or "",
+    }
+
+
+def graphql_line_item_to_rest(line_item):
+    line_item = as_dict(line_item)
+    unit_price, _ = money_bag_to_amount_and_currency(
+        line_item.get("discountedUnitPriceSet")
+        or line_item.get("discountedUnitPriceWithCodeDiscount")
+        or line_item.get("originalUnitPriceSet")
+    )
+    product = as_dict(line_item.get("product"))
+    variant = as_dict(line_item.get("variant"))
+    image = as_dict(line_item.get("image")) or as_dict(variant.get("image")) or as_dict(product.get("featuredImage"))
+    return {
+        "id": line_item.get("id"),
+        "title": line_item.get("title") or as_dict(line_item.get("product")).get("title") or "Product",
+        "variant_title": line_item.get("variantTitle") or as_dict(line_item.get("variant")).get("title") or "",
+        "quantity": line_item.get("quantity") or 0,
+        "price": unit_price,
+        "image_url": image.get("url") or image.get("src") or "",
+        "product_id": product.get("legacyResourceId"),
+        "variant_id": variant.get("legacyResourceId"),
+    }
+
+
+def graphql_abandoned_checkout_to_rest(node):
+    node = as_dict(node)
+    customer = as_dict(node.get("customer"))
+    default_phone = as_dict(customer.get("defaultPhoneNumber")).get("phoneNumber")
+    default_address = graphql_address_to_rest(customer.get("defaultAddress"))
+    customer_payload = {
+        "first_name": customer.get("firstName") or "",
+        "last_name": customer.get("lastName") or "",
+        "email": customer.get("email") or "",
+        "phone": customer.get("phone") or default_phone or "",
+        "number_of_orders": customer.get("numberOfOrders"),
+        "default_address": default_address,
+    }
+    total_price, currency = money_bag_to_amount_and_currency(node.get("totalPriceSet"))
+    subtotal_price, subtotal_currency = money_bag_to_amount_and_currency(
+        node.get("subtotalPriceSet") or node.get("totalLineItemsPriceSet")
+    )
+    line_items = [graphql_line_item_to_rest(item) for item in (as_dict(node.get("lineItems")).get("nodes") or [])]
+    return {
+        "id": node.get("id"),
+        "token": node.get("name") or node.get("id"),
+        "cart_token": node.get("defaultCursor") or "",
+        "created_at": node.get("createdAt") or "",
+        "updated_at": node.get("updatedAt") or "",
+        "completed_at": node.get("completedAt") or "",
+        "abandoned_checkout_url": node.get("abandonedCheckoutUrl") or "",
+        "email": customer.get("email") or "",
+        "phone": customer.get("phone") or default_phone or "",
+        "customer": customer_payload,
+        "shipping_address": graphql_address_to_rest(node.get("shippingAddress")),
+        "billing_address": graphql_address_to_rest(node.get("billingAddress")),
+        "line_items": line_items,
+        "total_price": total_price,
+        "subtotal_price": subtotal_price,
+        "total_line_items_price": subtotal_price,
+        "currency": currency or subtotal_currency or "PKR",
+        "presentment_currency": currency or subtotal_currency or "PKR",
+    }
+
+
+def fetch_shopify_abandoned_checkouts_graphql(days=7):
+    token = get_graphql_token()
+    endpoint = get_graphql_endpoint()
+    if not token or not endpoint:
+        return []
+
+    query_text = f"created_at:>={get_abandoned_created_at_min(days)}"
+    query = """
+    query AbandonedCheckouts($first: Int!, $after: String, $query: String) {
+      abandonedCheckouts(first: $first, after: $after, query: $query, sortKey: CREATED_AT, reverse: true) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          name
+          defaultCursor
+          abandonedCheckoutUrl
+          completedAt
+          createdAt
+          updatedAt
+          customer {
+            firstName
+            lastName
+            email
+            phone
+            numberOfOrders
+            defaultPhoneNumber {
+              phoneNumber
+            }
+            defaultAddress {
+              name
+              address1
+              address2
+              city
+              country
+              countryCodeV2
+              phone
+            }
+          }
+          shippingAddress {
+            name
+            address1
+            address2
+            city
+            country
+            countryCodeV2
+            phone
+          }
+          billingAddress {
+            name
+            address1
+            address2
+            city
+            country
+            countryCodeV2
+            phone
+          }
+          subtotalPriceSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+          totalLineItemsPriceSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+          totalPriceSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+          lineItems(first: 50) {
+            nodes {
+              id
+              title
+              variantTitle
+              quantity
+              image {
+                url
+              }
+              discountedUnitPriceSet {
+                shopMoney { amount currencyCode }
+                presentmentMoney { amount currencyCode }
+              }
+              originalUnitPriceSet {
+                shopMoney { amount currencyCode }
+                presentmentMoney { amount currencyCode }
+              }
+              product {
+                legacyResourceId
+                title
+                featuredImage {
+                  url
+                }
+              }
+              variant {
+                legacyResourceId
+                title
+                image {
+                  url
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": token,
+    }
+    rows = []
+    after = None
+    for _ in range(10):
+        response = requests.post(
+            endpoint,
+            json={"query": query, "variables": {"first": 100, "after": after, "query": query_text}},
+            headers=headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        errors = payload.get("errors") or []
+        if errors:
+            raise RuntimeError("; ".join(error.get("message", "Unknown Shopify GraphQL error") for error in errors))
+        connection = as_dict(as_dict(payload.get("data")).get("abandonedCheckouts"))
+        rows.extend(graphql_abandoned_checkout_to_rest(node) for node in (connection.get("nodes") or []))
+        page_info = as_dict(connection.get("pageInfo"))
+        if not page_info.get("hasNextPage"):
+            break
+        after = page_info.get("endCursor")
+        if not after:
+            break
+    return rows
 
 
 async def get_checkout_line_item_image(session_obj, line_item, product_cache):
@@ -868,39 +1283,70 @@ def save_abandoned_viewed_tokens(tokens):
 
 
 async def fetch_shopify_abandoned_checkouts(days=7):
+    try:
+        graph_rows = fetch_shopify_abandoned_checkouts_graphql(days)
+        if graph_rows:
+            return graph_rows
+    except Exception as error:
+        print(f"Could not fetch abandoned checkouts through Shopify GraphQL: {error}")
+
     created_at_min = get_abandoned_created_at_min(days)
     seen = {}
     async with aiohttp.ClientSession() as session_obj:
         for status in ("open", "closed"):
-            rows = await fetch_shopify_paginated_rest(
-                session_obj,
-                "checkouts.json",
-                {
-                    "limit": 250,
-                    "created_at_min": created_at_min,
-                    "status": status,
-                },
-                "checkouts",
-            )
+            params = {
+                "limit": 250,
+                "created_at_min": created_at_min,
+                "status": status,
+            }
+            try:
+                rows = await fetch_shopify_paginated_rest(
+                    session_obj,
+                    "checkouts.json",
+                    params,
+                    "checkouts",
+                    prefer_graphql_token=True,
+                )
+            except Exception as error:
+                print(f"Could not fetch protected abandoned checkouts with status={status}: {error}")
+                rows = await fetch_shopify_paginated_rest(
+                    session_obj,
+                    "checkouts.json",
+                    params,
+                    "checkouts",
+                    prefer_graphql_token=False,
+                )
             for row in rows:
-                row = as_dict(row)
+                row = await hydrate_shopify_abandoned_checkout(session_obj, as_dict(row))
                 seen[str(row.get("id") or row.get("token") or row.get("cart_token"))] = row
     return list(seen.values())
 
 
 async def fetch_recent_shopify_orders_for_recovery(days=30):
     async with aiohttp.ClientSession() as session_obj:
-        return await fetch_shopify_paginated_rest(
-            session_obj,
-            "orders.json",
-            {
-                "limit": 250,
-                "status": "any",
-                "created_at_min": get_abandoned_created_at_min(days),
-                "fields": "id,name,created_at,email,phone,total_price,customer,checkout_token,cart_token",
-            },
-            "orders",
-        )
+        params = {
+            "limit": 250,
+            "status": "any",
+            "created_at_min": get_abandoned_created_at_min(days),
+            "fields": "id,name,created_at,email,phone,total_price,customer,checkout_token,cart_token",
+        }
+        try:
+            return await fetch_shopify_paginated_rest(
+                session_obj,
+                "orders.json",
+                params,
+                "orders",
+                prefer_graphql_token=True,
+            )
+        except Exception as error:
+            print(f"Could not fetch protected recent orders for abandoned recovery: {error}")
+            return await fetch_shopify_paginated_rest(
+                session_obj,
+                "orders.json",
+                params,
+                "orders",
+                prefer_graphql_token=False,
+            )
 
 
 def build_order_recovery_indexes(orders):
@@ -979,7 +1425,7 @@ def build_abandoned_checkout_customer_counts(recovery_orders):
 
 def get_checkout_customer_total_orders(checkout, fallback_counts):
     customer = as_dict(checkout.get("customer"))
-    for field in ("orders_count", "order_count", "number_of_orders"):
+    for field in ("orders_count", "order_count", "number_of_orders", "numberOfOrders"):
         if customer.get(field) is not None:
             try:
                 return int(customer.get(field) or 0)
@@ -1025,20 +1471,11 @@ async def build_abandoned_checkouts_data(days=7):
     async with aiohttp.ClientSession() as session_obj:
         for checkout in checkouts:
             checkout = as_dict(checkout)
-            customer = as_dict(checkout.get("customer"))
-            shipping = as_dict(checkout.get("shipping_address"))
-            billing = as_dict(checkout.get("billing_address"))
+            customer, shipping, billing = get_checkout_customer_blocks(checkout)
             recovered_order = find_recovered_order(checkout, recovery_indexes)
             completed_at = checkout.get("completed_at")
             is_recovered = bool(completed_at or recovered_order)
-            customer_name = (
-                shipping.get("name")
-                or billing.get("name")
-                or " ".join(part for part in [customer.get("first_name"), customer.get("last_name")] if part)
-                or checkout.get("email")
-                or checkout.get("phone")
-                or "No customer"
-            )
+            customer_name = get_checkout_customer_name(checkout, shipping, billing, customer)
             checkout_line_items = checkout.get("line_items", []) or []
             if isinstance(checkout_line_items, dict):
                 checkout_line_items = [checkout_line_items]
@@ -1060,15 +1497,13 @@ async def build_abandoned_checkouts_data(days=7):
                 )
 
             created_at = checkout.get("created_at", "")
-            country = shipping.get("country") or billing.get("country") or ""
-            country_code = normalize_country_code(
-                shipping.get("country_code")
-                or billing.get("country_code")
-                or checkout.get("buyer_accepts_sms_marketing_country")
-                or infer_country_code(country)
-            )
+            country = get_checkout_country(shipping, billing, checkout)
+            country_code = get_checkout_country_code(shipping, billing, checkout, country)
             raw_phone = first_present(get_customer_phone_candidates(checkout, shipping, billing, customer))
             customer_phone = format_customer_phone(raw_phone, country_code)
+            customer_email = get_checkout_customer_email(checkout, customer)
+            customer_address = get_checkout_customer_address(shipping, billing)
+            customer_city = first_present([shipping.get("city"), billing.get("city"), checkout.get("city")])
             currency = checkout.get("presentment_currency") or checkout.get("currency") or "PKR"
             total_price = parse_money(checkout.get("total_price", 0))
             subtotal_price = parse_money(checkout.get("subtotal_price", checkout.get("total_line_items_price", total_price)))
@@ -1084,19 +1519,12 @@ async def build_abandoned_checkouts_data(days=7):
                     "token": token,
                     "created_at": created_at,
                     "customer_name": customer_name,
-                    "customer_email": checkout.get("email") or customer.get("email") or "",
+                    "customer_email": customer_email,
                     "customer_phone": customer_phone,
-                    "customer_city": shipping.get("city") or billing.get("city") or "",
+                    "customer_city": customer_city,
                     "customer_country": country,
                     "customer_country_code": country_code,
-                    "customer_address": " ".join(
-                        part
-                        for part in [
-                            shipping.get("address1") or billing.get("address1") or "",
-                            shipping.get("address2") or billing.get("address2") or "",
-                        ]
-                        if part
-                    ),
+                    "customer_address": customer_address,
                     "customer_orders_count": get_checkout_customer_total_orders(checkout, fallback_counts),
                     "total_price": total_price,
                     "subtotal_price": subtotal_price,
