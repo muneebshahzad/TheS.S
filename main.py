@@ -8,9 +8,9 @@ import smtplib
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.text import MIMEText
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import aiohttp
 import requests
@@ -79,6 +79,7 @@ LAST_REQUEST_TIME = 0.0
 PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
 AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY = "aghaje_net_payment_received_v1"
 TRACKING_SUMMARY_CACHE_SETTING_KEY = "tracking_summary_cache_v1"
+ABANDONED_VIEWED_SETTING_KEY = "abandoned_checkout_viewed_v1"
 inventory_item_cost_cache = {}
 TRACKING_REFRESH_SYNC_LIMIT = int(os.getenv("TRACKING_REFRESH_SYNC_LIMIT", "24"))
 TRACKING_REFRESH_BACKGROUND_LIMIT = int(os.getenv("TRACKING_REFRESH_BACKGROUND_LIMIT", "250"))
@@ -190,6 +191,13 @@ def parse_money(value, default=0.0):
         return round(float(default), 2)
 
 
+def parse_int(value, default=0):
+    try:
+        return int(float(value or default))
+    except (TypeError, ValueError):
+        return int(default)
+
+
 def active_shopify_line_item_quantity(line_item, *, use_original_quantity=False):
     if use_original_quantity:
         raw_quantity = line_item.get("quantity") if isinstance(line_item, dict) else getattr(line_item, "quantity", 0)
@@ -221,6 +229,122 @@ def parse_date_for_sort(value):
         except ValueError:
             continue
     return datetime.min
+
+
+def parse_date_timestamp(value):
+    parsed = parse_date_for_sort(value)
+    if parsed == datetime.min:
+        return 0.0
+    try:
+        return parsed.timestamp()
+    except (OverflowError, OSError, ValueError):
+        return 0.0
+
+
+def normalize_customer_lookup_value(value):
+    return str(value or "").strip().lower()
+
+
+def normalize_customer_phone(value):
+    if isinstance(value, dict):
+        value = value.get("phone") or value.get("number") or ""
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if digits.startswith("92") and len(digits) > 10:
+        digits = digits[2:]
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def normalize_country_code(value):
+    return str(value or "").strip().upper()
+
+
+def infer_country_code(country):
+    normalized = str(country or "").strip().lower()
+    aliases = {
+        "pakistan": "PK",
+        "united states": "US",
+        "usa": "US",
+        "united kingdom": "GB",
+        "uk": "GB",
+        "united arab emirates": "AE",
+        "uae": "AE",
+        "saudi arabia": "SA",
+    }
+    return aliases.get(normalized, "")
+
+
+def get_phone_country_prefix(country_code):
+    prefixes = {
+        "PK": "92",
+        "US": "1",
+        "CA": "1",
+        "GB": "44",
+        "AE": "971",
+        "SA": "966",
+    }
+    return prefixes.get(normalize_country_code(country_code), "")
+
+
+def format_customer_phone(phone, country_code=""):
+    raw = str(phone or "").strip()
+    if not raw:
+        return ""
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return raw
+    if raw.startswith("+"):
+        return f"+{digits}"
+    if digits.startswith("00"):
+        return f"+{digits[2:]}"
+    prefix = get_phone_country_prefix(country_code)
+    local = normalize_customer_phone(raw)
+    if prefix and local:
+        return f"+{prefix}{local}"
+    return raw
+
+
+def as_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def get_customer_phone_candidates(checkout, shipping, billing, customer):
+    default_address = as_dict(checkout.get("default_address"))
+    return [
+        checkout.get("phone"),
+        shipping.get("phone"),
+        billing.get("phone"),
+        customer.get("phone"),
+        default_address.get("phone"),
+    ]
+
+
+def first_present(values):
+    for value in values:
+        if value:
+            return value
+    return ""
+
+
+def format_currency_amount(value, currency="PKR"):
+    amount = parse_money(value, 0)
+    currency = str(currency or "PKR").upper()
+    amount_text = f"{int(amount):,}" if amount == int(amount) else f"{amount:,.2f}"
+    symbols = {
+        "USD": "$",
+        "GBP": "£",
+        "EUR": "€",
+    }
+    if currency in symbols:
+        return f"{symbols[currency]}{amount_text} ({currency})"
+    if currency == "PKR":
+        return f"PKR {amount_text}"
+    return f"{amount_text} {currency}"
+
+
+def get_abandoned_created_at_min(days=7):
+    return (datetime.now() - timedelta(days=days)).replace(microsecond=0).isoformat()
 
 
 def load_product_cost_overrides():
@@ -622,6 +746,425 @@ def shopify_rest_headers():
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
+
+
+async def async_shopify_fetch(session_obj, resource_path, params=None):
+    query = f"?{urlencode(params)}" if params else ""
+    url = f"{shopify_rest_base_url()}/{resource_path}{query}"
+    async with session_obj.get(url, headers=shopify_rest_headers(), timeout=30) as response:
+        response.raise_for_status()
+        return await response.json()
+
+
+async def fetch_shopify_rest_resource(session_obj, resource_path, params=None):
+    return await async_shopify_fetch(session_obj, resource_path, params)
+
+
+async def fetch_shopify_paginated_rest(session_obj, resource_path, params=None, root_key=None, max_pages=10):
+    collected = []
+    since_id = None
+    params = dict(params or {})
+    for _ in range(max_pages):
+        page_params = dict(params)
+        if since_id:
+            page_params["since_id"] = since_id
+        payload = await fetch_shopify_rest_resource(session_obj, resource_path, page_params)
+        if not payload:
+            break
+        rows = payload.get(root_key) if root_key else None
+        if rows is None:
+            rows = payload.get(resource_path.split(".", 1)[0], [])
+        rows = rows or []
+        collected.extend(rows)
+        if len(rows) < int(page_params.get("limit", 250)):
+            break
+        since_id = as_dict(rows[-1]).get("id")
+        if not since_id:
+            break
+    return collected
+
+
+def get_checkout_image_url(line_item):
+    image = line_item.get("image_url") or line_item.get("image") or ""
+    if isinstance(image, dict):
+        return image.get("src") or image.get("url") or ""
+    return image or ""
+
+
+def get_checkout_shipping_total(checkout):
+    shipping_lines = checkout.get("shipping_lines") or []
+    if isinstance(shipping_lines, dict):
+        shipping_lines = [shipping_lines]
+    shipping_total = sum(parse_money(as_dict(line).get("price"), 0) for line in shipping_lines)
+    if shipping_total:
+        return round(shipping_total, 2)
+
+    for key in ("shipping_price", "shipping_rate"):
+        value = checkout.get(key)
+        candidate = parse_money(value.get("price"), 0) if isinstance(value, dict) else parse_money(value, 0)
+        if candidate:
+            return candidate
+
+    total = parse_money(checkout.get("total_price"), 0)
+    subtotal = parse_money(checkout.get("subtotal_price"), parse_money(checkout.get("total_line_items_price"), 0))
+    if total > subtotal:
+        return round(total - subtotal, 2)
+    return 0.0
+
+
+async def get_checkout_line_item_image(session_obj, line_item, product_cache):
+    image_src = get_checkout_image_url(line_item)
+    if image_src:
+        return image_src
+
+    product_id = line_item.get("product_id")
+    variant_id = line_item.get("variant_id")
+    if not product_id:
+        return ""
+
+    product_id_key = str(product_id)
+    if product_id_key not in product_cache:
+        product_cache[product_id_key] = None
+        try:
+            product_data = await async_shopify_fetch(session_obj, f"products/{product_id}.json")
+            product_cache[product_id_key] = as_dict(product_data.get("product") if product_data else {})
+        except Exception as error:
+            print(f"Could not fetch product image for abandoned checkout item {product_id}: {error}")
+
+    product = as_dict(product_cache.get(product_id_key))
+    if not product:
+        return ""
+
+    if variant_id:
+        for variant in product.get("variants", []) or []:
+            variant = as_dict(variant)
+            if str(variant.get("id")) == str(variant_id) and variant.get("image_id"):
+                for image in product.get("images", []) or []:
+                    image = as_dict(image)
+                    if str(image.get("id")) == str(variant.get("image_id")):
+                        return image.get("src") or ""
+
+    return as_dict(product.get("image")).get("src") or ""
+
+
+def build_abandoned_whatsapp_url(phone, customer_name):
+    phone = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if not phone:
+        return ""
+    text = f"Hello {customer_name or ''}, you left items in your cart at The Sleek Space. Would you like help completing your order?"
+    return f"https://wa.me/{phone}?{urlencode({'text': text})}"
+
+
+def load_abandoned_viewed_tokens():
+    try:
+        return set(json.loads(get_app_setting(ABANDONED_VIEWED_SETTING_KEY, "[]")) or [])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return set()
+
+
+def save_abandoned_viewed_tokens(tokens):
+    cleaned = sorted({str(token) for token in tokens if token})
+    return set_app_setting(ABANDONED_VIEWED_SETTING_KEY, json.dumps(cleaned))
+
+
+async def fetch_shopify_abandoned_checkouts(days=7):
+    created_at_min = get_abandoned_created_at_min(days)
+    seen = {}
+    async with aiohttp.ClientSession() as session_obj:
+        for status in ("open", "closed"):
+            rows = await fetch_shopify_paginated_rest(
+                session_obj,
+                "checkouts.json",
+                {
+                    "limit": 250,
+                    "created_at_min": created_at_min,
+                    "status": status,
+                },
+                "checkouts",
+            )
+            for row in rows:
+                row = as_dict(row)
+                seen[str(row.get("id") or row.get("token") or row.get("cart_token"))] = row
+    return list(seen.values())
+
+
+async def fetch_recent_shopify_orders_for_recovery(days=30):
+    async with aiohttp.ClientSession() as session_obj:
+        return await fetch_shopify_paginated_rest(
+            session_obj,
+            "orders.json",
+            {
+                "limit": 250,
+                "status": "any",
+                "created_at_min": get_abandoned_created_at_min(days),
+                "fields": "id,name,created_at,email,phone,total_price,customer,checkout_token,cart_token",
+            },
+            "orders",
+        )
+
+
+def build_order_recovery_indexes(orders):
+    by_checkout_token = {}
+    by_cart_token = {}
+    by_email = {}
+    by_phone = {}
+
+    for order in orders or []:
+        customer = as_dict(order.get("customer"))
+        checkout_token = normalize_customer_lookup_value(order.get("checkout_token"))
+        cart_token = normalize_customer_lookup_value(order.get("cart_token"))
+        email = normalize_customer_lookup_value(order.get("email") or customer.get("email"))
+        phone = normalize_customer_phone(order.get("phone") or customer.get("phone"))
+        if checkout_token:
+            by_checkout_token.setdefault(checkout_token, []).append(order)
+        if cart_token:
+            by_cart_token.setdefault(cart_token, []).append(order)
+        if email:
+            by_email.setdefault(email, []).append(order)
+        if phone:
+            by_phone.setdefault(phone, []).append(order)
+
+    return {
+        "checkout_token": by_checkout_token,
+        "cart_token": by_cart_token,
+        "email": by_email,
+        "phone": by_phone,
+    }
+
+
+def find_recovered_order(checkout, indexes):
+    checkout_created_at = parse_date_timestamp(checkout.get("created_at"))
+    customer = as_dict(checkout.get("customer"))
+    token = normalize_customer_lookup_value(checkout.get("token"))
+    cart_token = normalize_customer_lookup_value(checkout.get("cart_token"))
+    email = normalize_customer_lookup_value(checkout.get("email") or customer.get("email"))
+    phone = normalize_customer_phone(checkout.get("phone") or customer.get("phone"))
+    candidates = []
+
+    for key, index in (
+        (token, indexes.get("checkout_token", {})),
+        (cart_token, indexes.get("cart_token", {})),
+        (email, indexes.get("email", {})),
+        (phone, indexes.get("phone", {})),
+    ):
+        if key:
+            candidates.extend(index.get(key, []))
+
+    unique_candidates = {str(order.get("id")): order for order in candidates if order.get("id")}.values()
+    dated_candidates = [
+        order for order in unique_candidates
+        if parse_date_timestamp(order.get("created_at")) >= checkout_created_at
+    ]
+    if not dated_candidates:
+        return None
+    return sorted(dated_candidates, key=lambda order: parse_date_timestamp(order.get("created_at")))[0]
+
+
+def build_abandoned_checkout_customer_counts(recovery_orders):
+    counts = {}
+    for order in recovery_orders or []:
+        customer = as_dict(order.get("customer"))
+        customer_id = str(customer.get("id") or "").strip()
+        email = normalize_customer_lookup_value(order.get("email") or customer.get("email"))
+        phone = normalize_customer_phone(order.get("phone") or customer.get("phone"))
+        for key in (
+            f"id:{customer_id}" if customer_id else "",
+            f"email:{email}" if email else "",
+            f"phone:{phone}" if phone else "",
+        ):
+            if key:
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def get_checkout_customer_total_orders(checkout, fallback_counts):
+    customer = as_dict(checkout.get("customer"))
+    for field in ("orders_count", "order_count", "number_of_orders"):
+        if customer.get(field) is not None:
+            try:
+                return int(customer.get(field) or 0)
+            except (TypeError, ValueError):
+                pass
+
+    customer_id = str(customer.get("id") or "").strip()
+    email = normalize_customer_lookup_value(checkout.get("email") or customer.get("email"))
+    phone = normalize_customer_phone(checkout.get("phone") or customer.get("phone"))
+    for key in (
+        f"id:{customer_id}" if customer_id else "",
+        f"email:{email}" if email else "",
+        f"phone:{phone}" if phone else "",
+    ):
+        if key and key in fallback_counts:
+            return fallback_counts[key]
+    return 0
+
+
+def get_shopify_admin_store_slug():
+    raw_shop_url = (get_shop_domain() or os.getenv("SHOP_URL") or "").strip()
+    parsed = urlparse(raw_shop_url if "://" in raw_shop_url else f"https://{raw_shop_url}")
+    host = parsed.netloc or parsed.path
+    return (host.split(".", 1)[0] or "the-sleek-space").strip("/")
+
+
+def shopify_order_admin_link(order_id):
+    if not order_id:
+        return ""
+    return f"https://admin.shopify.com/store/{get_shopify_admin_store_slug()}/orders/{order_id}"
+
+
+async def build_abandoned_checkouts_data(days=7):
+    checkouts = await fetch_shopify_abandoned_checkouts(days)
+    recovery_orders = await fetch_recent_shopify_orders_for_recovery(max(days, 30))
+    recovery_indexes = build_order_recovery_indexes(recovery_orders)
+    fallback_counts = build_abandoned_checkout_customer_counts(recovery_orders)
+    viewed_tokens = load_abandoned_viewed_tokens()
+    today = datetime.now().date()
+    rows = []
+    product_cache = {}
+
+    async with aiohttp.ClientSession() as session_obj:
+        for checkout in checkouts:
+            checkout = as_dict(checkout)
+            customer = as_dict(checkout.get("customer"))
+            shipping = as_dict(checkout.get("shipping_address"))
+            billing = as_dict(checkout.get("billing_address"))
+            recovered_order = find_recovered_order(checkout, recovery_indexes)
+            completed_at = checkout.get("completed_at")
+            is_recovered = bool(completed_at or recovered_order)
+            customer_name = (
+                shipping.get("name")
+                or billing.get("name")
+                or " ".join(part for part in [customer.get("first_name"), customer.get("last_name")] if part)
+                or checkout.get("email")
+                or checkout.get("phone")
+                or "No customer"
+            )
+            checkout_line_items = checkout.get("line_items", []) or []
+            if isinstance(checkout_line_items, dict):
+                checkout_line_items = [checkout_line_items]
+            items = []
+            for line_item in checkout_line_items:
+                line_item = as_dict(line_item)
+                quantity = parse_int(line_item.get("quantity"), 0)
+                unit_price = parse_money(line_item.get("price", 0))
+                title = line_item.get("title") or line_item.get("name") or "Product"
+                variant_title = line_item.get("variant_title") or ""
+                items.append(
+                    {
+                        "title": f"{title} - {variant_title}" if variant_title and variant_title != "Default Title" else title,
+                        "quantity": quantity,
+                        "unit_price": unit_price,
+                        "line_total": round(unit_price * quantity, 2),
+                        "image": await get_checkout_line_item_image(session_obj, line_item, product_cache),
+                    }
+                )
+
+            created_at = checkout.get("created_at", "")
+            country = shipping.get("country") or billing.get("country") or ""
+            country_code = normalize_country_code(
+                shipping.get("country_code")
+                or billing.get("country_code")
+                or checkout.get("buyer_accepts_sms_marketing_country")
+                or infer_country_code(country)
+            )
+            raw_phone = first_present(get_customer_phone_candidates(checkout, shipping, billing, customer))
+            customer_phone = format_customer_phone(raw_phone, country_code)
+            currency = checkout.get("presentment_currency") or checkout.get("currency") or "PKR"
+            total_price = parse_money(checkout.get("total_price", 0))
+            subtotal_price = parse_money(checkout.get("subtotal_price", checkout.get("total_line_items_price", total_price)))
+            shipping_total = get_checkout_shipping_total(checkout)
+            for item in items:
+                item["display_line_total"] = format_currency_amount(item.get("line_total"), currency)
+                item["display_unit_price"] = format_currency_amount(item.get("unit_price"), currency)
+
+            token = str(checkout.get("token") or checkout.get("cart_token") or checkout.get("id") or "")
+            rows.append(
+                {
+                    "id": checkout.get("id"),
+                    "token": token,
+                    "created_at": created_at,
+                    "customer_name": customer_name,
+                    "customer_email": checkout.get("email") or customer.get("email") or "",
+                    "customer_phone": customer_phone,
+                    "customer_city": shipping.get("city") or billing.get("city") or "",
+                    "customer_country": country,
+                    "customer_country_code": country_code,
+                    "customer_address": " ".join(
+                        part
+                        for part in [
+                            shipping.get("address1") or billing.get("address1") or "",
+                            shipping.get("address2") or billing.get("address2") or "",
+                        ]
+                        if part
+                    ),
+                    "customer_orders_count": get_checkout_customer_total_orders(checkout, fallback_counts),
+                    "total_price": total_price,
+                    "subtotal_price": subtotal_price,
+                    "shipping_charges": shipping_total,
+                    "currency": currency,
+                    "display_total": format_currency_amount(total_price, currency),
+                    "display_subtotal": format_currency_amount(subtotal_price, currency),
+                    "display_shipping": format_currency_amount(shipping_total, currency),
+                    "viewed": token in viewed_tokens,
+                    "abandoned_checkout_url": checkout.get("abandoned_checkout_url") or "",
+                    "recovered": is_recovered,
+                    "recovered_order_name": as_dict(recovered_order).get("name", "") if recovered_order else "",
+                    "recovered_order_link": shopify_order_admin_link(as_dict(recovered_order).get("id")) if recovered_order else "",
+                    "completed_at": completed_at or (as_dict(recovered_order).get("created_at") if recovered_order else ""),
+                    "items": items,
+                    "created_date": str(created_at or "")[:10],
+                    "whatsapp_url": build_abandoned_whatsapp_url(customer_phone, customer_name),
+                    "is_today": parse_date_for_sort(created_at).date() == today,
+                }
+            )
+
+    rows = sorted(rows, key=lambda row: parse_date_timestamp(row.get("created_at")), reverse=True)
+    summary = {
+        "last_7_days": len(rows),
+        "today": sum(1 for row in rows if row.get("is_today")),
+        "recovered": sum(1 for row in rows if row.get("recovered")),
+        "open": sum(1 for row in rows if not row.get("recovered")),
+        "viewed": sum(1 for row in rows if row.get("viewed")),
+        "not_viewed": sum(1 for row in rows if not row.get("viewed")),
+        "value": round(sum(parse_money(row.get("total_price", 0)) for row in rows), 2),
+    }
+    return rows, summary
+
+
+async def build_abandoned_checkouts_summary(days=7):
+    checkouts = await fetch_shopify_abandoned_checkouts(days)
+    viewed_tokens = load_abandoned_viewed_tokens()
+    today = datetime.now().date()
+    checkout_tokens = {
+        str(as_dict(checkout).get("token") or as_dict(checkout).get("cart_token") or as_dict(checkout).get("id"))
+        for checkout in checkouts
+    }
+    return {
+        "last_7_days": len(checkouts),
+        "today": sum(1 for checkout in checkouts if parse_date_for_sort(as_dict(checkout).get("created_at")).date() == today),
+        "recovered": sum(1 for checkout in checkouts if as_dict(checkout).get("completed_at")),
+        "open": sum(1 for checkout in checkouts if not as_dict(checkout).get("completed_at")),
+        "viewed": len(checkout_tokens & viewed_tokens),
+        "not_viewed": max(len(checkout_tokens - viewed_tokens), 0),
+        "value": round(sum(parse_money(as_dict(checkout).get("total_price", 0)) for checkout in checkouts), 2),
+    }
+
+
+def get_abandoned_summary_safe():
+    try:
+        return asyncio.run(build_abandoned_checkouts_summary())
+    except Exception as error:
+        print(f"Could not fetch abandoned checkouts: {error}")
+        return {
+            "last_7_days": 0,
+            "today": 0,
+            "recovered": 0,
+            "open": 0,
+            "viewed": 0,
+            "not_viewed": 0,
+            "value": 0.0,
+            "error": str(error),
+        }
 
 
 def fetch_shopify_inventory_item_costs(inventory_item_ids):
@@ -3068,6 +3611,7 @@ def tracking():
         order_details=order_details,
         darazOrders=[],
         employee_approvals=build_employee_approval_items(),
+        abandoned_summary=get_abandoned_summary_safe(),
     )
 
 
@@ -3078,9 +3622,53 @@ def refresh_data():
         if request.headers.get("X-Requested-With") == "XMLHttpRequest" or request.is_json:
             message = "Data refreshed successfully" if refreshed_all else "Tracking refreshed; existing order cache preserved"
             return jsonify({"message": message})
-        return render_template("track.html", order_details=order_details, darazOrders=[], employee_approvals=build_employee_approval_items())
+        return render_template(
+            "track.html",
+            order_details=order_details,
+            darazOrders=[],
+            employee_approvals=build_employee_approval_items(),
+            abandoned_summary=get_abandoned_summary_safe(),
+        )
     except Exception as error:
         return jsonify({"message": f"Failed to refresh data: {error}"}), 500
+
+
+@app.route("/abandoned")
+def abandoned_orders():
+    try:
+        abandoned_checkouts, summary = asyncio.run(build_abandoned_checkouts_data())
+        error = None
+    except Exception as fetch_error:
+        print(f"Could not build abandoned checkouts page: {fetch_error}")
+        abandoned_checkouts = []
+        summary = {
+            "last_7_days": 0,
+            "today": 0,
+            "recovered": 0,
+            "open": 0,
+            "viewed": 0,
+            "not_viewed": 0,
+            "value": 0.0,
+        }
+        error = str(fetch_error)
+    return render_template(
+        "abandoned.html",
+        abandoned_checkouts=abandoned_checkouts,
+        summary=summary,
+        error=error,
+    )
+
+
+@app.route("/abandoned/mark-viewed", methods=["POST"])
+def mark_abandoned_viewed():
+    data = request.get_json(silent=True) or {}
+    token = str(data.get("token") or "").strip()
+    if not token:
+        return jsonify({"success": False, "error": "Missing checkout token"}), 400
+    viewed_tokens = load_abandoned_viewed_tokens()
+    viewed_tokens.add(token)
+    saved = save_abandoned_viewed_tokens(viewed_tokens)
+    return jsonify({"success": saved, "token": token, "viewed_count": len(viewed_tokens)})
 
 
 @app.route("/track/<tracking_num>")

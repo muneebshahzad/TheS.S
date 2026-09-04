@@ -1,0 +1,427 @@
+{% extends 'base.html' %}
+{% block title %}The Sleek Space - Abandoned Orders{% endblock %}
+
+{% block content %}
+<style>
+  .abandoned-page { display:flex; flex-direction:column; height:100%; overflow:hidden; }
+  .abandoned-scroll { flex:1; overflow:auto; padding:14px; }
+  .metric-row { display:grid; grid-template-columns:repeat(7,minmax(120px,1fr)); gap:10px; margin-bottom:14px; }
+  .metric-card { background:#fff; border:1px solid #e3e6f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
+  .metric-label { font-size:10px; color:#858796; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:5px; }
+  .metric-value { font-family:'DM Mono',monospace; font-size:22px; font-weight:800; color:#2d2e36; line-height:1; }
+  .metric-value.gold { color:#d4a800; }
+  .metric-value.green { color:#1cc88a; }
+  .metric-value.red { color:#e74a3b; }
+  .toolbar { display:flex; align-items:center; gap:8px; padding:10px 14px; background:#f2f4f8; border-bottom:1px solid #e3e6f0; overflow-x:auto; flex-shrink:0; }
+  .fpill { padding:5px 13px; border-radius:99px; border:1.5px solid #e3e6f0; font-size:11px; font-weight:700; background:#fff; color:#8a8b96; cursor:pointer; white-space:nowrap; font-family:'DM Sans',sans-serif; }
+  .fpill.active { background:#4e73df; color:#fff; border-color:#4e73df; }
+  .checkout-list { display:flex; flex-direction:column; gap:10px; max-width:1060px; }
+  .checkout-card { background:#fff; border:1.5px solid #e3e6f0; border-radius:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
+  .checkout-head { display:flex; align-items:center; gap:12px; padding:12px 14px 10px; border-bottom:1px solid #f2f4f8; }
+  .checkout-token { font-family:'DM Mono',monospace; font-size:13px; font-weight:800; color:#4e73df; text-decoration:none; }
+  .checkout-date { font-size:10px; color:#b0b2be; margin-top:2px; }
+  .checkout-spacer { flex:1; }
+  .checkout-amount { font-family:'DM Mono',monospace; font-size:15px; font-weight:800; color:#2d2e36; white-space:nowrap; }
+  .view-btn { border:1.5px solid #d8dfef; background:#fff; color:#4e73df; border-radius:10px; padding:8px 12px; font-size:11px; font-weight:800; cursor:pointer; font-family:'DM Sans',sans-serif; }
+  .view-btn:hover { border-color:#4e73df; background:#f5f7ff; }
+  .recovery-badge { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:99px; font-size:11px; font-weight:800; white-space:nowrap; }
+  .recovery-badge.open { background:#fff3cd; color:#8b5a00; }
+  .recovery-badge.recovered { background:#d4f5e9; color:#0f6848; }
+  .view-state { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:99px; font-size:11px; font-weight:800; white-space:nowrap; background:#edf2ff; color:#3158c9; }
+  .view-state.not-viewed { background:#f4f5f8; color:#7d8190; }
+  .checkout-body { display:flex; gap:18px; padding:12px 14px 14px; align-items:flex-start; }
+  .products { display:flex; gap:10px; flex-wrap:wrap; max-width:320px; flex-shrink:0; }
+  .product { width:76px; display:flex; flex-direction:column; align-items:center; gap:5px; }
+  .product-img { width:76px; height:76px; border-radius:9px; background:#f2f4f8; border:1px solid #e8eaef; overflow:hidden; display:flex; align-items:center; justify-content:center; color:#8a8b96; font-size:11px; font-weight:700; }
+  .product-img img { width:100%; height:100%; object-fit:cover; }
+  .product-name { font-size:9px; color:#4a4b55; text-align:center; line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; max-width:76px; font-weight:600; }
+  .product-qty { font-size:9px; color:#b0b2be; }
+  .info-block { flex:1; min-width:0; display:grid; grid-template-columns:repeat(2,minmax(180px,1fr)); gap:8px 18px; }
+  .info-row { display:flex; gap:7px; font-size:12px; align-items:flex-start; min-width:0; }
+  .info-lbl { color:#b0b2be; width:92px; flex-shrink:0; font-size:10px; padding-top:2px; }
+  .info-val { color:#2d2e36; font-weight:600; line-height:1.35; min-width:0; overflow-wrap:anywhere; }
+  .orders-chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; background:#eef4ff; color:#3158c9; border:1px solid #d7e2ff; font-size:12px; font-weight:900; }
+  .orders-chip strong { font-family:'DM Mono',monospace; font-size:14px; color:#0f1835; }
+  .empty-state { text-align:center; padding:44px 14px; color:#858796; font-size:13px; background:#fff; border:1px solid #e3e6f0; border-radius:12px; }
+  .error-box { margin-bottom:12px; padding:10px 12px; border-radius:10px; background:#fef0ee; color:#a8281c; border:1px solid #f5c0b8; font-size:12px; font-weight:700; }
+  .preview-backdrop { position:fixed; inset:0; z-index:2000; display:none; align-items:center; justify-content:center; padding:24px; background:rgba(18,24,38,0.58); backdrop-filter:blur(5px); }
+  .preview-backdrop.open { display:flex; }
+  .preview-modal { width:min(980px,96vw); max-height:92vh; overflow:auto; background:#fff; color:#111827; border-radius:24px; box-shadow:0 28px 80px rgba(15,24,53,0.32); border:1px solid rgba(221,184,112,0.42); }
+  .preview-shot { padding:24px; background:#fffaf2; background-image:radial-gradient(circle at top left, rgba(239,213,159,0.38), transparent 32%), linear-gradient(180deg,#fffaf2 0%,#ffffff 54%,#f7f8fb 100%); }
+  .preview-brand { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:14px; }
+  .preview-brand-name { color:#9b6a16; font-size:11px; font-weight:900; letter-spacing:0.16em; text-transform:uppercase; }
+  .preview-chip { display:inline-flex; align-items:center; padding:7px 12px; border-radius:999px; background:#fff; border:1px solid rgba(15,24,53,0.08); color:#7d8190; font-size:11px; font-weight:800; box-shadow:0 6px 18px rgba(15,24,53,0.05); }
+  .preview-layout { display:grid; grid-template-columns:minmax(320px,0.95fr) minmax(300px,0.75fr); gap:18px; align-items:stretch; }
+  .preview-main { min-width:0; }
+  .preview-side { display:flex; flex-direction:column; gap:12px; min-width:0; }
+  .preview-head { display:block; border-bottom:1px solid rgba(15,24,53,0.08); padding-bottom:14px; margin-bottom:14px; }
+  .preview-kicker { color:#b8872e; font-size:11px; font-weight:900; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:7px; }
+  .preview-title { font-size:31px; font-weight:950; color:#101935; line-height:1.04; }
+  .preview-sub { color:#7d8190; font-size:13px; margin-top:7px; }
+  .preview-total { font-family:'DM Mono',monospace; font-size:30px; font-weight:950; color:#1f9b5f; white-space:nowrap; line-height:1; }
+  .preview-total-caption { color:#9a9dab; display:block; font-family:'DM Sans',sans-serif; font-size:10px; font-weight:900; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:7px; }
+  .preview-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+  .preview-grid.single { grid-template-columns:1fr; }
+  .preview-product { background:#fff; border:1px solid rgba(15,24,53,0.08); border-radius:20px; overflow:hidden; box-shadow:0 12px 28px rgba(15,24,53,0.09); }
+  .preview-img { width:100%; height:min(430px,56vh); background:linear-gradient(135deg,#f7f2e8,#f5f7fb); display:flex; align-items:center; justify-content:center; color:#8a8b96; font-weight:800; overflow:hidden; }
+  .preview-grid:not(.single) .preview-img { height:260px; }
+  .preview-img img { width:100%; height:100%; object-fit:contain; }
+  .preview-product-info { padding:13px 15px 15px; border-top:1px solid rgba(15,24,53,0.06); }
+  .preview-product-title { font-size:16px; font-weight:950; line-height:1.25; color:#101935; }
+  .preview-product-meta { display:flex; justify-content:space-between; gap:10px; margin-top:9px; color:#7d8190; font-size:12px; font-weight:800; }
+  .preview-customer { display:grid; grid-template-columns:1fr; gap:12px; background:rgba(255,255,255,0.86); border:1px solid rgba(15,24,53,0.08); border-radius:18px; padding:16px; }
+  .preview-totals { display:grid; grid-template-columns:1fr; gap:10px; }
+  .preview-total-box { background:#fff; border:1px solid rgba(15,24,53,0.08); border-radius:16px; padding:13px; box-shadow:0 8px 20px rgba(15,24,53,0.05); }
+  .preview-total-box.strong { background:#102033; color:#fff; border-color:#102033; }
+  .preview-total-box.strong .preview-label { color:#b9c4d3; }
+  .preview-total-box.strong .preview-value { color:#fff; }
+  .preview-label { display:block; color:#9a9dab; font-size:10px; text-transform:uppercase; font-weight:900; letter-spacing:0.05em; margin-bottom:5px; }
+  .preview-value { font-size:14px; font-weight:900; color:#101935; overflow-wrap:anywhere; }
+  .preview-actions { display:flex; justify-content:flex-end; gap:10px; padding:14px 18px; border-top:1px solid #eef0f6; background:#fff; position:sticky; bottom:0; }
+  .preview-close { border:1.5px solid #d8dfef; background:#fff; border-radius:10px; padding:9px 14px; color:#2d2e36; font-weight:800; cursor:pointer; }
+
+  @media (max-width: 900px) {
+    .metric-row { grid-template-columns:repeat(2,minmax(140px,1fr)); }
+    .checkout-body { flex-direction:column; }
+    .products { max-width:none; }
+    .info-block { grid-template-columns:1fr; width:100%; }
+    .preview-layout { grid-template-columns:1fr; }
+    .preview-customer { grid-template-columns:1fr; }
+  }
+  @media (max-width: 560px) {
+    .metric-row { grid-template-columns:1fr; }
+    .checkout-head { flex-wrap:wrap; }
+    .checkout-spacer { flex-basis:100%; height:0; }
+    .preview-shot { padding:20px; }
+    .preview-img { height:360px; }
+  }
+</style>
+
+<div class="abandoned-page">
+  <div class="topbar">
+    <span class="topbar-title">Abandoned Orders</span>
+    <div style="flex:1"></div>
+    <div class="search-box">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#858796" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="checkoutSearch" placeholder="Search abandoned orders..." style="width:220px;" oninput="filterCheckouts()"/>
+      <button id="searchClear" onclick="document.getElementById('checkoutSearch').value='';filterCheckouts()" style="display:none;border:none;background:none;cursor:pointer;color:#858796;font-size:15px;line-height:1;padding:0;">x</button>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <button class="fpill active" data-filter="all" onclick="setCheckoutFilter(this)">All</button>
+    <button class="fpill" data-filter="open" onclick="setCheckoutFilter(this)">Not recovered</button>
+    <button class="fpill" data-filter="recovered" onclick="setCheckoutFilter(this)">Recovered</button>
+    <button class="fpill" data-filter="viewed" onclick="setCheckoutFilter(this)">Viewed</button>
+    <button class="fpill" data-filter="not-viewed" onclick="setCheckoutFilter(this)">Not viewed</button>
+    <a class="btn btn-outline" style="margin-left:auto;text-decoration:none;" href="/">Back to dashboard</a>
+  </div>
+
+  <div class="abandoned-scroll">
+    {% if error %}
+    <div class="error-box">Could not load abandoned checkouts: {{ error }}</div>
+    {% endif %}
+
+    <div class="metric-row">
+      <div class="metric-card">
+        <div class="metric-label">Abandoned last 7 days</div>
+        <div class="metric-value gold">{{ summary.last_7_days|format_number }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Abandoned today</div>
+        <div class="metric-value gold">{{ summary.today|format_number }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Not recovered</div>
+        <div class="metric-value red">{{ summary.open|format_number }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Recovered</div>
+        <div class="metric-value green">{{ summary.recovered|format_number }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Viewed</div>
+        <div class="metric-value">{{ summary.viewed|format_number }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Not viewed</div>
+        <div class="metric-value red">{{ summary.not_viewed|format_number }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Checkout value</div>
+        <div class="metric-value">{{ summary.value|int|format_number }}</div>
+      </div>
+    </div>
+
+    <div class="checkout-list" id="checkoutList">
+      {% for checkout in abandoned_checkouts %}
+      {% set status_key = 'recovered' if checkout.recovered else 'open' %}
+      {% set phone = checkout.customer_phone or '' %}
+      <div class="checkout-card"
+           data-status="{{ status_key }}"
+           data-viewed="{{ 'viewed' if checkout.viewed else 'not-viewed' }}"
+           data-token="{{ checkout.token }}"
+           data-search="{{ checkout.token }} {{ checkout.customer_name }} {{ checkout.customer_email }} {{ checkout.customer_phone }} {{ checkout.customer_city }} {{ checkout.customer_country }} {{ checkout.customer_country_code }} {{ checkout.customer_address }} {{ checkout.recovered_order_name }} {% for item in checkout['items'] %}{{ item.title }} {% endfor %}">
+        <div class="checkout-head">
+          <div>
+            {% if checkout.abandoned_checkout_url %}
+            <a class="checkout-token" href="{{ checkout.abandoned_checkout_url }}" target="_blank">{{ checkout.token }}</a>
+            {% else %}
+            <span class="checkout-token">{{ checkout.token }}</span>
+            {% endif %}
+            <div class="checkout-date">{{ checkout.created_date or checkout.created_at or '-' }}</div>
+          </div>
+          <div class="checkout-spacer"></div>
+          <span class="recovery-badge {{ status_key }}">
+            <span style="width:6px;height:6px;border-radius:50%;background:{{ '#1cc88a' if checkout.recovered else '#f6c23e' }};"></span>
+            {{ 'Recovered' if checkout.recovered else 'Not recovered' }}
+          </span>
+          <span class="view-state {{ 'viewed' if checkout.viewed else 'not-viewed' }}" data-view-state-for="{{ checkout.token }}">{{ 'Viewed' if checkout.viewed else 'Not viewed' }}</span>
+          <span class="checkout-amount">{{ checkout.display_total }}</span>
+          <button class="view-btn" type="button" onclick='openCheckoutPreview({{ checkout|tojson }})'>View</button>
+        </div>
+
+        <div class="checkout-body">
+          <div class="products">
+            {% for item in checkout['items'] %}
+            <div class="product">
+              <div class="product-img">
+                {% if item.image %}<img src="{{ item.image }}" alt="">{% else %}Item{% endif %}
+              </div>
+              <div class="product-name" title="{{ item.title }}">{{ item.title }}</div>
+              <div class="product-qty">x{{ item.quantity }}</div>
+            </div>
+            {% endfor %}
+          </div>
+
+          <div class="info-block">
+            <div class="info-row">
+              <span class="info-lbl">Customer</span>
+              <span class="info-val">{{ checkout.customer_name }}{% if checkout.customer_city %}, <span style="font-weight:400;color:#858796">{{ checkout.customer_city }}</span>{% endif %}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-lbl">Total orders</span>
+              <span class="info-val"><span class="orders-chip"><strong>{{ checkout.customer_orders_count|format_number }}</strong> total orders</span></span>
+            </div>
+            {% if checkout.customer_phone %}
+            <div class="info-row">
+              <span class="info-lbl">Phone</span>
+              <span class="info-val" style="font-family:'DM Mono',monospace;color:#4e73df">{{ checkout.customer_phone }}</span>
+            </div>
+            {% endif %}
+            {% if checkout.customer_country or checkout.customer_country_code %}
+            <div class="info-row">
+              <span class="info-lbl">Country</span>
+              <span class="info-val">{{ checkout.customer_country or '-' }}{% if checkout.customer_country_code %} ({{ checkout.customer_country_code }}){% endif %}</span>
+            </div>
+            {% endif %}
+            {% if checkout.customer_email %}
+            <div class="info-row">
+              <span class="info-lbl">Email</span>
+              <span class="info-val">{{ checkout.customer_email }}</span>
+            </div>
+            {% endif %}
+            <div class="info-row">
+              <span class="info-lbl">Shipping</span>
+              <span class="info-val">{{ checkout.display_shipping }}</span>
+            </div>
+            {% if checkout.customer_address %}
+            <div class="info-row">
+              <span class="info-lbl">Address</span>
+              <span class="info-val" style="color:#858796;font-size:11px;">{{ checkout.customer_address }}</span>
+            </div>
+            {% endif %}
+            <div class="info-row">
+              <span class="info-lbl">Recovered via</span>
+              <span class="info-val">
+                {% if checkout.recovered_order_link %}
+                <a href="{{ checkout.recovered_order_link }}" target="_blank" style="color:#4e73df;text-decoration:none;">{{ checkout.recovered_order_name }}</a>
+                {% elif checkout.completed_at %}
+                Completed checkout
+                {% else %}
+                -
+                {% endif %}
+              </span>
+            </div>
+            {% if phone %}
+            <div class="info-row">
+              <span class="info-lbl">Actions</span>
+              <span class="info-val">
+                <a class="btn btn-outline" href="tel:{{ phone }}" style="text-decoration:none;">Call</a>
+                {% if checkout.whatsapp_url %}
+                <a class="btn btn-success" href="{{ checkout.whatsapp_url }}" target="_blank" style="text-decoration:none;margin-left:6px;">WhatsApp</a>
+                {% endif %}
+              </span>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div class="empty-state">No abandoned Shopify checkouts found in the last 7 days.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="preview-backdrop" id="checkoutPreview" onclick="closeCheckoutPreview(event)">
+  <div class="preview-modal" role="dialog" aria-modal="true" aria-label="Abandoned checkout preview" onclick="event.stopPropagation()">
+    <div class="preview-shot" id="checkoutPreviewShot">
+      <div class="preview-brand">
+        <div class="preview-brand-name">The Sleek Space</div>
+        <div class="preview-chip" id="previewOrderCount">0 total orders</div>
+      </div>
+      <div class="preview-layout">
+        <div class="preview-main">
+          <div class="preview-grid" id="previewProducts"></div>
+        </div>
+        <div class="preview-side">
+          <div class="preview-head">
+            <div class="preview-kicker">Your cart details</div>
+            <div class="preview-title" id="previewCustomerName">Customer</div>
+            <div class="preview-sub" id="previewMeta"></div>
+          </div>
+          <div>
+            <span class="preview-total-caption">Total</span>
+            <div class="preview-total" id="previewTotal">PKR 0</div>
+          </div>
+          <div class="preview-totals">
+            <div class="preview-total-box">
+              <span class="preview-label">Subtotal</span>
+              <span class="preview-value" id="previewSubtotal">-</span>
+            </div>
+            <div class="preview-total-box">
+              <span class="preview-label">Shipping</span>
+              <span class="preview-value" id="previewShipping">-</span>
+            </div>
+            <div class="preview-total-box strong">
+              <span class="preview-label">Total</span>
+              <span class="preview-value" id="previewGrandTotal">-</span>
+            </div>
+          </div>
+          <div class="preview-customer">
+            <div>
+              <span class="preview-label">Phone</span>
+              <span class="preview-value" id="previewPhone">-</span>
+            </div>
+            <div>
+              <span class="preview-label">Email</span>
+              <span class="preview-value" id="previewEmail">-</span>
+            </div>
+            <div>
+              <span class="preview-label">Address</span>
+              <span class="preview-value" id="previewAddress">-</span>
+            </div>
+            <div>
+              <span class="preview-label">Country</span>
+              <span class="preview-value" id="previewCountry">-</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="preview-actions">
+      <button class="preview-close" type="button" onclick="window.print()">Print / Save</button>
+      <button class="preview-close" type="button" onclick="closeCheckoutPreview()">Close</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let checkoutFilter = 'all';
+
+function setCheckoutFilter(btn) {
+  document.querySelectorAll('.fpill').forEach(pill => pill.classList.remove('active'));
+  btn.classList.add('active');
+  checkoutFilter = btn.dataset.filter;
+  filterCheckouts();
+}
+
+function filterCheckouts() {
+  const searchInput = document.getElementById('checkoutSearch');
+  const query = (searchInput.value || '').toLowerCase().trim();
+  document.getElementById('searchClear').style.display = query ? 'block' : 'none';
+  document.querySelectorAll('.checkout-card').forEach(card => {
+    const statusMatch = checkoutFilter === 'all'
+      || card.dataset.status === checkoutFilter
+      || card.dataset.viewed === checkoutFilter;
+    const searchMatch = !query || (card.dataset.search || '').toLowerCase().includes(query);
+    card.style.display = statusMatch && searchMatch ? '' : 'none';
+  });
+}
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
+function openCheckoutPreview(checkout) {
+  markCheckoutViewed(checkout.token);
+  document.getElementById('previewCustomerName').textContent = checkout.customer_name || 'Customer';
+  document.getElementById('previewMeta').textContent = `${checkout.created_date || ''}${checkout.customer_city ? ' • ' + checkout.customer_city : ''}${checkout.customer_country ? ' • ' + checkout.customer_country : ''}`;
+  document.getElementById('previewOrderCount').textContent = `${checkout.customer_orders_count || 0} total orders`;
+  document.getElementById('previewTotal').textContent = checkout.display_total || '';
+  document.getElementById('previewSubtotal').textContent = checkout.display_subtotal || '-';
+  document.getElementById('previewShipping').textContent = checkout.display_shipping || '-';
+  document.getElementById('previewGrandTotal').textContent = checkout.display_total || '-';
+  document.getElementById('previewPhone').textContent = checkout.customer_phone || '-';
+  document.getElementById('previewEmail').textContent = checkout.customer_email || '-';
+  document.getElementById('previewAddress').textContent = checkout.customer_address || '-';
+  document.getElementById('previewCountry').textContent = [checkout.customer_country, checkout.customer_country_code ? `(${checkout.customer_country_code})` : ''].filter(Boolean).join(' ') || '-';
+
+  const products = Array.isArray(checkout.items) ? checkout.items : [];
+  const productGrid = document.getElementById('previewProducts');
+  productGrid.classList.toggle('single', products.length <= 1);
+  productGrid.innerHTML = products.map(item => `
+    <div class="preview-product">
+      <div class="preview-img">${item.image ? `<img src="${escapeHtml(item.image)}" alt="">` : 'Product'}</div>
+      <div class="preview-product-info">
+        <div class="preview-product-title">${escapeHtml(item.title || 'Product')}</div>
+        <div class="preview-product-meta">
+          <span>Qty ${escapeHtml(item.quantity || 0)}</span>
+          <span>${escapeHtml(item.display_line_total || '')}</span>
+        </div>
+      </div>
+    </div>
+  `).join('') || '<div class="empty-state">No products found.</div>';
+
+  document.getElementById('checkoutPreview').classList.add('open');
+}
+
+function markCheckoutViewed(token) {
+  if (!token) return;
+  const safeToken = window.CSS && CSS.escape
+    ? CSS.escape(String(token))
+    : String(token).replace(/["\\]/g, '\\$&');
+  document.querySelectorAll(`.checkout-card[data-token="${safeToken}"]`).forEach(card => {
+    card.dataset.viewed = 'viewed';
+  });
+  document.querySelectorAll(`[data-view-state-for="${safeToken}"]`).forEach(badge => {
+    badge.textContent = 'Viewed';
+    badge.classList.remove('not-viewed');
+    badge.classList.add('viewed');
+  });
+  fetch('/abandoned/mark-viewed', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token })
+  }).catch(() => {});
+}
+
+function closeCheckoutPreview(event) {
+  if (event && event.target && event.target.id !== 'checkoutPreview') return;
+  document.getElementById('checkoutPreview').classList.remove('open');
+}
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeCheckoutPreview();
+});
+</script>
+{% endblock %}
