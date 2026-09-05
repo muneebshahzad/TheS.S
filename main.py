@@ -80,6 +80,7 @@ PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
 AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY = "aghaje_net_payment_received_v1"
 TRACKING_SUMMARY_CACHE_SETTING_KEY = "tracking_summary_cache_v1"
 ABANDONED_VIEWED_SETTING_KEY = "abandoned_checkout_viewed_v1"
+ABANDONED_CACHE_SETTING_KEY = "abandoned_checkout_cache_v1"
 inventory_item_cost_cache = {}
 TRACKING_REFRESH_SYNC_LIMIT = int(os.getenv("TRACKING_REFRESH_SYNC_LIMIT", "24"))
 TRACKING_REFRESH_BACKGROUND_LIMIT = int(os.getenv("TRACKING_REFRESH_BACKGROUND_LIMIT", "250"))
@@ -88,6 +89,8 @@ AGHAJE_AUTO_TRACK_FRESH_SECONDS = int(os.getenv("AGHAJE_AUTO_TRACK_FRESH_SECONDS
 TRACKING_REFRESH_SYNC_DEADLINE_SECONDS = float(os.getenv("TRACKING_REFRESH_SYNC_DEADLINE_SECONDS", "16"))
 TRACKING_REFRESH_BACKGROUND_DEADLINE_SECONDS = float(os.getenv("TRACKING_REFRESH_BACKGROUND_DEADLINE_SECONDS", "90"))
 TRACKING_REFRESH_PER_SHIPMENT_TIMEOUT_SECONDS = float(os.getenv("TRACKING_REFRESH_PER_SHIPMENT_TIMEOUT_SECONDS", "8"))
+ABANDONED_CACHE_FRESH_SECONDS = int(os.getenv("ABANDONED_CACHE_FRESH_SECONDS", "900"))
+abandoned_cache_refresh_lock = threading.Lock()
 
 _TAG_STYLES = {
     "Call Courier": "background:#ede7f6;color:#4527a0",
@@ -1037,7 +1040,7 @@ def graphql_line_item_to_rest(line_item):
     )
     product = as_dict(line_item.get("product"))
     variant = as_dict(line_item.get("variant"))
-    image = as_dict(line_item.get("image")) or as_dict(variant.get("image")) or as_dict(product.get("featuredImage"))
+    image = as_dict(line_item.get("image"))
     return {
         "id": line_item.get("id"),
         "title": line_item.get("title") or as_dict(line_item.get("product")).get("title") or "Product",
@@ -1054,12 +1057,13 @@ def graphql_abandoned_checkout_to_rest(node):
     node = as_dict(node)
     customer = as_dict(node.get("customer"))
     default_phone = as_dict(customer.get("defaultPhoneNumber")).get("phoneNumber")
+    default_email = as_dict(customer.get("defaultEmailAddress")).get("emailAddress")
     default_address = graphql_address_to_rest(customer.get("defaultAddress"))
     customer_payload = {
         "first_name": customer.get("firstName") or "",
         "last_name": customer.get("lastName") or "",
-        "email": customer.get("email") or "",
-        "phone": customer.get("phone") or default_phone or "",
+        "email": default_email or "",
+        "phone": default_phone or "",
         "number_of_orders": customer.get("numberOfOrders"),
         "default_address": default_address,
     }
@@ -1076,8 +1080,8 @@ def graphql_abandoned_checkout_to_rest(node):
         "updated_at": node.get("updatedAt") or "",
         "completed_at": node.get("completedAt") or "",
         "abandoned_checkout_url": node.get("abandonedCheckoutUrl") or "",
-        "email": customer.get("email") or "",
-        "phone": customer.get("phone") or default_phone or "",
+        "email": default_email or "",
+        "phone": default_phone or "",
         "customer": customer_payload,
         "shipping_address": graphql_address_to_rest(node.get("shippingAddress")),
         "billing_address": graphql_address_to_rest(node.get("billingAddress")),
@@ -1087,6 +1091,85 @@ def graphql_abandoned_checkout_to_rest(node):
         "total_line_items_price": subtotal_price,
         "currency": currency or subtotal_currency or "PKR",
         "presentment_currency": currency or subtotal_currency or "PKR",
+    }
+
+
+def build_abandoned_checkout_row_from_payload(checkout):
+    checkout = as_dict(checkout)
+    customer, shipping, billing = get_checkout_customer_blocks(checkout)
+    customer_name = get_checkout_customer_name(checkout, shipping, billing, customer)
+    created_at = checkout.get("created_at") or checkout.get("createdAt") or ""
+    country = get_checkout_country(shipping, billing, checkout)
+    country_code = get_checkout_country_code(shipping, billing, checkout, country)
+    raw_phone = first_present(get_customer_phone_candidates(checkout, shipping, billing, customer))
+    customer_phone = format_customer_phone(raw_phone, country_code)
+    customer_email = get_checkout_customer_email(checkout, customer)
+    customer_address = get_checkout_customer_address(shipping, billing)
+    customer_city = first_present([shipping.get("city"), billing.get("city"), checkout.get("city")])
+    currency = checkout.get("presentment_currency") or checkout.get("currency") or "PKR"
+    total_price = parse_money(checkout.get("total_price") or checkout.get("totalPrice"), 0)
+    subtotal_price = parse_money(
+        checkout.get("subtotal_price") or checkout.get("total_line_items_price") or checkout.get("subtotalPrice"),
+        total_price,
+    )
+    shipping_total = get_checkout_shipping_total(checkout)
+    checkout_line_items = checkout.get("line_items") or checkout.get("lineItems") or []
+    if isinstance(checkout_line_items, dict):
+        checkout_line_items = checkout_line_items.get("nodes") or [checkout_line_items]
+    items = []
+    for line_item in checkout_line_items or []:
+        line_item = as_dict(line_item)
+        if "variantTitle" in line_item or "discountedUnitPriceSet" in line_item:
+            line_item = graphql_line_item_to_rest(line_item)
+        quantity = parse_int(line_item.get("quantity"), 0)
+        unit_price = parse_money(line_item.get("price", 0))
+        title = line_item.get("title") or line_item.get("name") or line_item.get("presentment_title") or "Product"
+        variant_title = line_item.get("variant_title") or line_item.get("presentment_variant_title") or ""
+        display_title = f"{title} - {variant_title}" if variant_title and variant_title != "Default Title" else title
+        line_total = round(unit_price * quantity, 2)
+        items.append(
+            {
+                "title": display_title,
+                "quantity": quantity,
+                "unit_price": unit_price,
+                "line_total": line_total,
+                "image": get_checkout_image_url(line_item),
+                "display_line_total": format_currency_amount(line_total, currency),
+                "display_unit_price": format_currency_amount(unit_price, currency),
+            }
+        )
+
+    token = str(checkout.get("token") or checkout.get("cart_token") or checkout.get("id") or checkout.get("name") or "")
+    viewed_tokens = load_abandoned_viewed_tokens()
+    return {
+        "id": checkout.get("id"),
+        "token": token,
+        "created_at": created_at,
+        "customer_name": customer_name,
+        "customer_email": customer_email,
+        "customer_phone": customer_phone,
+        "customer_city": customer_city,
+        "customer_country": country,
+        "customer_country_code": country_code,
+        "customer_address": customer_address,
+        "customer_orders_count": get_checkout_customer_total_orders(checkout, {}),
+        "total_price": total_price,
+        "subtotal_price": subtotal_price,
+        "shipping_charges": shipping_total,
+        "currency": currency,
+        "display_total": format_currency_amount(total_price, currency),
+        "display_subtotal": format_currency_amount(subtotal_price, currency),
+        "display_shipping": format_currency_amount(shipping_total, currency),
+        "viewed": token in viewed_tokens,
+        "abandoned_checkout_url": checkout.get("abandoned_checkout_url") or checkout.get("abandonedCheckoutUrl") or "",
+        "recovered": bool(checkout.get("completed_at") or checkout.get("completedAt")),
+        "recovered_order_name": "",
+        "recovered_order_link": "",
+        "completed_at": checkout.get("completed_at") or checkout.get("completedAt") or "",
+        "items": items,
+        "created_date": str(created_at or "")[:10],
+        "whatsapp_url": build_abandoned_whatsapp_url(customer_phone, customer_name),
+        "is_today": parse_date_for_sort(created_at).date() == datetime.now().date(),
     }
 
 
@@ -1115,9 +1198,10 @@ def fetch_shopify_abandoned_checkouts_graphql(days=7):
           customer {
             firstName
             lastName
-            email
-            phone
             numberOfOrders
+            defaultEmailAddress {
+              emailAddress
+            }
             defaultPhoneNumber {
               phoneNumber
             }
@@ -1181,16 +1265,10 @@ def fetch_shopify_abandoned_checkouts_graphql(days=7):
               product {
                 legacyResourceId
                 title
-                featuredImage {
-                  url
-                }
               }
               variant {
                 legacyResourceId
                 title
-                image {
-                  url
-                }
               }
             }
           }
@@ -1280,6 +1358,133 @@ def load_abandoned_viewed_tokens():
 def save_abandoned_viewed_tokens(tokens):
     cleaned = sorted({str(token) for token in tokens if token})
     return set_app_setting(ABANDONED_VIEWED_SETTING_KEY, json.dumps(cleaned))
+
+
+def empty_abandoned_summary():
+    return {
+        "last_7_days": 0,
+        "today": 0,
+        "recovered": 0,
+        "open": 0,
+        "viewed": 0,
+        "not_viewed": 0,
+        "value": 0.0,
+    }
+
+
+def summarize_abandoned_checkout_rows(rows):
+    rows = rows or []
+    return {
+        "last_7_days": len(rows),
+        "today": sum(1 for row in rows if row.get("is_today")),
+        "recovered": sum(1 for row in rows if row.get("recovered")),
+        "open": sum(1 for row in rows if not row.get("recovered")),
+        "viewed": sum(1 for row in rows if row.get("viewed")),
+        "not_viewed": sum(1 for row in rows if not row.get("viewed")),
+        "value": round(sum(parse_money(row.get("total_price", 0)) for row in rows), 2),
+    }
+
+
+def load_abandoned_cache():
+    raw = get_app_setting(ABANDONED_CACHE_SETTING_KEY, "")
+    if not raw:
+        return {"rows": [], "summary": empty_abandoned_summary(), "refreshed_at": 0.0}
+    try:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("Abandoned cache payload is not an object.")
+        rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else summarize_abandoned_checkout_rows(rows)
+        return {
+            "rows": rows,
+            "summary": {**empty_abandoned_summary(), **summary},
+            "refreshed_at": float(payload.get("refreshed_at") or 0),
+        }
+    except Exception as error:
+        print(f"Could not read abandoned checkout cache: {error}")
+        return {"rows": [], "summary": empty_abandoned_summary(), "refreshed_at": 0.0}
+
+
+def save_abandoned_cache(rows, summary=None):
+    rows = rows or []
+    summary = summary or summarize_abandoned_checkout_rows(rows)
+    payload = {
+        "rows": rows,
+        "summary": summary,
+        "refreshed_at": time.time(),
+    }
+    return set_app_setting(ABANDONED_CACHE_SETTING_KEY, json.dumps(payload, default=str))
+
+
+def abandoned_cache_is_fresh(cache=None, max_age_seconds=None):
+    cache = cache or load_abandoned_cache()
+    max_age_seconds = ABANDONED_CACHE_FRESH_SECONDS if max_age_seconds is None else max_age_seconds
+    return bool(cache.get("rows")) and (time.time() - float(cache.get("refreshed_at") or 0)) <= max_age_seconds
+
+
+def refresh_abandoned_checkouts_cache_sync(force=False):
+    if not force and abandoned_cache_is_fresh():
+        return load_abandoned_cache()
+    if not abandoned_cache_refresh_lock.acquire(blocking=False):
+        return load_abandoned_cache()
+    try:
+        rows, summary = asyncio.run(build_abandoned_checkouts_data())
+        save_abandoned_cache(rows, summary)
+        return {"rows": rows, "summary": summary, "refreshed_at": time.time()}
+    except Exception as error:
+        print(f"Could not refresh abandoned checkout cache: {error}")
+        cache = load_abandoned_cache()
+        cache["error"] = str(error)
+        return cache
+    finally:
+        abandoned_cache_refresh_lock.release()
+
+
+def refresh_abandoned_checkouts_cache_background(force=False):
+    if not force and abandoned_cache_is_fresh():
+        return
+    thread = threading.Thread(
+        target=refresh_abandoned_checkouts_cache_sync,
+        kwargs={"force": force},
+        daemon=True,
+    )
+    thread.start()
+
+
+def merge_cached_abandoned_row(row):
+    row = as_dict(row)
+    token = str(row.get("token") or row.get("cart_token") or row.get("id") or "").strip()
+    if not token:
+        return False
+    cache = load_abandoned_cache()
+    rows = cache.get("rows") or []
+    merged = False
+    for index, existing in enumerate(rows):
+        if str(as_dict(existing).get("token") or as_dict(existing).get("id")) == token:
+            rows[index] = {**as_dict(existing), **row}
+            merged = True
+            break
+    if not merged:
+        rows.append(row)
+    rows = sorted(rows, key=lambda current: parse_date_timestamp(as_dict(current).get("created_at")), reverse=True)
+    return save_abandoned_cache(rows, summarize_abandoned_checkout_rows(rows))
+
+
+def mark_abandoned_cache_viewed(token):
+    token = str(token or "").strip()
+    if not token:
+        return False
+    cache = load_abandoned_cache()
+    rows = cache.get("rows") or []
+    changed = False
+    for row in rows:
+        row = as_dict(row)
+        if str(row.get("token") or row.get("id")) == token and not row.get("viewed"):
+            row["viewed"] = True
+            changed = True
+    if changed:
+        return save_abandoned_cache(rows, summarize_abandoned_checkout_rows(rows))
+    return True
 
 
 async def fetch_shopify_abandoned_checkouts(days=7):
@@ -1547,15 +1752,7 @@ async def build_abandoned_checkouts_data(days=7):
             )
 
     rows = sorted(rows, key=lambda row: parse_date_timestamp(row.get("created_at")), reverse=True)
-    summary = {
-        "last_7_days": len(rows),
-        "today": sum(1 for row in rows if row.get("is_today")),
-        "recovered": sum(1 for row in rows if row.get("recovered")),
-        "open": sum(1 for row in rows if not row.get("recovered")),
-        "viewed": sum(1 for row in rows if row.get("viewed")),
-        "not_viewed": sum(1 for row in rows if not row.get("viewed")),
-        "value": round(sum(parse_money(row.get("total_price", 0)) for row in rows), 2),
-    }
+    summary = summarize_abandoned_checkout_rows(rows)
     return rows, summary
 
 
@@ -1579,20 +1776,10 @@ async def build_abandoned_checkouts_summary(days=7):
 
 
 def get_abandoned_summary_safe():
-    try:
-        return asyncio.run(build_abandoned_checkouts_summary())
-    except Exception as error:
-        print(f"Could not fetch abandoned checkouts: {error}")
-        return {
-            "last_7_days": 0,
-            "today": 0,
-            "recovered": 0,
-            "open": 0,
-            "viewed": 0,
-            "not_viewed": 0,
-            "value": 0.0,
-            "error": str(error),
-        }
+    cache = load_abandoned_cache()
+    if not abandoned_cache_is_fresh(cache):
+        refresh_abandoned_checkouts_cache_background()
+    return cache.get("summary") or empty_abandoned_summary()
 
 
 def fetch_shopify_inventory_item_costs(inventory_item_ids):
@@ -2573,6 +2760,8 @@ def ensure_required_shopify_webhooks():
     desired = {
         "orders/create": f"{app_base_url}/shopify/webhook/order_created",
         "orders/updated": f"{app_base_url}/shopify/webhook/order_updated",
+        "checkouts/create": f"{app_base_url}/shopify/webhook/checkout_created",
+        "checkouts/update": f"{app_base_url}/shopify/webhook/checkout_updated",
     }
 
     response = requests.get(f"{base_url}/webhooks.json", headers=headers, timeout=20)
@@ -4063,22 +4252,12 @@ def refresh_data():
 
 @app.route("/abandoned")
 def abandoned_orders():
-    try:
-        abandoned_checkouts, summary = asyncio.run(build_abandoned_checkouts_data())
-        error = None
-    except Exception as fetch_error:
-        print(f"Could not build abandoned checkouts page: {fetch_error}")
-        abandoned_checkouts = []
-        summary = {
-            "last_7_days": 0,
-            "today": 0,
-            "recovered": 0,
-            "open": 0,
-            "viewed": 0,
-            "not_viewed": 0,
-            "value": 0.0,
-        }
-        error = str(fetch_error)
+    cache = load_abandoned_cache()
+    if not abandoned_cache_is_fresh(cache):
+        refresh_abandoned_checkouts_cache_background()
+    abandoned_checkouts = cache.get("rows") or []
+    summary = cache.get("summary") or summarize_abandoned_checkout_rows(abandoned_checkouts)
+    error = cache.get("error")
     return render_template(
         "abandoned.html",
         abandoned_checkouts=abandoned_checkouts,
@@ -4096,6 +4275,7 @@ def mark_abandoned_viewed():
     viewed_tokens = load_abandoned_viewed_tokens()
     viewed_tokens.add(token)
     saved = save_abandoned_viewed_tokens(viewed_tokens)
+    mark_abandoned_cache_viewed(token)
     return jsonify({"success": saved, "token": token, "viewed_count": len(viewed_tokens)})
 
 
@@ -4498,9 +4678,32 @@ def _handle_shopify_order_webhook():
         else:
             order_details.append(updated_order_info)
             order_details[:] = sort_orders_newest_first(order_details)
+        refresh_abandoned_checkouts_cache_background(force=True)
         return jsonify({"success": True, "message": f"Order {order_id} processed successfully"})
     except Exception as error:
         print(f"Webhook processing error: {error}")
+        return jsonify({"success": False, "error": str(error)}), 500
+
+
+def _handle_shopify_checkout_webhook():
+    try:
+        if not verify_shopify_webhook(request):
+            return jsonify({"error": "Invalid webhook signature"}), 401
+
+        checkout_data = request.get_json(silent=True)
+        if not checkout_data:
+            return jsonify({"message": "Empty payload received. Ignored."}), 200
+
+        row = build_abandoned_checkout_row_from_payload(checkout_data)
+        if not row.get("token"):
+            return jsonify({"error": "No checkout token found in payload"}), 400
+
+        merge_cached_abandoned_row(row)
+        if not checkout_has_customer_contact(checkout_data) or not any(item.get("image") for item in row.get("items", [])):
+            refresh_abandoned_checkouts_cache_background()
+        return jsonify({"success": True, "message": f"Checkout {row.get('token')} cached successfully"})
+    except Exception as error:
+        print(f"Checkout webhook processing error: {error}")
         return jsonify({"success": False, "error": str(error)}), 500
 
 
@@ -4532,6 +4735,16 @@ def shopify_order_created():
 @app.route("/shopify/webhook/order_updated", methods=["POST"])
 def shopify_order_updated():
     return _handle_shopify_order_webhook()
+
+
+@app.route("/shopify/webhook/checkout_created", methods=["POST"])
+def shopify_checkout_created():
+    return _handle_shopify_checkout_webhook()
+
+
+@app.route("/shopify/webhook/checkout_updated", methods=["POST"])
+def shopify_checkout_updated():
+    return _handle_shopify_checkout_webhook()
 
 
 @app.route("/aghaje/webhook/order_created", methods=["POST"])
@@ -4849,10 +5062,18 @@ def check_restart_times():
 init_db()
 setup_shopify()
 try:
+    ensure_required_shopify_webhooks()
+except Exception as shopify_webhook_error:
+    print(f"Warning: could not ensure Shopify webhooks: {shopify_webhook_error}")
+try:
     ensure_required_aghaje_webhooks()
 except Exception as aghaje_webhook_error:
     print(f"Warning: could not ensure Aghaje webhooks: {aghaje_webhook_error}")
 reload_orders()
+try:
+    refresh_abandoned_checkouts_cache_sync(force=True)
+except Exception as abandoned_cache_error:
+    print(f"Warning: could not warm abandoned checkout cache: {abandoned_cache_error}")
 
 
 if __name__ == "__main__":
