@@ -180,6 +180,8 @@
   .bb-red   { background: #fef0ee; color: #c0392b; border-color: #f5c0b8; }
   .bb-red:not(:disabled):hover   { background: #fde3df; }
 
+  #token-banner { display: none; padding: 7px 16px; font-size: 12px; font-weight: 500; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
+
   @media (min-width: 680px) {
     .card-body { flex-direction: row; align-items: flex-start; gap: 16px; padding: 0 14px 12px; }
     .products { flex: 0 0 auto; flex-wrap: wrap; overflow: visible; padding-bottom: 0; max-width: 240px; }
@@ -530,6 +532,67 @@
       <div style="text-align:center;padding:40px 0;color:#858796;font-size:13px;">No orders loaded yet. Data refreshes 30 seconds after startup.</div>
       {% endfor %}
     </div><!-- /shopifyOrderList -->
+
+    <div style="padding:20px 14px 8px;display:flex;align-items:center;gap:8px;">
+      <div style="width:24px;height:24px;border-radius:6px;background:#f85c2c;display:flex;align-items:center;justify-content:center;font-size:12px;">🛒</div>
+      <span style="font-size:13px;font-weight:700;color:#3a3b45;">Daraz Orders</span>
+      <span style="background:rgba(248,92,44,0.1);color:#f85c2c;font-size:11px;font-weight:700;padding:1px 8px;border-radius:99px;">{{ darazOrders|length }}</span>
+    </div>
+
+    <div style="padding:0 14px 20px;display:flex;flex-direction:column;gap:10px;max-width:960px;">
+      {% for order in darazOrders %}
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <span style="font-family:'DM Mono',monospace;font-size:13px;font-weight:700;color:#f85c2c;">{{ order.order_id }}</span>
+            <div class="card-date">{{ order.date[:10] }}</div>
+          </div>
+          <div class="ch-spacer"></div>
+          {{ status_badge(order.status) }}
+          <span class="card-amount">{{ order.total_price|float|int|format_number }}<span class="card-amount-cur">PKR</span></span>
+        </div>
+        <div class="card-body">
+          <div class="products">
+            {% for item in order.items_list %}
+            <div class="product">
+              <div class="product-img">{% if item.item_image and item.item_image != 'N/A' %}<img src="{{ item.item_image }}" alt="">{% else %}📦{% endif %}</div>
+              <div class="product-name" title="{{ item.item_title }}">{{ item.item_title }}</div>
+              <div class="product-qty">×{{ item.quantity }}</div>
+              <span style="font-size:8px;color:#b0b2be;">{{ status_badge(item.status) }}</span>
+            </div>
+            {% endfor %}
+          </div>
+          <div class="desktop-info">
+            <div class="info-block">
+              <div class="info-row"><span class="info-lbl">Customer</span><span class="info-val" style="font-weight:600">{{ order.customer.name }}</span></div>
+              <div class="info-row"><span class="info-lbl">Phone</span><span class="info-val" style="font-family:'DM Mono',monospace;color:#4e73df">{{ order.customer.phone }}</span></div>
+              <div class="info-row"><span class="info-lbl">Address</span><span class="info-val" style="color:#8a8b96;font-size:10px">📍 {{ order.customer.address }}</span></div>
+            </div>
+          </div>
+          {% if order.customer.phone and order.customer.phone != 'N/A' %}
+          <div class="desktop-actions" style="width:auto;"><a class="icon-btn" href="tel:{{ order.customer.phone }}" title="Call">📞</a></div>
+          {% endif %}
+        </div>
+        <div class="mobile-detail" id="daraz-detail-{{ loop.index }}">
+          <div class="info-block">
+            <div class="info-row"><span class="info-lbl">Customer</span><span class="info-val" style="font-weight:600">{{ order.customer.name }}</span></div>
+            <div class="info-row"><span class="info-lbl">Phone</span><span class="info-val" style="font-family:'DM Mono',monospace;color:#4e73df">{{ order.customer.phone }}</span></div>
+            <div class="info-row"><span class="info-lbl">Address</span><span class="info-val" style="color:#8a8b96;font-size:10px">📍 {{ order.customer.address }}</span></div>
+          </div>
+        </div>
+        <div class="mobile-actions">
+          <button class="mobile-expand" id="daraz-expand-{{ loop.index }}" onclick="toggleDarazDetails({{ loop.index }})" title="Details">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4L6 8L10 4" stroke="#8a8b96" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          {% if order.customer.phone and order.customer.phone != 'N/A' %}<a class="icon-btn" href="tel:{{ order.customer.phone }}" title="Call">📞</a>{% endif %}
+        </div>
+      </div>
+      {% else %}
+      <div style="text-align:center;padding:32px 0;color:#858796;font-size:13px;">
+        No Daraz orders. {% if daraz_oauth_url %}<a href="{{ daraz_oauth_url }}" style="color:#f85c2c;font-weight:600;">Connect Daraz</a>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
   </div><!-- /mainScroll -->
 
   <!-- Bottom bar -->
@@ -540,6 +603,12 @@
     <button class="bottom-btn bb-red" id="btnReturn" onclick="applyReturnedToAll()">
       ↩ <span id="returnLabel">Mark All Returned</span>
     </button>
+  </div>
+
+  <div id="token-banner">
+    <span id="token-icon"></span>
+    <span id="token-message"></span>
+    {% if daraz_oauth_url %}<a id="reauth-btn" href="{{ daraz_oauth_url }}" style="display:none;margin-left:4px;padding:2px 10px;background:#e74a3b;color:#fff;border-radius:4px;text-decoration:none;font-size:11px;">Connect Daraz</a>{% endif %}
   </div>
 
 </div><!-- /flex column -->
@@ -1068,6 +1137,28 @@ function toggleDD(e, id) {
 }
 function closeDD() { document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('open')); }
 document.addEventListener('click', closeDD);
+
+function toggleDarazDetails(index) {
+  const details = document.getElementById('daraz-detail-' + index);
+  const button = document.getElementById('daraz-expand-' + index);
+  if (!details || !button) return;
+  const open = details.classList.toggle('open');
+  button.style.transform = open ? 'rotate(180deg)' : '';
+}
+
+fetch('/daraz/token-status').then(r => r.json()).then(d => {
+  const banner = document.getElementById('token-banner');
+  const icon = document.getElementById('token-icon');
+  const message = document.getElementById('token-message');
+  const button = document.getElementById('reauth-btn');
+  if (d.status === 'missing') {
+    banner.style.display = 'flex'; banner.style.background = '#fce4ec'; banner.style.color = '#8b1a10';
+    icon.textContent = '🔴'; message.textContent = 'Daraz is not connected.'; if (button) button.style.display = 'inline-block';
+  } else if (d.days_left !== null && d.days_left <= 3) {
+    banner.style.display = 'flex'; banner.style.background = '#fff8e1'; banner.style.color = '#7a5c00';
+    icon.textContent = '⚠️'; message.textContent = `Daraz token expires in ${d.days_left} day(s).`; if (button) button.style.display = 'inline-block';
+  }
+}).catch(() => {});
 
 // ── Mobile expand (Shopify) ──
 function toggleMobile(orderId) {

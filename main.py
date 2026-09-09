@@ -10,11 +10,12 @@ import threading
 import time
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 import aiohttp
 import requests
 import shopify
+import lazop
 from flask import (
     Flask,
     jsonify,
@@ -54,6 +55,7 @@ from shopify_protected_data import (
     save_offline_token,
     verify_oauth_hmac,
 )
+from token_manager import get_access_token, load_tokens, save_tokens
 
 
 app = Flask(__name__)
@@ -68,6 +70,10 @@ ADMIN_PORTAL_PASSWORD = os.getenv("ADMIN_PORTAL_PASSWORD", "security")
 AGHAJE_PORTAL_PASSWORD = os.getenv("AGHAJE_PORTAL_PASSWORD", "security")
 
 order_details = []
+daraz_orders_cache = []
+daraz_refresh_lock = threading.Lock()
+daraz_refresh_attempted = False
+daraz_last_error = ""
 product_image_cache = {}
 aghaje_product_cache = {}
 aghaje_inventory_item_cost_cache = {}
@@ -81,6 +87,15 @@ AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY = "aghaje_net_payment_received_v1"
 TRACKING_SUMMARY_CACHE_SETTING_KEY = "tracking_summary_cache_v1"
 ABANDONED_VIEWED_SETTING_KEY = "abandoned_checkout_viewed_v1"
 ABANDONED_CACHE_SETTING_KEY = "abandoned_checkout_cache_v1"
+DARAZ_API_URL = os.getenv("DARAZ_API_URL", "https://api.daraz.pk/rest").rstrip("/")
+DARAZ_ORDER_STATUSES = tuple(
+    status.strip()
+    for status in os.getenv("DARAZ_ORDER_STATUSES", "shipped,pending,ready_to_ship,packed").split(",")
+    if status.strip()
+)
+DARAZ_ORDER_LOOKBACK_DAYS = max(int(os.getenv("DARAZ_ORDER_LOOKBACK_DAYS", "365")), 1)
+DARAZ_PAGE_LIMIT = min(max(int(os.getenv("DARAZ_PAGE_LIMIT", "50")), 1), 100)
+DARAZ_MAX_PAGES_PER_STATUS = max(int(os.getenv("DARAZ_MAX_PAGES_PER_STATUS", "1")), 1)
 inventory_item_cost_cache = {}
 TRACKING_REFRESH_SYNC_LIMIT = int(os.getenv("TRACKING_REFRESH_SYNC_LIMIT", "24"))
 TRACKING_REFRESH_BACKGROUND_LIMIT = int(os.getenv("TRACKING_REFRESH_BACKGROUND_LIMIT", "250"))
@@ -242,6 +257,209 @@ def parse_date_timestamp(value):
         return parsed.timestamp()
     except (OverflowError, OSError, ValueError):
         return 0.0
+
+
+def format_daraz_date(value):
+    """Return a compact date without failing on Daraz's supported timestamp variants."""
+    if not value:
+        return "N/A"
+    parsed = parse_date_for_sort(value)
+    if parsed == datetime.min:
+        return str(value)
+    return parsed.strftime("%Y-%m-%d")
+
+
+def daraz_configuration():
+    values = {
+        "app_key": (os.getenv("DARAZ_APP_KEY") or "").strip(),
+        "app_secret": (os.getenv("DARAZ_APP_SECRET") or "").strip(),
+    }
+    missing = ["DARAZ_" + name.upper() for name, value in values.items() if not value]
+    if missing:
+        raise RuntimeError(f"Daraz is not configured. Set {', '.join(missing)}.")
+    return values
+
+
+def execute_daraz_request(client, path, access_token, **parameters):
+    api_request = lazop.LazopRequest(path, "GET")
+    for key, value in parameters.items():
+        if value is not None:
+            api_request.add_api_param(key, str(value))
+    response = client.execute(api_request, access_token)
+    body = response.body if isinstance(response.body, dict) else {}
+    code = str(body.get("code", "0"))
+    if code != "0":
+        message = body.get("message") or body.get("detail") or "Unknown Daraz API error"
+        raise RuntimeError(f"Daraz API {path} failed ({code}): {message}")
+    return body
+
+
+def daraz_tracking_statuses(trace_body):
+    tracking_statuses = {}
+    result = trace_body.get("result") or {}
+    trace_groups = result.get("data") or []
+    if isinstance(trace_groups, dict):
+        trace_groups = [trace_groups]
+    for trace_group in trace_groups:
+        if not isinstance(trace_group, dict):
+            continue
+        packages = trace_group.get("package_detail_info_list") or []
+        for package in packages:
+            tracking_number = str(package.get("tracking_number") or "").strip()
+            events = package.get("logistic_detail_info_list") or []
+            latest_event = events[-1] if events and isinstance(events[-1], dict) else {}
+            if tracking_number:
+                tracking_statuses[tracking_number] = latest_event.get("title") or "N/A"
+    return tracking_statuses
+
+
+def normalize_daraz_order(order, status, items, tracking_statuses):
+    shipping_address = order.get("address_shipping") or {}
+    if not isinstance(shipping_address, dict):
+        shipping_address = {"address1": str(shipping_address)}
+
+    address = shipping_address.get("address") or " ".join(
+        str(shipping_address.get(key) or "").strip()
+        for key in ("address1", "address2", "address3", "address4", "address5")
+        if shipping_address.get(key)
+    )
+    item_details = []
+    for item in items:
+        tracking_number = str(item.get("tracking_code") or "").strip()
+        item_title = str(item.get("name") or "Unknown item").strip()
+        variation = str(item.get("variation") or "").strip()
+        if variation:
+            item_title = f"{item_title} - {variation.replace('Color family:', '').strip()}"
+        item_details.append(
+            {
+                "item_image": item.get("product_main_image") or "",
+                "item_title": item_title,
+                "quantity": 1,
+                "tracking_number": tracking_number or "N/A",
+                "status": tracking_statuses.get(tracking_number, "N/A"),
+            }
+        )
+
+    first_name = str(order.get("customer_first_name") or "").strip()
+    last_name = str(order.get("customer_last_name") or "").strip()
+    customer_name = " ".join(part for part in (first_name, last_name) if part) or "Unknown"
+    return {
+        "order_id": order.get("order_id") or "Unknown",
+        "customer": {
+            "name": customer_name,
+            "address": address or "N/A",
+            "phone": shipping_address.get("phone") or order.get("customer_phone") or "N/A",
+        },
+        "status": str(status).replace("_", " ").title(),
+        "date": format_daraz_date(order.get("created_at")),
+        "created_at": order.get("created_at") or "",
+        "total_price": order.get("price") or "0.00",
+        "items_list": item_details,
+    }
+
+
+def get_daraz_orders(statuses=None):
+    config = daraz_configuration()
+    access_token = get_access_token()
+    client = lazop.LazopClient(
+        DARAZ_API_URL,
+        config["app_key"],
+        config["app_secret"],
+        timeout=30,
+    )
+    selected_statuses = tuple(statuses or DARAZ_ORDER_STATUSES)
+    now = datetime.now().astimezone()
+    created_after = (now - timedelta(days=DARAZ_ORDER_LOOKBACK_DAYS)).isoformat(timespec="seconds")
+    all_orders = []
+
+    for status in selected_statuses:
+        offset = 0
+        for _ in range(DARAZ_MAX_PAGES_PER_STATUS):
+            order_body = execute_daraz_request(
+                client,
+                "/orders/get",
+                access_token,
+                sort_direction="DESC",
+                sort_by="updated_at",
+                created_after=created_after,
+                update_after=created_after,
+                offset=offset,
+                limit=DARAZ_PAGE_LIMIT,
+                status=status,
+            )
+            orders = (order_body.get("data") or {}).get("orders") or []
+            for order in orders:
+                order_id = order.get("order_id")
+                item_body = execute_daraz_request(
+                    client,
+                    "/order/items/get",
+                    access_token,
+                    order_id=order_id,
+                )
+                items = item_body.get("data") or []
+                trace_body = execute_daraz_request(
+                    client,
+                    "/logistic/order/trace",
+                    access_token,
+                    order_id=order_id,
+                )
+                all_orders.append(
+                    normalize_daraz_order(order, status, items, daraz_tracking_statuses(trace_body))
+                )
+            if len(orders) < DARAZ_PAGE_LIMIT:
+                break
+            offset += DARAZ_PAGE_LIMIT
+
+    all_orders.sort(key=lambda order: parse_date_timestamp(order.get("created_at")), reverse=True)
+    return all_orders
+
+
+def get_app_base_url():
+    explicit = (
+        os.getenv("APP_BASE_URL")
+        or os.getenv("PUBLIC_APP_BASE_URL")
+        or os.getenv("SHOPIFY_APP_BASE_URL")
+        or ""
+    ).strip()
+    return explicit.rstrip("/") if explicit else "https://dashboard.thesleekspace.com"
+
+
+def get_daraz_callback_url():
+    return f"{get_app_base_url()}/daraz"
+
+
+def get_daraz_authorize_url():
+    app_key = (os.getenv("DARAZ_APP_KEY") or "").strip()
+    if not app_key:
+        return ""
+    callback = quote(get_daraz_callback_url(), safe="")
+    return (
+        "https://api.daraz.pk/oauth/authorize"
+        f"?response_type=code&redirect_uri={callback}&client_id={quote(app_key, safe='')}"
+    )
+
+
+def refresh_daraz_cache_if_needed(force=False):
+    global daraz_orders_cache, daraz_refresh_attempted, daraz_last_error
+    if daraz_orders_cache and not force:
+        return daraz_orders_cache
+    if daraz_refresh_attempted and not force:
+        return daraz_orders_cache
+    if not daraz_refresh_lock.acquire(blocking=False):
+        return daraz_orders_cache
+    try:
+        daraz_refresh_attempted = True
+        refreshed_orders = get_daraz_orders()
+        daraz_last_error = ""
+        if refreshed_orders or force:
+            daraz_orders_cache = refreshed_orders
+        return daraz_orders_cache
+    except Exception as error:
+        daraz_last_error = str(error)
+        print(f"Could not refresh Daraz cache: {error}")
+        return daraz_orders_cache
+    finally:
+        daraz_refresh_lock.release()
 
 
 def normalize_customer_lookup_value(value):
@@ -798,6 +1016,7 @@ def inject_now():
         "now": datetime.now(),
         "skip_base_password_prompt": bool(session.get(ADMIN_PORTAL_SESSION_KEY)),
         "embedded_mode": request.args.get("embedded") == "1",
+        "daraz_oauth_url": get_daraz_authorize_url(),
     }
 
 
@@ -3318,6 +3537,32 @@ def serialize_shopify_order_for_employee(order):
     }
 
 
+def serialize_daraz_order_for_employee(order):
+    customer = order.get("customer") or {}
+    return {
+        "source": "daraz",
+        "source_label": "Daraz",
+        "shopify_id": None,
+        "order_id": str(order.get("order_id", "")),
+        "status": order.get("status", ""),
+        "customer_name": customer.get("name", ""),
+        "customer_phone": customer.get("phone", ""),
+        "customer_city": "",
+        "total_price": order.get("total_price", 0),
+        "created_at": order.get("created_at") or order.get("date", ""),
+        "items": [
+            {
+                "title": item.get("item_title", ""),
+                "quantity": item.get("quantity", 0),
+                "image": item.get("item_image", ""),
+                "tracking_number": item.get("tracking_number", "N/A"),
+                "status": item.get("status", ""),
+            }
+            for item in order.get("items_list", [])
+        ],
+    }
+
+
 def serialize_aghaje_order_for_employee(order):
     return {
         "source": "aghaje",
@@ -3356,7 +3601,9 @@ def build_aghaje_employee_portal_orders():
 
 
 def build_employee_portal_orders():
+    refresh_daraz_cache_if_needed()
     employee_orders = [serialize_shopify_order_for_employee(order) for order in order_details]
+    employee_orders.extend(serialize_daraz_order_for_employee(order) for order in daraz_orders_cache)
     employee_orders.extend(build_aghaje_employee_portal_orders())
     return sorted(
         employee_orders,
@@ -3366,11 +3613,17 @@ def build_employee_portal_orders():
 
 
 def build_safe_employee_portal_orders():
+    refresh_daraz_cache_if_needed()
     employee_orders = []
     try:
         employee_orders = [serialize_shopify_order_for_employee(order) for order in order_details]
     except Exception as error:
         print(f"Could not load Sleek Space employee portal orders: {error}")
+
+    try:
+        employee_orders.extend(serialize_daraz_order_for_employee(order) for order in daraz_orders_cache)
+    except Exception as error:
+        print(f"Could not load Daraz employee portal orders: {error}")
 
     try:
         employee_orders.extend(build_aghaje_employee_portal_orders())
@@ -3427,14 +3680,71 @@ def employee_portal_source_label(source):
     source = str(source or "").strip().lower()
     if source == "aghaje":
         return "AghaJe"
+    if source == "daraz":
+        return "Daraz"
     if source in {"shopify", "sleekspace", "sleek-space"}:
         return "Sleek Space"
     return source or "Unknown"
 
 
 def build_pending_orders_mobile_data():
+    refresh_daraz_cache_if_needed()
     all_orders = []
     statuses = load_order_statuses()
+
+    for daraz_order in daraz_orders_cache:
+        if daraz_order.get("status") not in {"Ready To Ship", "Pending", "Packed", "Packed by seller / warehouse"}:
+            continue
+        items = []
+        for item in daraz_order.get("items_list", []):
+            track_num = item.get("tracking_number", "N/A")
+            key = f"{daraz_order.get('order_id')}:{track_num}"
+            normalized_item = dict(item)
+            normalized_item.update(
+                {
+                    "product_id": None,
+                    "variant_id": None,
+                    "unit_price": 0,
+                    "unit_cost": 0,
+                    "line_total": 0,
+                    "line_cost_total": 0,
+                    "applied_status": statuses.get(key, ""),
+                }
+            )
+            items.append(normalized_item)
+        if not items:
+            continue
+        customer = daraz_order.get("customer") or {}
+        total_price = parse_money(daraz_order.get("total_price", 0))
+        all_orders.append(
+            {
+                "order_via": "Daraz",
+                "shopify_id": None,
+                "order_link": None,
+                "order_id": daraz_order.get("order_id"),
+                "status": daraz_order.get("status", ""),
+                "tags": [],
+                "customer_name": customer.get("name", ""),
+                "customer_phone": customer.get("phone", ""),
+                "customer_address": customer.get("address", ""),
+                "customer_city": "",
+                "is_lahore": False,
+                "date": daraz_order.get("created_at") or daraz_order.get("date", ""),
+                "items_list": items,
+                "financial_status": "pending",
+                "payment_status_label": "Pending",
+                "payment_status_class": "pending",
+                "subtotal_price": total_price,
+                "current_subtotal_price": total_price,
+                "shipping_charges": 0,
+                "total_discounts": 0,
+                "total_price": total_price,
+                "current_total_price": total_price,
+                "display_total_price": total_price,
+                "pending_total_price": total_price,
+                "pending_total_cost": 0,
+            }
+        )
 
     for shopify_order in order_details:
         if any(tag.startswith("Dispatched") for tag in shopify_order.get("tags", [])):
@@ -4223,10 +4533,12 @@ def apply_tag():
 
 @app.route("/")
 def tracking():
+    if not daraz_orders_cache:
+        refresh_daraz_cache_if_needed()
     return render_template(
         "track.html",
         order_details=order_details,
-        darazOrders=[],
+        darazOrders=daraz_orders_cache,
         employee_approvals=build_employee_approval_items(),
         abandoned_summary=get_abandoned_summary_safe(),
     )
@@ -4236,13 +4548,14 @@ def tracking():
 def refresh_data():
     try:
         refreshed_all = reload_orders(preserve_existing_on_partial=True)
+        daraz_rows = refresh_daraz_cache_if_needed(force=True)
         if request.headers.get("X-Requested-With") == "XMLHttpRequest" or request.is_json:
             message = "Data refreshed successfully" if refreshed_all else "Tracking refreshed; existing order cache preserved"
-            return jsonify({"message": message})
+            return jsonify({"message": message, "daraz_count": len(daraz_rows)})
         return render_template(
             "track.html",
             order_details=order_details,
-            darazOrders=[],
+            darazOrders=daraz_rows,
             employee_approvals=build_employee_approval_items(),
             abandoned_summary=get_abandoned_summary_safe(),
         )
@@ -4304,6 +4617,54 @@ def tracking_summary(tracking_num):
 def pending_orders():
     all_orders, pending_items, summary = build_pending_items_table_data()
     return render_template("pending.html", all_orders=all_orders, pending_items=pending_items, summary=summary)
+
+
+@app.route("/daraz")
+def daraz_callback():
+    code = (request.args.get("code") or "").strip()
+    if code:
+        try:
+            config = daraz_configuration()
+            client = lazop.LazopClient(DARAZ_API_URL, config["app_key"], config["app_secret"])
+            token_request = lazop.LazopRequest("/auth/token/create")
+            token_request.add_api_param("code", code)
+            body = client.execute(token_request).body or {}
+            if not body.get("access_token"):
+                raise RuntimeError(body.get("message") or body.get("code") or "Daraz authorization failed")
+            save_tokens(
+                body["access_token"],
+                body.get("refresh_token"),
+                body.get("expires_in") or 604800,
+            )
+            refresh_daraz_cache_if_needed(force=True)
+            return redirect(url_for("daraz_orders_page"))
+        except Exception as error:
+            return render_template("daraz.html", darazOrders=[], error_message=str(error)), 400
+    return daraz_orders_page()
+
+
+@app.route("/daraz/orders")
+def daraz_orders_page():
+    rows = refresh_daraz_cache_if_needed(force=True)
+    tokens = load_tokens()
+    error_message = daraz_last_error
+    if not error_message and not rows and not tokens:
+        error_message = "Daraz is not authenticated. Use Connect Daraz to authorize this store."
+    return render_template("daraz.html", darazOrders=rows, error_message=error_message)
+
+
+@app.route("/daraz/token-status")
+def daraz_token_status():
+    tokens = load_tokens()
+    if not tokens:
+        return jsonify({"status": "missing"})
+    expires_at_raw = str(tokens.get("expires_at") or "")
+    try:
+        expires_at = datetime.fromisoformat(expires_at_raw)
+        days_left = (expires_at - datetime.now()).days
+    except ValueError:
+        days_left = None
+    return jsonify({"status": "ok", "expires_at": expires_at_raw, "days_left": days_left})
 
 
 @app.route("/aghaje-orders")
@@ -4592,8 +4953,19 @@ def pending_orders_mobile():
 
 @app.route("/undelivered")
 def undelivered():
+    refresh_daraz_cache_if_needed()
     undelivered_orders = [order for order in order_details if is_undelivered_status(order.get("status"))]
-    return render_template("undelivered.html", order_details=undelivered_orders, darazOrders=[])
+    daraz_undelivered_orders = [
+        order
+        for order in daraz_orders_cache
+        if is_undelivered_status(order.get("status"))
+        or any(is_undelivered_status(item.get("status")) for item in order.get("items_list", []))
+    ]
+    return render_template(
+        "undelivered.html",
+        order_details=undelivered_orders,
+        darazOrders=daraz_undelivered_orders,
+    )
 
 
 @app.route("/shopify/protected-data/status")

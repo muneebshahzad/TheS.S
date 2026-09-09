@@ -231,6 +231,15 @@
                 <!-- Begin Page Content -->
                 <div class="container-fluid">
 
+                    {% if error_message %}
+                    <div class="alert alert-warning" role="alert">
+                        <strong>Daraz orders could not be loaded.</strong> {{ error_message }}
+                        {% if daraz_oauth_url %}
+                        <a class="btn btn-sm btn-primary ml-2" href="{{ daraz_oauth_url }}">Connect Daraz</a>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
                     <!-- Page Heading -->
                     <h1 class="h3 mb-2 text-gray-800">Order Tracking</h1>
 
@@ -268,8 +277,7 @@
                                                 <td>{{ order.order_id }} </td>
                                                 <td>
                     {{ order.customer.name }}<br>
-                    {{ order.customer.address.address1}}  {{order.customer.address.address5}}<br>
-                    {{ order.customer.address.address4 }}<br>
+                    {{ order.customer.address }}<br>
                     {{ order.customer.phone }}<br>
                     <a href="tel:{{ order.customer.phone }}" class="btn btn-primary btn-sm">Call</a>
                     <div class="btn-group">
@@ -277,11 +285,11 @@
                             WhatsApp
                         </button>
                          <div class="dropdown-menu">
-                            <a class="dropdown-item" href="https://wa.me/{{ order.customer.phone }}?text=Hello%20{{ order.customer.name }},%20Your%20order%23{{ order.order_id }}%20from%20TickBags.com%20has%20been%20dispatched%20and%20is%20expected%20to%20be%20delivered%20in%203-7%20working%20days.%20Your%20patience%20is%20highly%20appreciated." target="_blank">Send Dispatch Message</a>
-                            <a class="dropdown-item" href="https://wa.me/{{ order.customer.phone }}?text=Hello%20{{ order.customer.name }},%20Your%20order%23{{ order.order_id }}%20from%20TickBags.com%20has%20been%20delayed,%20please%20be%20assured%20that%20we%20are%20trying%20our%20best%20to%20deliver%20it%20at%20earliest.%20Your%20patience%20is%20highly%20appreciated." target="_blank">Send Delay Message</a>
-                            <a class="dropdown-item" href="https://wa.me/{{ order.customer.phone }}?text=Hello%20{{ order.customer.name }},%20Logistics%20company%20made%20an%20attempt%20to%20deliver%20your%20order%23{{ order.order_id }}%20from%20TickBags.com%20but%20as%20per%20them,%20you%20weren't%20available%20at%20address%20or%20the%20address%20was%20closed.%20Please%20let%20us%20know%20when%20should%20we%20re-arrange%20the%20delivery.%20Thank%20You" target="_blank">Send Address Closed Message</a>
-                            <a class="dropdown-item" href="https://wa.me/{{ order.customer.phone }}?text=Hello%20{{ order.customer.name }},%20Logistics%20company%20made%20an%20attempt%20to%20deliver%20your%20order%23{{ order.order_id }}%20from%20TickBags.com%20and%20according%20to%20them,%20you%20refused%20to%20accept%20the%20delivery.%20Please%20let%20us%20know%20if%20you're%20still%20interested%20in%20receiving%20the%20product." target="_blank">Send Refused Message</a>
-                            <a class="dropdown-item" href="https://wa.me/{{ order.customer.phone }}?text=Hello%20{{ order.customer.name }},%20Your%20order%23{{ order.order_id }}%20from%20TickBags.com%20was%20delivered%20recently.%20Please%20let%20us%20know%20about%20your%20experience%20with%20us.%20Your%20feedback%20will%20surely%20help%20us%20improve.%20Thank%20You!" target="_blank">Send Feedback Message</a>
+                            <a class="dropdown-item" href="https://wa.me/{{ order.customer.phone }}?text=Hello%20{{ order.customer.name }},%20Your%20order%23{{ order.order_id }}%20from%20TheSleekSpace.com%20has%20been%20dispatched%20and%20is%20expected%20to%20be%20delivered%20in%203-7%20working%20days.%20Your%20patience%20is%20highly%20appreciated." target="_blank">Send Dispatch Message</a>
+                            <a class="dropdown-item" href="https://wa.me/{{ order.customer.phone }}?text=Hello%20{{ order.customer.name }},%20Your%20order%23{{ order.order_id }}%20from%20TheSleekSpace.com%20has%20been%20delayed,%20please%20be%20assured%20that%20we%20are%20trying%20our%20best%20to%20deliver%20it%20at%20earliest.%20Your%20patience%20is%20highly%20appreciated." target="_blank">Send Delay Message</a>
+                            <a class="dropdown-item" href="https://wa.me/{{ order.customer.phone }}?text=Hello%20{{ order.customer.name }},%20Logistics%20company%20made%20an%20attempt%20to%20deliver%20your%20order%23{{ order.order_id }}%20from%20TheSleekSpace.com%20but%20as%20per%20them,%20you%20weren't%20available%20at%20address%20or%20the%20address%20was%20closed.%20Please%20let%20us%20know%20when%20should%20we%20re-arrange%20the%20delivery.%20Thank%20You" target="_blank">Send Address Closed Message</a>
+                            <a class="dropdown-item" href="https://wa.me/{{ order.customer.phone }}?text=Hello%20{{ order.customer.name }},%20Logistics%20company%20made%20an%20attempt%20to%20deliver%20your%20order%23{{ order.order_id }}%20from%20TheSleekSpace.com%20and%20according%20to%20them,%20you%20refused%20to%20accept%20the%20delivery.%20Please%20let%20us%20know%20if%20you're%20still%20interested%20in%20receiving%20the%20product." target="_blank">Send Refused Message</a>
+                            <a class="dropdown-item" href="https://wa.me/{{ order.customer.phone }}?text=Hello%20{{ order.customer.name }},%20Your%20order%23{{ order.order_id }}%20from%20TheSleekSpace.com%20was%20delivered%20recently.%20Please%20let%20us%20know%20about%20your%20experience%20with%20us.%20Your%20feedback%20will%20surely%20help%20us%20improve.%20Thank%20You!" target="_blank">Send Feedback Message</a>
                         </div>
                     </div>
                 </td>
@@ -314,6 +322,8 @@
                                                     </table>
                                                 </td>
                                             </tr>
+                                        {% else %}
+                                            <tr><td colspan="6" class="text-center text-muted py-4">No Daraz orders found.</td></tr>
                                         {% endfor %}
                                     </tbody>
                                 </table>
