@@ -233,6 +233,17 @@ def active_shopify_line_item_quantity(line_item, *, use_original_quantity=False)
         return 0
 
 
+def current_shopify_order_money(order, current_field, original_field):
+    """Prefer Shopify's post-edit amount while preserving legitimate zero totals."""
+    if isinstance(order, dict):
+        current_value = order.get(current_field)
+        original_value = order.get(original_field)
+    else:
+        current_value = getattr(order, current_field, None)
+        original_value = getattr(order, original_field, None)
+    return parse_money(original_value if current_value is None else current_value, 0)
+
+
 def parse_date_for_sort(value):
     if not value:
         return datetime.min
@@ -3160,17 +3171,27 @@ def summarize_tracking_result(tracking_number, data):
 
 
 async def process_line_item(session_obj, line_item, fulfillments):
-    if line_item.fulfillment_status is None and getattr(line_item, "fulfillable_quantity", 0) == 0:
+    active_quantity = active_shopify_line_item_quantity(line_item)
+    if active_quantity <= 0:
         return []
 
     tracking_info = []
+    remaining_quantity = active_quantity
 
     if line_item.fulfillment_status == "fulfilled":
         for fulfillment in fulfillments:
+            if remaining_quantity <= 0:
+                break
             if getattr(fulfillment, "status", "") == "cancelled":
                 continue
             for item in getattr(fulfillment, "line_items", []) or []:
+                if remaining_quantity <= 0:
+                    break
                 if getattr(item, "id", None) != getattr(line_item, "id", None):
+                    continue
+                fulfilled_quantity = parse_int(getattr(item, "quantity", active_quantity), active_quantity)
+                quantity = min(max(fulfilled_quantity, 0), remaining_quantity)
+                if quantity <= 0:
                     continue
                 tracking_number = getattr(fulfillment, "tracking_number", "") or "N/A"
                 try:
@@ -3184,13 +3205,14 @@ async def process_line_item(session_obj, line_item, fulfillments):
                         "tracking_number": tracking_number,
                         "courier_name": courier_label_for_tracking("", tracking_number) or "Call Courier",
                         "status": summary["status"],
-                        "quantity": getattr(item, "quantity", getattr(line_item, "quantity", 1)),
+                        "quantity": quantity,
                         "name": summary["name"],
                         "address": summary["address"],
                         "city": summary["city"],
                         "phone": summary["phone"],
                     }
                 )
+                remaining_quantity -= quantity
 
     if tracking_info:
         return tracking_info
@@ -3204,7 +3226,7 @@ async def process_line_item(session_obj, line_item, fulfillments):
             "address": "",
             "phone": "",
             "city": "",
-            "quantity": getattr(line_item, "quantity", 1),
+            "quantity": active_quantity,
         }
     ]
 
@@ -3236,15 +3258,25 @@ async def process_order(session_obj, order):
         "phone": getattr(billing, "phone", None) or getattr(shipping, "phone", None) or getattr(order, "phone", "") or "",
     }
 
+    original_total_price = parse_money(getattr(order, "total_price", 0))
+    original_subtotal_price = parse_money(getattr(order, "subtotal_price", 0))
+    current_total_price = current_shopify_order_money(order, "current_total_price", "total_price")
+    current_subtotal_price = current_shopify_order_money(order, "current_subtotal_price", "subtotal_price")
+    current_total_discounts = current_shopify_order_money(order, "current_total_discounts", "total_discounts")
+
     order_info = {
         "order_link": f"https://admin.shopify.com/store/{get_shop_domain().split('.')[0]}/orders/{order.id}",
         "order_id": getattr(order, "name", ""),
         "tracking_id": "N/A",
         "created_at": created_at_display,
-        "total_price": parse_money(getattr(order, "total_price", 0)),
-        "subtotal_price": parse_money(getattr(order, "subtotal_price", 0)),
+        "total_price": current_total_price,
+        "subtotal_price": current_subtotal_price,
+        "current_total_price": current_total_price,
+        "current_subtotal_price": current_subtotal_price,
+        "original_total_price": original_total_price,
+        "original_subtotal_price": original_subtotal_price,
         "shipping_charges": parse_money(getattr(order, "total_shipping_price_set", {}).get("shop_money", {}).get("amount", 0) if isinstance(getattr(order, "total_shipping_price_set", None), dict) else 0),
-        "total_discounts": parse_money(getattr(order, "total_discounts", 0)),
+        "total_discounts": current_total_discounts,
         "line_items": [],
         "financial_status": (getattr(order, "financial_status", "") or "").title(),
         "fulfillment_status": order_status,
