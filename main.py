@@ -249,15 +249,22 @@ def parse_date_for_sort(value):
         return datetime.min
     raw = str(value).replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(raw)
+        parsed = datetime.fromisoformat(raw)
     except ValueError:
-        pass
-    for fmt in ("%Y-%m-%d %H:%M:%S %z", "%b %d, %Y", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(raw, fmt)
-        except ValueError:
-            continue
-    return datetime.min
+        parsed = None
+    if parsed is None:
+        for fmt in ("%Y-%m-%d %H:%M:%S %z", "%b %d, %Y", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(raw, fmt)
+                break
+            except ValueError:
+                continue
+    if parsed is None:
+        return datetime.min
+    # Shopify's normalized order dates are timezone-naive, while Daraz sends
+    # offset-aware ISO timestamps. Keep their local wall-clock value so mixed
+    # marketplace feeds remain comparable and sortable.
+    return parsed.replace(tzinfo=None)
 
 
 def parse_date_timestamp(value):
