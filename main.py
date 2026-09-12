@@ -3967,6 +3967,17 @@ def apply_shopify_order_tag(order_id, tag, include_date=False):
     return order.save()
 
 
+def remove_shopify_order_tag(order_id, tag):
+    order = shopify.Order.find(order_id)
+    target = str(tag or "").strip().lower()
+    tags = [item.strip() for item in str(getattr(order, "tags", "") or "").split(",") if item.strip()]
+    remaining_tags = [item for item in tags if item.lower() != target]
+    if remaining_tags == tags:
+        return True
+    order.tags = ", ".join(remaining_tags)
+    return order.save()
+
+
 def mark_shopify_order_as_paid(order_id):
     token = get_graphql_token()
     endpoint = get_graphql_endpoint()
@@ -5258,6 +5269,41 @@ def approve_employee_status():
         return jsonify({"success": True, "message": message, "warnings": warnings})
     except Exception as error:
         return jsonify({"success": False, "error": str(error)}), 500
+
+
+@app.route("/employee_status/reject", methods=["POST"])
+def reject_employee_status():
+    data = request.get_json() or {}
+    order_id = str(data.get("order_id") or "")
+    tracking_number = str(data.get("tracking_number") or "N/A")
+    requested_status = str(data.get("requested_status") or "").strip()
+    key = f"{order_id}:{tracking_number}"
+
+    if requested_status not in {"Delivered in Lahore", "Cancelled by Employee"}:
+        return jsonify({"success": False, "error": "Unsupported employee approval status."}), 400
+
+    warnings = []
+    if requested_status == "Delivered in Lahore":
+        matching_order = find_shopify_order_by_order_name(order_id)
+        if matching_order and matching_order.get("id"):
+            try:
+                if remove_shopify_order_tag(matching_order["id"], "Delivered in Lahore") is False:
+                    warnings.append("Could not remove the preliminary Shopify delivery tag.")
+                else:
+                    matching_order["tags"] = [
+                        tag for tag in matching_order.get("tags", [])
+                        if str(tag).strip().lower() != "delivered in lahore"
+                    ]
+            except Exception as error:
+                warnings.append(f"Could not remove the preliminary Shopify delivery tag: {error}")
+
+    if delete_order_status(key) is False:
+        return jsonify({"success": False, "error": "Could not clear the employee approval request."}), 500
+
+    message = f"Rejected {requested_status} for {order_id}."
+    if warnings:
+        message = f"{message} Warnings: {' '.join(warnings)}"
+    return jsonify({"success": True, "message": message, "warnings": warnings})
 
 
 @app.route("/employee_portal", methods=["GET", "POST"])

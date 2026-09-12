@@ -54,6 +54,8 @@
   .approval-request { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 10px; font-weight: 700; white-space: nowrap; margin-bottom: 6px; }
   .approval-request.deliver { background: #fff3cd; color: #8b5a00; }
   .approval-request.cancel { background: #fde8e6; color: #b12727; }
+  .btn-reject { background: #fff; color: #6b7280; border: 1px solid #cfd4df; }
+  .btn-reject:hover { background: #f4f5f8; color: #3a3b45; }
 
   /* ── Shipper advice ── */
   .shipper-advice-card { background: #fff4eb; border: 1px solid #f2d1a6; border-radius: 12px; overflow: hidden; }
@@ -300,6 +302,11 @@
               </div>
             </div>
             <div class="approval-actions">
+              <button
+                class="btn btn-reject"
+                onclick="rejectEmployeeRequest('{{ approval.order_id }}', '{{ approval.tracking_number }}', '{{ approval.requested_status }}')">
+                Reject
+              </button>
               <button
                 class="btn {% if approval.requested_status == 'Delivered in Lahore' %}btn-success{% else %}btn-danger{% endif %}"
                 onclick="approveEmployeeRequest('{{ approval.order_id }}', '{{ approval.tracking_number }}', '{{ approval.requested_status }}')">
@@ -1004,6 +1011,25 @@ function approveEmployeeRequest(orderId, trackingNumber, requestedStatus) {
     showToast('Failed: ' + (d.error || 'Approval failed'));
   })
   .catch(() => showToast('Approval request failed'));
+}
+
+function rejectEmployeeRequest(orderId, trackingNumber, requestedStatus) {
+  if (!confirm(`Reject the employee request “${requestedStatus}” for ${orderId}?`)) return;
+  fetch('/employee_status/reject', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ order_id: orderId, tracking_number: trackingNumber, requested_status: requestedStatus })
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.success) {
+      showToast(d.message || 'Employee request rejected');
+      setTimeout(() => location.reload(), 900);
+      return;
+    }
+    showToast('Failed: ' + (d.error || 'Rejection failed'));
+  })
+  .catch(() => showToast('Rejection request failed'));
 }
 
 // ── Bulk selection ──
