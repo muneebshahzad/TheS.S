@@ -60,6 +60,12 @@ from token_manager import get_access_token, load_tokens, save_tokens
 
 app = Flask(__name__)
 app.secret_key = os.getenv("APP_SECRET_KEY", "default_secret_key")
+from analytics_routes import analytics
+app.register_blueprint(analytics)
+
+
+def analytics_enabled():
+    return os.getenv("ORDER_ANALYTICS_ENABLED") == "true"
 
 EMPLOYEE_PORTAL_SESSION_KEY = "employee_portal_authenticated"
 ADMIN_PORTAL_SESSION_KEY = "admin_portal_authenticated"
@@ -2193,7 +2199,8 @@ def fetch_tracking_data_sync(tracking_number):
 def build_tracking_summary_payload(tracking_number):
     data = fetch_tracking_data_sync(tracking_number)
     summary = summarize_tracking_result(tracking_number, data)
-    remember_tracking_summary(tracking_number, summary)
+    if tracking_data_is_valid(tracking_number, data):
+        remember_tracking_summary(tracking_number, summary)
     events = []
     if is_leopards_tracking(tracking_number):
         packet_list = (data or {}).get("packet_list") or []
@@ -2213,6 +2220,7 @@ def build_tracking_summary_payload(tracking_number):
         "tracking_number": tracking_number,
         "courier": courier_label_for_tracking("", tracking_number) or "Call Courier",
         "status": summary.get("status") or "No tracking status",
+        "tracking_observed": tracking_data_is_valid(tracking_number, data),
         "customer": summary.get("name") or "",
         "city": summary.get("city") or "",
         "phone": summary.get("phone") or "",
@@ -2274,6 +2282,11 @@ def remember_tracking_summary(tracking_number, summary, fetched_at=None):
     tracking_number = str(tracking_number or "").strip()
     if not tracking_number or not summary or not summary.get("status"):
         return False
+    if analytics_enabled():
+        from analytics_store import sync_tracking
+        from datetime import timezone
+        observed = datetime.fromtimestamp(fetched_at or time.time(), timezone.utc)
+        sync_tracking(tracking_number, summary, observed)
     ensure_tracking_summary_cache_loaded()
     tracking_summary_cache[tracking_number.upper()] = {
         "fetched_at": fetched_at or time.time(),
@@ -2364,7 +2377,7 @@ def refresh_tracking_summaries_sync(
                     except Exception as error:
                         print(f"Could not refresh tracking summary for {tracking_number}: {error}")
                         return None
-                    if not summary or not summary.get("status"):
+                    if not tracking_data_is_valid(tracking_number, data) or not summary or not summary.get("status"):
                         return None
                     return tracking_number.upper(), summary
 
@@ -2389,6 +2402,11 @@ def refresh_tracking_summaries_sync(
                 except Exception as error:
                     print(f"Could not complete tracking refresh task: {error}")
             if updates:
+                if analytics_enabled():
+                    from analytics_store import sync_tracking
+                    from datetime import timezone
+                    for number, entry in updates.items():
+                        sync_tracking(number, entry["summary"], datetime.fromtimestamp(entry["fetched_at"], timezone.utc))
                 tracking_summary_cache.update(updates)
                 persist_tracking_summary_cache()
             if pending:
@@ -3000,6 +3018,13 @@ def ensure_required_shopify_webhooks():
         "checkouts/create": f"{app_base_url}/shopify/webhook/checkout_created",
         "checkouts/update": f"{app_base_url}/shopify/webhook/checkout_updated",
     }
+    if analytics_enabled():
+        desired.update({
+            "orders/cancelled": f"{app_base_url}/shopify/webhook/order_cancelled",
+            "fulfillments/create": f"{app_base_url}/shopify/webhook/fulfillment_updated",
+            "fulfillments/update": f"{app_base_url}/shopify/webhook/fulfillment_updated",
+            "refunds/create": f"{app_base_url}/shopify/webhook/refund_created",
+        })
 
     response = requests.get(f"{base_url}/webhooks.json", headers=headers, timeout=20)
     response.raise_for_status()
@@ -3130,6 +3155,13 @@ def get_variant_image_and_title(product, line_item):
     return image_src, variant_name, inventory_item_id
 
 
+def tracking_data_is_valid(tracking_number, data):
+    if is_leopards_tracking(tracking_number):
+        packets = data.get("packet_list", []) if isinstance(data, dict) else []
+        return bool(packets and (packets[0].get("booked_packet_status") or packets[0].get("Tracking Detail")))
+    return bool(isinstance(data, list) and data and data[-1].get("ProcessDescForPortal"))
+
+
 def summarize_tracking_result(tracking_number, data):
     if not tracking_number or tracking_number == "N/A":
         return {
@@ -3212,6 +3244,7 @@ async def process_line_item(session_obj, line_item, fulfillments):
                         "tracking_number": tracking_number,
                         "courier_name": courier_label_for_tracking("", tracking_number) or "Call Courier",
                         "status": summary["status"],
+                        "tracking_observed": tracking_data_is_valid(tracking_number, data),
                         "quantity": quantity,
                         "name": summary["name"],
                         "address": summary["address"],
@@ -3340,6 +3373,7 @@ async def process_order(session_obj, order):
                     "tracking_number": info["tracking_number"],
                     "courier_name": info.get("courier_name", ""),
                     "status": info["status"],
+                    "tracking_observed": info.get("tracking_observed", False),
                     "name": info.get("name", ""),
                     "address": info.get("address", ""),
                     "city": info.get("city", ""),
@@ -3347,6 +3381,14 @@ async def process_order(session_obj, order):
                 }
             )
     order_info["status"] = aggregate_order_status(order_info["line_items"])
+
+    if analytics_enabled():
+        from analytics_store import sync_order, sync_tracking
+        sync_order(order.to_dict(), source="shopify_sync")
+        for item in order_info["line_items"]:
+            number = item.get("tracking_number")
+            if number and number != "N/A" and item.get("tracking_observed"):
+                sync_tracking(number, {"status": item["status"]})
 
     return order_info
 
@@ -4495,6 +4537,7 @@ def verify_shopify_webhook(req):
 def build_admin_mobile_sections():
     return [
         {"id": "dashboard", "label": "Dashboard", "icon": "🏠", "src": "/?embedded=1"},
+        {"id": "analytics", "label": "Analytics", "icon": "📊", "src": "/analytics"},
         {"id": "scanner", "label": "Scanner", "icon": "🔍", "src": "/employee_portal"},
         {"id": "employee-orders", "label": "Orders", "icon": "🧾", "src": "/employee_portal/orders"},
         {"id": "pending", "label": "Pending", "icon": "📋", "src": "/pending?embedded=1"},
@@ -4650,7 +4693,8 @@ def display_tracking(tracking_num):
 
     data = asyncio.run(run_lookup())
     summary = summarize_tracking_result(tracking_num, data)
-    remember_tracking_summary(tracking_num, summary)
+    if tracking_data_is_valid(tracking_num, data):
+        remember_tracking_summary(tracking_num, summary)
     matched_order = find_shopify_order_by_tracking_number(tracking_num)
     return render_template("trackingdata.html", data=data, tracking_number=tracking_num, matched_order=matched_order)
 
@@ -5074,6 +5118,11 @@ def _handle_shopify_order_webhook():
         if not order_id:
             return jsonify({"error": "No order id found in payload"}), 400
 
+        if analytics_enabled():
+            from analytics_store import sync_order
+            sync_order(order_data, event_id=request.headers.get("X-Shopify-Event-Id") or request.headers.get("X-Shopify-Webhook-Id"),
+                       topic=request.headers.get("X-Shopify-Topic", "orders/updated"))
+
         if order_data.get("cancelled_at") or order_data.get("closed_at"):
             order_details = [order for order in order_details if order.get("id") != order_id]
             return jsonify({"success": True, "message": f"Order {order_id} closed and removed"}), 200
@@ -5103,8 +5152,8 @@ def _handle_shopify_order_webhook():
         refresh_abandoned_checkouts_cache_background(force=True)
         return jsonify({"success": True, "message": f"Order {order_id} processed successfully"})
     except Exception as error:
-        print(f"Webhook processing error: {error}")
-        return jsonify({"success": False, "error": str(error)}), 500
+        app.logger.error("Shopify order webhook processing failed; retry required")
+        return jsonify({"success": False, "error": "Order synchronization failed"}), 500
 
 
 def _handle_shopify_checkout_webhook():
@@ -5147,6 +5196,33 @@ def _handle_aghaje_order_webhook():
     except Exception as error:
         print(f"Aghaje webhook processing error: {error}")
         return jsonify({"success": False, "error": str(error)}), 500
+
+
+@app.route("/shopify/webhook/order_cancelled", methods=["POST"])
+def analytics_order_cancelled_webhook():
+    return _handle_shopify_order_webhook()
+
+
+@app.route("/shopify/webhook/fulfillment_updated", methods=["POST"])
+@app.route("/shopify/webhook/refund_created", methods=["POST"])
+def analytics_related_webhook():
+    if not verify_shopify_webhook(request):
+        return jsonify(error="Invalid webhook signature"), 401
+    if not analytics_enabled():
+        return jsonify(error="Analytics not enabled"), 503
+    payload = request.get_json(silent=True) or {}
+    if not payload.get("order_id"):
+        return jsonify(error="Missing order_id"), 400
+    try:
+        from analytics_store import sync_order
+        setup_shopify()
+        order = shopify.Order.find(payload["order_id"])
+        sync_order(order.to_dict(), event_id=request.headers.get("X-Shopify-Event-Id") or request.headers.get("X-Shopify-Webhook-Id"),
+                   topic=request.headers.get("X-Shopify-Topic", "related_update"))
+        return jsonify(success=True)
+    except Exception:
+        app.logger.error("Analytics related webhook failed; Shopify should retry")
+        return jsonify(error="Order synchronization failed"), 503
 
 
 @app.route("/shopify/webhook/order_created", methods=["POST"])
@@ -5516,21 +5592,22 @@ def check_restart_times():
         time.sleep(30)
 
 
-init_db()
-setup_shopify()
-try:
-    ensure_required_shopify_webhooks()
-except Exception as shopify_webhook_error:
-    print(f"Warning: could not ensure Shopify webhooks: {shopify_webhook_error}")
-try:
-    ensure_required_aghaje_webhooks()
-except Exception as aghaje_webhook_error:
-    print(f"Warning: could not ensure Aghaje webhooks: {aghaje_webhook_error}")
-reload_orders()
-try:
-    refresh_abandoned_checkouts_cache_sync(force=True)
-except Exception as abandoned_cache_error:
-    print(f"Warning: could not warm abandoned checkout cache: {abandoned_cache_error}")
+if os.getenv("INITIALIZE_APP", "true") == "true":
+    init_db()
+    setup_shopify()
+    try:
+        ensure_required_shopify_webhooks()
+    except Exception:
+        print("Warning: could not ensure Shopify webhooks")
+    try:
+        ensure_required_aghaje_webhooks()
+    except Exception:
+        print("Warning: could not ensure Aghaje webhooks")
+    reload_orders()
+    try:
+        refresh_abandoned_checkouts_cache_sync(force=True)
+    except Exception:
+        print("Warning: could not warm abandoned checkout cache")
 
 
 if __name__ == "__main__":

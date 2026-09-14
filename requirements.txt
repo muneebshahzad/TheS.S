@@ -5,3 +5,5 @@ Flask~=3.0.3
 ShopifyAPI
 gunicorn
 psycopg2-binary
+google-auth>=2.40,<3
+google-ads>=32,<33

@@ -1,0 +1,85 @@
+{% doc %}
+  Captures consented first-party attribution in cart attributes.
+  @param {string} measurement_id - Existing GA4 web stream measurement ID
+  @example
+  {% render 'ss-attribution', measurement_id: 'G-EXAMPLE' %}
+{% enddoc %}
+<div hidden data-ss-attribution data-measurement-id="{{ measurement_id | escape }}"></div>
+{% javascript %}
+(() => {
+  const root = document.querySelector('[data-ss-attribution]');
+  if (!root || window.ssAttributionInstalled) return;
+  window.ssAttributionInstalled = true;
+  const keys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'gbraid', 'wbraid', 'fbclid', 'meta_campaign_id', 'meta_adset_id', 'meta_ad_id', 'google_campaign_id', 'google_adgroup_id'];
+  const storageKey = 'ss_attribution_v1';
+  const initialUrl = new URL(location.href);
+  const arrival = {};
+  keys.forEach(key => { if (initialUrl.searchParams.has(key)) arrival[key] = initialUrl.searchParams.get(key).slice(0, 250); });
+  const safeUrl = raw => {
+    try { const url = new URL(raw); const clean = new URL(url.origin + url.pathname); keys.forEach(k => { if (url.searchParams.has(k)) clean.searchParams.set(k, url.searchParams.get(k)); }); return clean.href.slice(0, 2000); }
+    catch { return ''; }
+  };
+  arrival.landing_page = safeUrl(location.href);
+  arrival.referring_url = safeUrl(document.referrer);
+  let attrs = {}, pending = Promise.resolve(), bypass = false;
+  const allowed = () => window.Shopify?.customerPrivacy?.analyticsProcessingAllowed() === true;
+  const getId = field => new Promise(resolve => {
+    const timeout = setTimeout(() => resolve(''), 800);
+    if (typeof window.gtag !== 'function' || !root.dataset.measurementId) { clearTimeout(timeout); resolve(''); return; }
+    window.gtag('get', root.dataset.measurementId, field, value => { clearTimeout(timeout); resolve(String(value || '')); });
+  });
+  async function persist() {
+    if (!allowed()) return;
+    let state;
+    try { state = JSON.parse(localStorage.getItem(storageKey)); } catch {}
+    if (!state || state.expires < Date.now()) state = {first: arrival, current: arrival, expires: Date.now() + 90 * 86400000};
+    if (keys.some(key => arrival[key])) state.current = {...arrival};
+    const [clientId, sessionId] = await Promise.all([getId('client_id'), getId('session_id')]);
+    if (!allowed()) return;
+    if (/^\d+\.\d+$/.test(clientId)) state.current.client_id = clientId;
+    if (/^\d+$/.test(sessionId)) state.current.session_id = sessionId;
+    state.current.analytics_consent = 'granted';
+    if (!state.first.client_id && state.current.client_id) state.first.client_id = state.current.client_id;
+    try { localStorage.setItem(storageKey, JSON.stringify(state)); } catch {}
+    attrs = {};
+    for (const [key,value] of Object.entries(state.current)) attrs['ss_' + key] = value;
+    for (const [key,value] of Object.entries(state.first)) attrs['ss_first_' + key] = value;
+    const response = await fetch((window.Shopify?.routes?.root || '/') + 'cart/update.js', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify({attributes:attrs})});
+    if (!response.ok) throw new Error('Attribution cart update failed');
+  }
+  function capture() { pending = pending.catch(() => {}).then(persist).catch(() => {}); return pending; }
+  document.addEventListener('submit', async event => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || bypass || !allowed()) return;
+    const checkout = event.submitter?.name === 'checkout' || form.action.includes('/checkout');
+    if (!checkout) return;
+    event.preventDefault();
+    await capture();
+    if (allowed()) for (const [key,value] of Object.entries(attrs)) {
+      const input = document.createElement('input'); input.type='hidden'; input.name=`attributes[${key}]`; input.value=value; form.append(input);
+    }
+    bypass=true;
+    try { form.requestSubmit(event.submitter); } finally { bypass=false; }
+  }, true);
+  document.addEventListener('click', async event => {
+    const link = event.target.closest?.('a[href]');
+    if (!link || !allowed() || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const url = new URL(link.href, location.href);
+    if (url.origin !== location.origin || !/^\/([a-z]{2}\/)?checkout\/?$/.test(url.pathname)) return;
+    event.preventDefault(); await capture(); location.assign(url.href);
+  });
+  document.addEventListener('visitorConsentCollected', () => {
+    if (allowed()) capture();
+    else {
+      attrs = {}; try { localStorage.removeItem(storageKey); } catch {}
+      const clear = {};
+      for (const key of [...keys,'client_id','session_id','landing_page','referring_url','analytics_consent']) { clear['ss_'+key]=''; clear['ss_first_'+key]=''; }
+      clear.ss_analytics_consent='denied';
+      pending = pending.catch(() => {}).then(() => fetch((window.Shopify?.routes?.root || '/')+'cart/update.js', {method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({attributes:clear})})).catch(() => {});
+    }
+  });
+  document.addEventListener('cart:updated', capture);
+  if (window.Shopify?.customerPrivacy) capture();
+  else window.Shopify?.loadFeatures?.([{name:'consent-tracking-api',version:'0.1'}], error => { if (!error) capture(); });
+})();
+{% endjavascript %}

@@ -1,0 +1,17 @@
+query OrderAttribution($id: ID!) {
+  order(id: $id) {
+    id
+    customerJourneySummary {
+      firstVisit {
+        landingPage
+        referrerUrl
+        utmParameters { source medium campaign content term }
+      }
+      lastVisit {
+        landingPage
+        referrerUrl
+        utmParameters { source medium campaign content term }
+      }
+    }
+  }
+}

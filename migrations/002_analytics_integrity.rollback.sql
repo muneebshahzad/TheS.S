@@ -1,0 +1,10 @@
+BEGIN;
+ALTER TABLE order_analytics DROP COLUMN IF EXISTS current_order_value;
+DROP TABLE IF EXISTS analytics_reports;
+ALTER TABLE analytics_event_outbox DROP COLUMN IF EXISTS attempted_at;
+ALTER TABLE analytics_event_outbox DROP COLUMN IF EXISTS dispatch_state;
+ALTER TABLE order_analytics DROP COLUMN IF EXISTS refund_details;
+ALTER TABLE order_analytics DROP COLUMN IF EXISTS is_test;
+ALTER TABLE order_analytics DROP COLUMN IF EXISTS purchase_recorded;
+ALTER TABLE order_analytics DROP COLUMN IF EXISTS shipments;
+COMMIT;
