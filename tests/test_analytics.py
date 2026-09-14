@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 from order_analytics import build_record, courier_state, event_payload, now, refund_record, transition
 from analytics_store import sync_order, sync_tracking, purchase_evidence, dispatch_events
-from analytics_reporting import report, date_range, order_metrics
+from analytics_reporting import report, date_range, order_metrics, product_identity
 
 
 @pytest.mark.parametrize('raw,status', [('Un-booked','In process'),('Booked','In process'),('Out for Delivery','In process'),
@@ -233,6 +233,30 @@ def test_campaign_and_product_filters_reconcile(order):
     assert report(records,[],{'product':'nonexistent'},start,end)['kpis']['gross_orders']==0
     assert report(records,[],{'normalized_status':'Delivered'},start,end)['kpis']['gross_orders']==1
     assert result['kpis']['spend'] is None
+
+
+def test_product_views_roll_variants_up_to_product(order):
+    record = build_record(order)
+    item = record['items'][0]
+    viewed_other_variant = f"shopify_ZZ_{item['item_id']}_999999"
+    assert product_identity(viewed_other_variant, [record]) == item['item_id']
+
+
+def test_complete_meta_campaign_stats_show_when_google_is_unavailable(order):
+    record = build_record(order)
+    day = now().date()
+    snapshots = [dict(source='meta', report_kind='ads', report_date=day, fetched_at=now(), rows=[
+        dict(channel='meta', campaign_id='123', campaign_name='Campaign', group_id='456', group_name='Group',
+             ad_id='789', ad_name='Ad', spend=300, currency='PKR', impressions=1000, clicks=20)
+    ])]
+    snapshots += [dict(source='ga4', report_kind=kind, report_date=day, fetched_at=now(), rows=[])
+                  for kind in ('events', 'products', 'sessions')]
+    result = report([record], snapshots, {}, day, day)
+    campaign = next(row for row in result['campaigns'] if row['channel'] == 'meta' and row['campaign_id'] == '123')
+    assert result['kpis']['spend'] is None
+    assert campaign['spend'] == 300
+    assert campaign['impressions'] == 1000
+    assert result['funnel']['submitted_orders'] == 1
 
 
 def test_date_boundaries(database,order):

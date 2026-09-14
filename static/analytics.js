@@ -229,10 +229,16 @@ function render() {
   renderOrders();
   const funnel = document.querySelector("#funnel");
   funnel.replaceChildren();
-  ['users','sessions','engaged_sessions','engagement_rate','view_item','add_to_cart','begin_checkout','purchase','refund','purchase_revenue'].forEach((k) => {
+  const funnelLabels = {
+    submitted_orders: "Shopify submitted orders",
+    purchase: "GA4 purchase events",
+    refund: "GA4 refund events",
+    purchase_revenue: "GA4 purchase revenue",
+  };
+  ['users','sessions','engaged_sessions','engagement_rate','view_item','add_to_cart','begin_checkout','submitted_orders','purchase','refund','purchase_revenue'].forEach((k) => {
     const v = data.funnel[k];
     const d = el("div");
-    d.append(el("span", k.replaceAll("_", " ")), el("strong", fmt(v, k)));
+    d.append(el("span", funnelLabels[k] || k.replaceAll("_", " ")), el("strong", fmt(v, k)));
     funnel.append(d);
   });
   const warnings = document.querySelector("#warnings");

@@ -72,9 +72,11 @@ def main():
     parser.add_argument('--refresh-couriers', action='store_true')
     args = parser.parse_args()
     if args.command == 'reports' and not args.start and not args.end:
-        from datetime import date,timedelta
-        args.end = date.today().isoformat()
-        args.start = (date.today()-timedelta(days=6)).isoformat()
+        from datetime import datetime,timedelta
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo(os.getenv('ANALYTICS_TIMEZONE', 'Asia/Karachi'))).date()
+        args.end = today.isoformat()
+        args.start = (today-timedelta(days=6)).isoformat()
     if args.command in ('backfill','reports','google-clicks'):
         if not args.start or not args.end:
             parser.error('--start and --end are required')

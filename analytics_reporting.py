@@ -81,7 +81,10 @@ def product_identity(external_id, orders):
     composite = re.fullmatch(r'shopify_[A-Z]{2}_(\d+)_(\d+)', external_id or '')
     for order in orders:
         for item in order['items']:
-            if external_id in {item['item_id'],item.get('variant_id'),item.get('sku')} or (composite and composite.groups() == (item['item_id'],item.get('variant_id'))):
+            # GA4's Shopify item ID includes product and viewed variant. Product
+            # reporting must roll every variant up to the stable product ID; a
+            # customer can view one variant and buy another.
+            if external_id in {item['item_id'],item.get('variant_id'),item.get('sku')} or (composite and composite.group(1) == item['item_id']):
                 matches.add(item['item_id'])
     return matches.pop() if len(matches)==1 else external_id
 
@@ -128,31 +131,33 @@ def report(orders, snapshots, filters, start, end):
     spend_ok = all(len(availability[(c, 'ads')]) == day_count for c in channels)
     ga_ok = all(len(availability[('ga4', k)]) == day_count for k in ('events','products','sessions'))
     order_filter = any(filters.get(k) for k in ('normalized_status','payment_method','courier'))
-    spend_ok = spend_ok and not order_filter and not filters.get('product')
+    media_filter_ok = not order_filter and not filters.get('product')
+    spend_ok = spend_ok and media_filter_ok
     behavior_ok = ga_ok and not order_filter and not filters.get('group_id') and not filters.get('ad_id')
     top = enrich(order_metrics(selected), ads, product_ga if filters.get('product') else ga, spend_ok, behavior_ok)
     campaign_keys = sorted({(o['attribution'].get('channel', 'Unattributed'), o['attribution'].get('campaign_id') or '') for o in selected} |
                            {(r['channel'],r['campaign_id']) for r in ads + ga})
     campaigns = []
     for channel, campaign in campaign_keys:
+        campaign_spend_ok = channel in ('google', 'meta') and len(availability[(channel, 'ads')]) == day_count and media_filter_ok
         group_orders = [o for o in selected if o['attribution'].get('channel', 'Unattributed') == channel and (o['attribution'].get('campaign_id') or '') == campaign]
         group_ads = [a for a in ads if a['channel'] == channel and a['campaign_id'] == campaign]
         group_ga = [g for g in (product_ga if filters.get('product') else ga) if g['channel'] == channel and g['campaign_id'] == campaign]
         name = next((a['campaign_name'] for a in reversed(group_ads)), campaign or 'Unattributed')
         row = dict(channel=channel, campaign_id=campaign, name=name,
-                   **enrich(order_metrics(group_orders), group_ads, group_ga, spend_ok and bool(campaign), behavior_ok), children=[])
+                   **enrich(order_metrics(group_orders), group_ads, group_ga, campaign_spend_ok and bool(campaign), behavior_ok), children=[])
         group_ids = sorted({a.get('group_id','') for a in group_ads} | {o['attribution'].get('group_id','') for o in group_orders})
         for gid in group_ids:
             child_ads = [a for a in group_ads if a.get('group_id','') == gid]
             child_orders = [o for o in group_orders if o['attribution'].get('group_id','') == gid]
             child = dict(channel=channel,campaign_id=campaign,group_id=gid,name=next((a['group_name'] for a in child_ads if a.get('group_name')), gid or 'Unattributed group'),
-                         **enrich(order_metrics(child_orders),child_ads,[],spend_ok,False),children=[])
+                         **enrich(order_metrics(child_orders),child_ads,[],campaign_spend_ok,False),children=[])
             for aid in sorted({a.get('ad_id','') for a in child_ads} | {o['attribution'].get('ad_id','') for o in child_orders}):
                 leaf_ads = [a for a in child_ads if a.get('ad_id','') == aid]
                 leaf_orders = [o for o in child_orders if o['attribution'].get('ad_id','') == aid]
                 child['children'].append(dict(channel=channel,campaign_id=campaign,group_id=gid,ad_id=aid,
                     name=next((a['ad_name'] for a in leaf_ads if a.get('ad_name')),aid or 'Unattributed ad'),
-                    **enrich(order_metrics(leaf_orders),leaf_ads,[],spend_ok,False)))
+                    **enrich(order_metrics(leaf_orders),leaf_ads,[],campaign_spend_ok,False)))
             row['children'].append(child)
         campaigns.append(row)
     products = []
@@ -173,9 +178,13 @@ def report(orders, snapshots, filters, start, end):
     warnings = []
     warnings.append('Cash on delivery: cancelled or finally returned orders contribute zero delivered revenue. Cancelled value is submitted order value, not cash refunded. Their campaign advertising cost remains included. Being Return stays In process until the final return is confirmed.')
     warnings.append('Delivered revenue is based on courier delivery and order adjustments; it does not confirm courier cash remittance. ROAS excludes product costs, courier fees and return charges. GA4 refunds reverse recorded purchases and do not prove a cash refund.')
-    if not spend_ok: warnings.append('Ad spend unavailable for some dates or this order/product filter. Profitability ratios are withheld.')
+    if not spend_ok:
+        available = [c for c in channels if len(availability[(c, 'ads')]) == day_count]
+        missing = [c for c in channels if c not in available]
+        detail = (' Available campaign rows still show complete ' + ', '.join(available).title() + ' data; overall spend is withheld because ' + ', '.join(missing).title() + ' is unavailable.') if available and missing and media_filter_ok else ''
+        warnings.append('Overall ad spend is unavailable for some channels, dates, or this order/product filter; combined profitability ratios are withheld.' + detail)
     if not behavior_ok: warnings.append('GA4 data unavailable for some dates or this filter; dashes mean unavailable, not zero.')
-    warnings.append('Product ad spend is unallocated: campaign spend cannot be assigned to individual products without evidence. Product revenue excludes shipping and tax.')
+    warnings.append('Product ad spend is unallocated: campaign spend cannot be assigned to individual products without evidence. Product views aggregate Shopify variants to the product ID. Product revenue excludes shipping and tax.')
     warnings.append('Orders use creation dates and their latest status. Ad spend uses activity dates; recent cohorts are still maturing. Product order counts overlap for multi-product orders.')
     totals_sessions = sum(r.get('sessions',0) for r in sessions)
     engaged = sum(r.get('engagedSessions',0) for r in sessions)
@@ -183,7 +192,9 @@ def report(orders, snapshots, filters, start, end):
     funnel.update(sessions=totals_sessions if behavior_ok and not filters.get('product') else None,
                   engaged_sessions=engaged if behavior_ok and not filters.get('product') else None,
                   engagement_rate=ratio(engaged,totals_sessions) if behavior_ok and not filters.get('product') else None,
-                  purchase_revenue=sum(r.get('purchaseRevenue',0) for r in sessions) if behavior_ok and not filters.get('product') and currency==os.getenv('ANALYTICS_CURRENCY','PKR') else None)
+                  purchase_revenue=sum(r.get('purchaseRevenue',0) for r in sessions) if behavior_ok and not filters.get('product') and currency==os.getenv('ANALYTICS_CURRENCY','PKR') else None,
+                  submitted_orders=top['gross_orders'])
+    warnings.append('Shopify submitted orders are the operational order count. GA4 purchase events are browser-side behavioral signals and may be lower because of consent, blocking, draft/admin orders, or collection timing.')
     return dict(kpis=top,campaigns=campaigns,products=products,orders=[dict(shopify_order_id=o['shopify_order_id'],order_number=o['order_number'],
         created_at=str(o['created_at']),normalized_status=o['normalized_status'],raw_shopify_status=o['raw_shopify_status'],
         raw_courier_status=o['raw_courier_status'],order_value=float(o['order_value']),refunded_value=float(o['refunded_value']),
