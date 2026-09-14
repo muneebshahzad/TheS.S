@@ -47,15 +47,20 @@ def backfill(start, end, refresh_couriers=False):
 def refresh_active():
     os.environ['INITIALIZE_APP'] = 'false'
     import main
-    from analytics_store import transaction, sync_tracking
+    from analytics_store import transaction
     with transaction() as cur:
         cur.execute("SELECT DISTINCT jsonb_object_keys(shipments) AS number FROM order_analytics WHERE normalized_status='In process'")
         numbers = [r['number'] for r in cur.fetchall() if r['number'] != '__unfulfilled__']
-    for number in numbers:
-        summary = main.build_tracking_summary_payload(number)
-        if summary and summary.get('tracking_observed'):
-            sync_tracking(number, summary)
-    return {'shipments_refreshed': len(numbers)}
+    refreshed = 0
+    # Courier requests are already concurrency-limited by the dashboard helper.
+    # Commit each bounded batch so a disconnected job can be replayed safely
+    # without losing all completed tracking observations.
+    for offset in range(0, len(numbers), 40):
+        refreshed += main.refresh_tracking_summaries_sync(
+            numbers[offset:offset + 40], limit=0, fresh_seconds=0,
+            deadline_seconds=90,
+        )
+    return {'shipments_requested': len(numbers), 'shipments_refreshed': refreshed}
 
 
 def main():

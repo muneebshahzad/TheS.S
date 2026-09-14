@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -104,3 +105,31 @@ def test_empty_shopify_journey_is_marked_checked(monkeypatch):
     analytics_integrations.sync_shopify_journey('123')
 
     save.assert_called_once_with('123', {})
+
+
+def test_courier_refresh_commits_bounded_batches(monkeypatch):
+    import analytics_cli
+    import analytics_store
+    import main
+
+    class Cursor:
+        def execute(self, *args, **kwargs):
+            return None
+
+        def fetchall(self):
+            return [{'number': str(i)} for i in range(85)] + [{'number': '__unfulfilled__'}]
+
+    @contextmanager
+    def fake_transaction():
+        yield Cursor()
+
+    batches = []
+    monkeypatch.setattr(analytics_store, 'transaction', fake_transaction)
+    monkeypatch.setattr(main, 'refresh_tracking_summaries_sync',
+                        lambda numbers, **kwargs: batches.append(list(numbers)) or len(numbers))
+
+    assert analytics_cli.refresh_active() == {
+        'shipments_requested': 85,
+        'shipments_refreshed': 85,
+    }
+    assert [len(batch) for batch in batches] == [40, 40, 5]
