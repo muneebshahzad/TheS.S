@@ -20,8 +20,10 @@ def sync_shopify_journey(order_id):
     if result.get('errors'):
         raise RuntimeError('Shopify journey query failed; check order permissions')
     journey = ((result.get('data') or {}).get('order') or {}).get('customerJourneySummary')
-    if journey:
-        save_journey(order_id,journey)
+    # An empty summary is still an authoritative lookup result. Persisting the
+    # checked marker prevents every idempotent backfill from querying Shopify
+    # again for orders that have no customer-journey data.
+    save_journey(order_id, journey or {})
 
 
 def request_json(method, url, **kwargs):

@@ -89,3 +89,18 @@ def test_unique_users_uses_one_range_query(monkeypatch):
     assert analytics_integrations.unique_users('2026-09-01', '2026-09-07', {}) == 19
     assert query.call_args.kwargs['end'] == '2026-09-07'
     assert query.call_count == 1
+
+
+def test_empty_shopify_journey_is_marked_checked(monkeypatch):
+    import analytics_integrations
+    monkeypatch.setattr('shopify_protected_data.get_graphql_token', lambda: 'test-token')
+    monkeypatch.setattr('shopify_protected_data.get_graphql_endpoint', lambda: 'https://shop.example/graphql')
+    monkeypatch.setattr(analytics_integrations, 'request_json', lambda *args, **kwargs: {
+        'data': {'order': {'customerJourneySummary': None}}
+    })
+    save = Mock()
+    monkeypatch.setattr('analytics_store.save_journey', save)
+
+    analytics_integrations.sync_shopify_journey('123')
+
+    save.assert_called_once_with('123', {})
