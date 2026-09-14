@@ -5592,6 +5592,15 @@ def check_restart_times():
         time.sleep(30)
 
 
+def warm_runtime_caches():
+    """Populate remote caches without blocking the web worker from becoming ready."""
+    reload_orders()
+    try:
+        refresh_abandoned_checkouts_cache_sync(force=True)
+    except Exception:
+        print("Warning: could not warm abandoned checkout cache")
+
+
 if os.getenv("INITIALIZE_APP", "true") == "true":
     init_db()
     setup_shopify()
@@ -5603,11 +5612,7 @@ if os.getenv("INITIALIZE_APP", "true") == "true":
         ensure_required_aghaje_webhooks()
     except Exception:
         print("Warning: could not ensure Aghaje webhooks")
-    reload_orders()
-    try:
-        refresh_abandoned_checkouts_cache_sync(force=True)
-    except Exception:
-        print("Warning: could not warm abandoned checkout cache")
+    threading.Thread(target=warm_runtime_caches, daemon=True, name="runtime-cache-warm").start()
 
 
 if __name__ == "__main__":
