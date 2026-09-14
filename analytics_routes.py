@@ -41,7 +41,7 @@ def data():
         start, end, since, until = date_range(request.args)
         result = report(load_orders(since, until), load_reports(start,end), request.args, start,end)
         result['funnel']['users'] = None
-        if os.getenv('GOOGLE_APPLICATION_CREDENTIALS'):
+        if os.getenv('GOOGLE_APPLICATION_CREDENTIALS') or os.getenv('GOOGLE_REPORTING_SERVICE_ACCOUNT_JSON'):
             try:
                 from analytics_integrations import unique_users
                 result['funnel']['users'] = unique_users(start,end,request.args)

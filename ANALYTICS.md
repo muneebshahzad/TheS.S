@@ -1,6 +1,6 @@
 # Order and marketing analytics handoff
 
-Implementation is in the existing Flask application, behind `ORDER_ANALYTICS_ENABLED=true`. The authenticated pages are `/analytics` and `/marketing-performance`; `/api/analytics` uses the existing admin session. Production has not been deployed or backfilled by this task. Live reporting and GA4 validation require the credentials below.
+Implementation is deployed in the existing Flask application with `ORDER_ANALYTICS_ENABLED=true`. The authenticated pages are `/analytics` and `/marketing-performance`; `/api/analytics` uses the existing admin session. The production Shopify ledger contains 1,837 unique non-test orders from March 13, 2025 through September 14, 2026. GA4 and Meta daily snapshots are loaded for August 15 through September 14, 2026. Historical backfill emitted no GA4 events.
 
 ## COD and current order states
 
@@ -31,11 +31,11 @@ Use Railway variables or mounted secrets; never commit credentials or paste them
 | Existing Railway app | Existing `DATABASE_URL`, `APP_SECRET_KEY`, `ADMIN_PORTAL_PASSWORD`, Shopify session configuration and courier credentials. Keep production startup initialization enabled. |
 | Feature | `ORDER_ANALYTICS_ENABLED=false` until migrations finish; `ANALYTICS_TIMEZONE=Asia/Karachi`, `ANALYTICS_CURRENCY=PKR`. Verify platform reporting timezones agree before comparing daily totals. |
 | Shopify `psgv0a-qk` | Existing order read access and webhook registration; `read_all_orders` approval for history older than 60 days, in addition to `read_orders`. `SHOPIFY_WEBHOOK_SECRET` must match the webhook signing application. Theme edit access is needed to install the snippet. Customer-journey availability depends on Shopify's data and app permissions. |
-| GA4 `491963638` | Analytics Data API is enabled and the service account has Viewer access. Live reporting validation succeeded. `GA4_MEASUREMENT_ID` (`G-...`) and `GA4_API_SECRET` are still required for server-side final-state events; the property ID is not the measurement ID. |
+| GA4 `491963638` | Analytics Data API is enabled and the service account has Viewer access. Live reporting validation succeeded. Web stream `G-0798KTT0NT` is configured in Railway and the live storefront. `GA4_API_SECRET` is still required for server-side final-state events. |
 | Google Ads | Google Ads API is enabled and the service account has **Read-only** access to customer `3776479482`, but Cloud project `670780824153` currently has Test access. Apply for Explorer or higher access before live production-account reporting will work. Optional manager `GOOGLE_ADS_LOGIN_CUSTOMER_ID`; `GOOGLE_ADS_USE_PROTO_PLUS=true`. The GA4-linked customer `7576092690` is cancelled and is not substituted. |
 | Meta | A 60-day `ads_read` system-user token for **Sleek analytics** is installed in Railway for account `356232020087034` in business `838669770883289`. `META_AD_ACCOUNT_ID`, `META_BUSINESS_ID`, and tested `META_API_VERSION=v26.0` are configured. Rotate the token by November 13, 2026. Reporting does not require changing campaigns. |
 
-Railway inspection identified project **Sleek Space Dashboard**, service **TheS.S**, production, with Postgres. Project ID: `26286953-673e-409d-98cf-05f5fcbd6926`; service ID: `2573a7e3-8fd6-4b53-8326-7317e05467f6`. Its deployed commit matched repository commit `e622099` during the original inspection. Google and Meta reporting variables are now present as masked production variables; their values are not stored in source or documentation.
+Railway project **Sleek Space Dashboard**, service **TheS.S**, production, uses Postgres. Project ID: `26286953-673e-409d-98cf-05f5fcbd6926`; service ID: `2573a7e3-8fd6-4b53-8326-7317e05467f6`. Analytics migrations 001 and 002 are applied, all required Shopify webhook subscriptions are registered, and the application is live. Google and Meta reporting variables are masked production variables; their values are not stored in source or documentation.
 
 ### Google access setup follow-up — September 13, 2026
 
@@ -43,7 +43,7 @@ Google [sunset developer tokens on September 9, 2026](https://developers.google.
 
 The signed-in Cloud project `gen-lang-client-0502093918` (Default Gemini Project) has no OAuth clients. Its existing Gemini-only API key/service account was not reused. A dedicated `sleek-space-analytics@gen-lang-client-0502093918.iam.gserviceaccount.com` identity was created with no project-wide IAM role or domain-wide delegation, granted Google Ads Read-only and GA4 Viewer access, and installed in Railway through `GOOGLE_REPORTING_SERVICE_ACCOUNT_JSON`. Unused OAuth variables remain omitted.
 
-Verification after the SDK update: **48 tests passed**, including four new offline Google authentication/configuration tests. The old temporary PGlite process stopped responding; the successful complete rerun used a fresh isolated in-memory database on localhost port 55433. This is not a live Google API validation. Changes remain local, uncommitted and undeployed.
+Verification after the SDK update included four offline Google authentication/configuration tests. Live GA4 reporting was subsequently validated; Google Ads production reporting remains blocked only by Google's API access tier, not authentication.
 
 ### Approved credential setup — September 14, 2026
 
@@ -51,9 +51,9 @@ After explicit user approval, created `sleek-space-analytics@gen-lang-client-050
 
 Google's first key-creation page returned an unknown error and the inventory still showed no keys. Reopening Manage keys from the service-account inventory (without the malformed `;edit=true/keys` route) succeeded. A single JSON key was downloaded and local file permissions restricted to mode 0600. Its contents were sent through stdin to Railway's `GOOGLE_REPORTING_SERVICE_ACCOUNT_JSON` variable on the verified production **TheS.S** service, with `--skip-deploys`. Customer/property ID variables were also set. The integration now reads this secret directly in memory for both clients; it takes precedence over file/OAuth configuration and restricts the token endpoint to Google's official endpoint. Do not paste the JSON into a command-line argument or commit it.
 
-Google Ads API and Analytics Data API were enabled on September 14. GA4 live reporting validation succeeded and returned 908 sessions for September 13, 2026. Google Ads authentication reaches the API, but the project is approved only for test accounts; Explorer, Basic or Standard access is required for live customer `3776479482`. The Google key is for reporting, not Measurement Protocol event submission; `GA4_MEASUREMENT_ID` and `GA4_API_SECRET` remain outstanding.
+Google Ads API and Analytics Data API were enabled on September 14. GA4 live reporting validation succeeded and returned 908 sessions for September 13, 2026; the 31-day production snapshot completed with zero failed days. Google Ads authentication reaches the API, but the project is approved only for test accounts; Explorer, Basic or Standard access is required for live customer `3776479482`. The Google key is for reporting, not Measurement Protocol event submission; only `GA4_API_SECRET` remains outstanding.
 
-Latest verification: **50 tests passed** against an isolated in-memory test database, including secret-JSON scope and token-endpoint tests. Credential settings were saved without deployment; source changes are still local and uncommitted.
+Credential settings and the reporting integration are deployed. The service-account JSON remains masked and is never returned by the dashboard.
 
 ### Meta reporting connection — September 14, 2026
 
@@ -74,7 +74,7 @@ The read-only URL audit found 109 ads whose current tags do not exactly equal th
 | `120253402634110635` | Chess | `120253402634090635` | `120253402634100635` |
 | `120253403029870635` | Deer | `120253403029860635` | `120253403029880635` |
 
-All six currently have empty URL tags. No live ad, bidding, conversion or creative setting was changed. The 103 inactive/problem ads should stay unchanged unless deliberately reactivated and reviewed. Latest complete local suite: **60 tests passed** using a disposable in-memory PostgreSQL-compatible database.
+All six currently have empty URL tags. No live ad, bidding, conversion or creative setting was changed. The 103 inactive/problem ads should stay unchanged unless deliberately reactivated and reviewed.
 
 ## Deployment and migration
 
@@ -83,7 +83,7 @@ All six currently have empty URL tags. No live ad, bidding, conversion or creati
 3. Supply credentials, then enable `ORDER_ANALYTICS_ENABLED=true` and restart the existing app. Startup registers the required Shopify webhook topics. Check registration success and Shopify webhook delivery logs.
 4. Run `python analytics_cli.py backfill --start YYYY-MM-DD --end YYYY-MM-DD --refresh-couriers` for the required history. Dates are inclusive. Use manageable ranges and inspect `journey_lookup_failures`. Backfill never emits historical GA4 events, including through reused courier hooks.
 5. Run `python analytics_cli.py reports --start YYYY-MM-DD --end YYYY-MM-DD --source all`. Source can be `ga4`, `meta` or `google`; failures produce aggregate counts and nonzero exit status. Then run `python analytics_cli.py google-clicks --start YYYY-MM-DD --end YYYY-MM-DD` for available recent click data (last 89 days).
-6. Configure Railway jobs using the same environment: `reports` nightly (defaults to refreshing the last seven days), `google-clicks` for recent dates, `refresh-couriers` every 15–30 minutes, and `dispatch` every few minutes after event validation. Choose schedules consistent with API quotas. The CLI exists; these production jobs have not been created.
+6. Railway production jobs are configured in UTC: `analytics-courier-sync` every 30 minutes, `analytics-ga4-snapshot` daily at 02:15, and `analytics-meta-snapshot` daily at 02:30. Add the Google snapshot only after Google grants Explorer or higher API access. Add `dispatch` every few minutes only after the Measurement Protocol secret is installed and the first real payload passes validation.
 7. Open `/analytics` in an authenticated admin session and complete the live acceptance checks below before treating it as reconciled reporting.
 
 Operational rollback: set `ORDER_ANALYTICS_ENABLED=false`, stop analytics jobs and restore the previous application deployment. Keep the ledger/outbox tables to preserve audit and duplicate-prevention history. The analytics-only webhook URLs can remain disabled during a short rollback; remove their exact subscriptions only for a permanent rollback, preserving existing order webhooks.
@@ -100,7 +100,7 @@ Copy `storefront/snippets/ss-attribution.liquid` into the active theme and rende
 
 The snippet gates collection on Shopify analytics consent, preserves first touch plus the latest non-direct touch for 90 days, captures actual GA client/session IDs when available, and writes `ss_*` and `ss_first_*` cart attributes that become order note attributes. Revocation clears saved attribution and records denied consent. Standard checkout waits for the attribute update with a form-attribute fallback. The snippet never initializes another GA tag or sends customer data.
 
-Live theme installation has not been performed. Test consent granted/denied/revoked, a second visit, cart changes, regular checkout and mobile checkout. Accelerated checkout/dynamic buy buttons may bypass cart writes; validate the actual theme paths before relying on coverage. Inspect the resulting Shopify order attributes and dashboard attribution. Existing orders without evidence cannot be reconstructed reliably.
+The snippet is installed in live theme **Collection Image Fix – Review** (`190805573941`) and rendered with web stream `G-0798KTT0NT`. Shopify's stateless Liquid validator passed, the two-file live-theme upload completed, and the rendered storefront contains the attribution marker. Consent granted/denied/revoked, a second visit, cart changes, regular checkout and mobile checkout still require real-browser acceptance testing. Accelerated checkout/dynamic buy buttons may bypass cart writes; inspect resulting Shopify order attributes and dashboard attribution. Existing orders without evidence cannot be reconstructed reliably.
 
 ## GA4 events and privacy
 
@@ -124,21 +124,23 @@ Required future convention:
 utm_source=facebook&utm_medium=paid_social&utm_campaign={{campaign.id}}&utm_term={{adset.id}}&utm_content={{ad.id}}
 ```
 
-No live ads were changed. The exact affected-ad list and post-save verification remain pending API access. Do not change campaign bidding as part of URL standardization.
+No live ads were changed. The exact active-ad list is recorded above, so post-save verification is not applicable. Do not change campaign bidding as part of URL standardization.
 
 ## Verification and remaining limits
 
-Final local result (2026-09-14): **60 tests passed**, including database-backed signed webhooks and destructive rollback/reapply confined to a disposable in-memory PostgreSQL-compatible schema. Python compilation, JavaScript syntax and tracked diff whitespace checks passed. The actual authenticated Flask page was visually inspected at 1280×800 desktop and 392×844 mobile CSS viewports, with no document-level horizontal overflow. Browser scale required adjusting the viewport tool's dimensions; dimensions were verified from the rendered page and temporary overrides were reset.
+Final local result (2026-09-14): **63 tests passed**, including database-backed signed webhooks and destructive rollback/reapply confined to a disposable PostgreSQL 18 schema. Python compilation, JavaScript syntax and tracked diff whitespace checks passed. The actual authenticated Flask page was visually inspected at 1280×800 desktop and 392×844 mobile CSS viewports, with no document-level horizontal overflow. Browser scale required adjusting the viewport tool's dimensions; dimensions were verified from the rendered page and temporary overrides were reset.
 
 Synthetic UI checks: 36 gross orders = 18 Delivered + 9 Cancelled + 9 In process; Cancelled + Cash on Delivery filter returned 9 with zero delivered revenue; campaign + product returned 12; the same combination on a single date returned 1; clicking Cancelled opened 9 drill-down orders; Reset returned all 36. The Reset button shadowing the native form method was fixed during this check. Preview data is synthetic and must not be interpreted as store performance.
 
 Run `python -m pip install -r requirements-dev.txt`, set `TEST_DATABASE_URL` to a disposable PostgreSQL database, then `python -m pytest -q`. Each database test uses its own temporary schema. The root `test.py` is an unrelated interactive infinite-input script, not an existing automated suite; `pytest.ini` explicitly selects `tests/`.
 
-The automated suite covers all twelve requested order/report cases plus stale updates, multi-shipment handling, consent/PII exclusion, pending refunds, COD cancelled revenue/spend, signed webhook replay, related-order fetching, migration reapplication/rollback, Meta purchase alias deduplication, date boundaries, exact purchase evidence, and ambiguous GA4 network outcomes. Local database testing used an ephemeral PGlite PostgreSQL-compatible server; production multi-worker lock contention still needs verification on Railway Postgres.
+The automated suite covers all twelve requested order/report cases plus stale updates, multi-shipment handling, consent/PII exclusion, pending refunds, COD cancelled revenue/spend, signed webhook replay, related-order fetching, migration reapplication/rollback, Meta purchase alias deduplication, date boundaries, exact purchase evidence, ambiguous GA4 network outcomes, and GA4 unique-user loading from the in-memory Railway service-account secret. Local database testing used an ephemeral embedded PostgreSQL 18 server. Production has one application replica; transaction/advisory locking is active on Railway Postgres.
 
-Live read-only samples inspected: Shopify order `PK2827A01` was pending payment and unfulfilled, consistent with In process. Courier tracking `10068610605830` for `PK2716A01` showed final `RETURN SUBMITTED` while the old dashboard context still showed Need Attention; the new classifier correctly treats the final courier result as Cancelled. These are sample observations, not a completed historical reconciliation. No customer details are included here.
+Live read-only samples inspected: Shopify order `PK2827A01` was pending payment and unfulfilled, consistent with In process. Courier tracking `10068610605830` for `PK2716A01` showed final `RETURN SUBMITTED` while the old dashboard context still showed Need Attention; the new classifier correctly treats the final courier result as Cancelled. No customer details are included here.
 
-Before activation, compare representative new, delivered, cancelled, Being Return and partial-refund orders against Shopify and courier sources; reconcile full date-range counts and amounts; replay a signed webhook; validate real GA4 payloads; inspect DebugView with a recent consented test order; and inspect outbound payloads for PII. Verify GA4 product/event dimension compatibility and account timezone/currency using actual reporting responses.
+Production activation, signed-webhook replay protection, full ledger uniqueness, GA4/Meta reporting responses and representative Shopify/courier samples have been verified. Remaining acceptance work is to create the GA4 Measurement Protocol secret, validate a recent consented payload, inspect DebugView after a genuine final transition, and complete real-browser storefront consent/checkout coverage. Google Ads reporting starts after Google grants Explorer or higher API access.
+
+The authenticated live Meta view for August 15 through September 14 showed PKR 476,008.45 spend, 115 attributed submitted orders, 37 delivered, 16 cancelled and 62 in process at verification time. Its resolved delivery rate was 69.8% and delivered ROAS was 1.17×. These figures use current courier status and will change as in-process orders resolve.
 
 Product-level advertising spend/ROAS remains unavailable where an exact ad-to-product mapping is absent. Status/payment/courier filters also withhold spend rather than allocate campaign spend arbitrarily. Ad set/ad behavioral metrics are unavailable without matching GA4 dimensions. Google campaign-only residuals preserve spend for types such as Performance Max but may lack platform purchase metrics. These limitations are visible in the screen; they should not be interpreted as zeros.
 

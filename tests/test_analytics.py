@@ -284,3 +284,27 @@ def test_authenticated_route(monkeypatch):
     assert response.headers['Cache-Control']=='private, no-store'
     assert "connect-src 'self'" in response.headers['Content-Security-Policy']
     assert client.get('/api/analytics?start=bad').status_code==400
+
+
+def test_api_uses_json_service_account_for_unique_users(monkeypatch):
+    from flask import Flask
+    import analytics_integrations
+    import analytics_routes
+
+    app=Flask(__name__,template_folder='../templates');app.secret_key='test-only'
+    app.register_blueprint(analytics_routes.analytics);client=app.test_client()
+    monkeypatch.setenv('ORDER_ANALYTICS_ENABLED','true')
+    monkeypatch.setenv('GOOGLE_REPORTING_SERVICE_ACCOUNT_JSON','{"type":"service_account"}')
+    monkeypatch.delenv('GOOGLE_APPLICATION_CREDENTIALS',raising=False)
+    monkeypatch.setattr(analytics_routes,'load_orders',lambda *args: [])
+    monkeypatch.setattr(analytics_routes,'load_reports',lambda *args: [])
+    monkeypatch.setattr(analytics_routes,'report',lambda *args: {'funnel':{},'warnings':[]})
+    users=Mock(return_value=17)
+    monkeypatch.setattr(analytics_integrations,'unique_users',users)
+    with client.session_transaction() as session: session['admin_portal_authenticated']=True
+
+    response=client.get('/api/analytics?start=2026-09-01&end=2026-09-02')
+
+    assert response.status_code==200
+    assert response.get_json()['funnel']['users']==17
+    users.assert_called_once()
