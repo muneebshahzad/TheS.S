@@ -5589,6 +5589,11 @@ def warm_runtime_caches():
         print("Warning: could not warm abandoned checkout cache")
 
 
+def warm_daraz_cache():
+    """Keep the first dashboard request from waiting on the Daraz API."""
+    refresh_daraz_cache_if_needed()
+
+
 if os.getenv("INITIALIZE_APP", "true") == "true":
     init_db()
     setup_shopify()
@@ -5601,6 +5606,7 @@ if os.getenv("INITIALIZE_APP", "true") == "true":
     except Exception:
         print("Warning: could not ensure Aghaje webhooks")
     threading.Thread(target=warm_runtime_caches, daemon=True, name="runtime-cache-warm").start()
+    threading.Thread(target=warm_daraz_cache, daemon=True, name="daraz-cache-warm").start()
 
 
 if __name__ == "__main__":
