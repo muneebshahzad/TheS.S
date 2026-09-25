@@ -3,6 +3,25 @@ const form = document.querySelector("#filters");
 let data,
   drill = {},
   requestVersion = 0;
+const preferenceKey = "sleek-space-analytics-visibility-v1";
+let preferences = (() => {
+  try {
+    return {
+      hiddenColumns: {},
+      hiddenCampaigns: [],
+      ...JSON.parse(localStorage.getItem(preferenceKey) || "{}"),
+    };
+  } catch (_) {
+    return { hiddenColumns: {}, hiddenCampaigns: [] };
+  }
+})();
+const savePreferences = () => {
+  try {
+    localStorage.setItem(preferenceKey, JSON.stringify(preferences));
+  } catch (_) {
+    // Visibility still works for this page when browser storage is unavailable.
+  }
+};
 const fmt = (v, key = "") =>
   v === null || v === undefined
     ? "—"
@@ -32,7 +51,7 @@ const campaigns = [
   ["gross_orders", "Gross orders"],
   ["delivered", "Delivered"],
   ["cancelled", "Cancelled"],
-  ["in_process", "In process"],
+  ["in_process", "Pending"],
   ["delivery_rate", "Delivery rate"],
   ["cancellation_rate", "Cancellation rate"],
   ["delivered_revenue", "Delivered revenue"],
@@ -48,7 +67,7 @@ const products = [
   ["gross_orders", "Gross orders"],
   ["delivered", "Delivered"],
   ["cancelled", "Cancelled"],
-  ["in_process", "In process"],
+  ["in_process", "Pending"],
   ["view_to_order_rate", "View-to-order rate"],
   ["delivery_rate", "Delivery rate"],
   ["cancelled_value", "Cancelled submitted value"],
@@ -68,17 +87,26 @@ function defaults() {
 function table(id, columns, rows) {
   const target = document.getElementById(id),
     head = target.querySelector("thead"),
-    body = target.querySelector("tbody");
+    body = target.querySelector("tbody"),
+    hiddenColumns = new Set(preferences.hiddenColumns[id] || []),
+    visibleColumns = columns.filter(
+      ([key]) => key === "name" || !hiddenColumns.has(key),
+    ),
+    hiddenCampaigns = new Set(preferences.hiddenCampaigns || []),
+    visibleRows =
+      id === "campaigns"
+        ? rows.filter((row) => !hiddenCampaigns.has(campaignKey(row)))
+        : rows;
   head.replaceChildren();
   body.replaceChildren();
   const tr = el("tr");
-  for (const [key, label] of columns) {
+  for (const [key, label] of visibleColumns) {
     const th = el("th"),
       b = el("button", label);
     b.type = "button";
     let desc = true;
     b.onclick = () => {
-      rows.sort((a, b) =>
+      visibleRows.sort((a, b) =>
         typeof a[key] === "number"
           ? desc
             ? b[key] - a[key]
@@ -95,7 +123,7 @@ function table(id, columns, rows) {
   head.append(tr);
   function add(row, depth = 0) {
     const tr = el("tr", undefined, `depth-${depth}`);
-    columns.forEach(([key]) => {
+    visibleColumns.forEach(([key]) => {
       const td = el("td");
       if (key === "name") {
         if (row.children?.length) {
@@ -134,10 +162,59 @@ function table(id, columns, rows) {
   }
   function paint() {
     body.replaceChildren();
-    rows.forEach((r) => add(r));
+    visibleRows.forEach((r) => add(r));
   }
   paint();
-  document.getElementById(id + "-empty").hidden = rows.length > 0;
+  document.getElementById(id + "-empty").hidden = visibleRows.length > 0;
+}
+const campaignKey = (row) =>
+  `${row.channel || "Unattributed"}|${row.campaign_id || "Unattributed"}`;
+function visibilityOptions(targetId, tableId, columns) {
+  const target = document.getElementById(targetId),
+    hidden = new Set(preferences.hiddenColumns[tableId] || []);
+  target.replaceChildren();
+  for (const [key, label] of columns) {
+    if (key === "name") continue;
+    const wrapper = el("label", undefined, "check-option"),
+      input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !hidden.has(key);
+    input.onchange = () => {
+      if (input.checked) hidden.delete(key);
+      else hidden.add(key);
+      preferences.hiddenColumns[tableId] = [...hidden];
+      savePreferences();
+      table(tableId, columns, data[tableId]);
+    };
+    wrapper.append(input, el("span", label));
+    target.append(wrapper);
+  }
+}
+function renderVisibilitySettings() {
+  visibilityOptions("campaign-column-options", "campaigns", campaigns);
+  visibilityOptions("product-column-options", "products", products);
+  const target = document.getElementById("campaign-row-options"),
+    hidden = new Set(preferences.hiddenCampaigns || []);
+  target.replaceChildren();
+  for (const row of data.campaigns) {
+    const key = campaignKey(row),
+      wrapper = el("label", undefined, "check-option"),
+      input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !hidden.has(key);
+    input.onchange = () => {
+      if (input.checked) hidden.delete(key);
+      else hidden.add(key);
+      preferences.hiddenCampaigns = [...hidden];
+      savePreferences();
+      table("campaigns", campaigns, data.campaigns);
+    };
+    wrapper.append(
+      input,
+      el("span", `${row.name} · ${row.channel || "Unattributed"}`),
+    );
+    target.append(wrapper);
+  }
 }
 function renderOrders() {
   const body = document.querySelector("#orders tbody");
@@ -178,7 +255,13 @@ function renderOrders() {
         a.rel = "noopener noreferrer";
         td.append(a);
       } else if (key === "normalized_status")
-        td.append(el("span", o[key], `status ${o[key]}`));
+        td.append(
+          el(
+            "span",
+            o[key] === "In process" ? "Pending" : o[key],
+            `status ${o[key]}`,
+          ),
+        );
       else td.textContent = typeof o[key] === "number" ? fmt(o[key]) : o[key];
       tr.append(td);
     }
@@ -196,7 +279,7 @@ function render() {
     ["gross_orders", "Gross orders"],
     ["delivered", "Delivered orders", "Delivered"],
     ["cancelled", "Cancelled orders", "Cancelled"],
-    ["in_process", "In-process orders", "In process"],
+    ["in_process", "Pending orders", "In process"],
     ["delivered_revenue", "Delivered revenue"],
     ["delivery_rate", "Delivery rate"],
     ["cancellation_rate", "Cancellation rate"],
@@ -209,10 +292,19 @@ function render() {
         `kpi ${["delivered", "delivered_revenue", "delivered_roas"].includes(key) ? "success" : ""}`,
       ),
       inner = status ? el("button") : el("div");
+    const displayLabel =
+      key === "spend" && data.kpis.spend_channels?.length
+        ? `Ad spend (${data.kpis.spend_channels.join(" + ")})`
+        : label;
     inner.append(
-      el("span", label, "label"),
+      el("span", displayLabel, "label"),
       el("strong", fmt(data.kpis[key], key)),
     );
+    if (
+      data.kpis.spend_is_partial &&
+      ["spend", "cost_per_delivered", "delivered_roas"].includes(key)
+    )
+      inner.append(el("small", "Available channels only", "scope-note"));
     if (status)
       inner.onclick = () => {
         drill = { normalized_status: status };
@@ -226,6 +318,7 @@ function render() {
   }
   table("campaigns", campaigns, data.campaigns);
   table("products", products, data.products);
+  renderVisibilitySettings();
   renderOrders();
   const funnel = document.querySelector("#funnel");
   funnel.replaceChildren();
@@ -321,6 +414,20 @@ document.querySelector("#reset").onclick = () => {
 document.querySelector("#clear-drill").onclick = () => {
   drill = {};
   if (data) renderOrders();
+};
+document.querySelector("#campaign-settings-toggle").onclick = (event) => {
+  const panel = document.querySelector("#campaign-settings"),
+    expanded = panel.hidden;
+  panel.hidden = !expanded;
+  event.currentTarget.setAttribute("aria-expanded", String(expanded));
+};
+document.querySelector("#show-all-campaigns").onclick = () => {
+  preferences.hiddenCampaigns = [];
+  savePreferences();
+  if (data) {
+    table("campaigns", campaigns, data.campaigns);
+    renderVisibilitySettings();
+  }
 };
 defaults();
 if (document.body.dataset.enabled === "true") load();

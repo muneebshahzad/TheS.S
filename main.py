@@ -56,6 +56,10 @@ from shopify_protected_data import (
     verify_oauth_hmac,
 )
 from token_manager import get_access_token, load_tokens, save_tokens
+from digidokaan import (
+    fetch_tracking_history as fetch_digidokaan_tracking_history,
+    fetch_tracking_status as fetch_digidokaan_tracking_status,
+)
 
 
 app = Flask(__name__)
@@ -127,7 +131,14 @@ def is_leopards_tracking(tracking_number):
     return str(tracking_number or "").strip().upper().startswith("LE")
 
 
+def is_digidokaan_tracking(tracking_number):
+    normalized = "".join(character for character in str(tracking_number or "") if character.isdigit())
+    return len(normalized) in {14, 15} and normalized.startswith("223")
+
+
 def courier_label_for_tracking(courier_name="", tracking_number=""):
+    if is_digidokaan_tracking(tracking_number):
+        return "DigiDokaan"
     if is_leopards_tracking(tracking_number):
         return "Leopards"
     return str(courier_name or "").strip()
@@ -3087,6 +3098,9 @@ def ensure_required_aghaje_webhooks():
 async def fetch_tracking_data(session_obj, tracking_number):
     if not tracking_number or tracking_number == "N/A":
         return {}
+    if is_digidokaan_tracking(tracking_number):
+        status = await fetch_digidokaan_tracking_status(session_obj, tracking_number)
+        return [{"ProcessDescForPortal": status}] if status else []
     if is_leopards_tracking(tracking_number):
         api_key = os.getenv("LEOPARD_API_KEY")
         api_password = os.getenv("LEOPARD_PASSWORD") or os.getenv("LEOPARD_API_PASSWORD")
@@ -4677,6 +4691,8 @@ def mark_abandoned_viewed():
 def display_tracking(tracking_num):
     async def run_lookup():
         async with aiohttp.ClientSession() as session_obj:
+            if is_digidokaan_tracking(tracking_num):
+                return await fetch_digidokaan_tracking_history(session_obj, tracking_num)
             return await fetch_tracking_data(session_obj, tracking_num)
 
     data = asyncio.run(run_lookup())

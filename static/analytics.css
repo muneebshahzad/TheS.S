@@ -207,6 +207,13 @@ a:focus-visible {
   display: block;
   margin-top: 12px;
 }
+.scope-note {
+  display: block;
+  margin-top: 7px;
+  color: #7b6a3b;
+  font-size: 9px;
+  line-height: 1.35;
+}
 .kpi button {
   color: inherit;
   background: none;
@@ -231,6 +238,56 @@ a:focus-visible {
 }
 .panel-heading p {
   font-size: 12px;
+}
+.panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.visibility-settings {
+  padding: 18px 23px;
+  border-bottom: 1px solid #e7ece6;
+  background: #fafcf9;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+.visibility-settings[hidden] {
+  display: none;
+}
+.visibility-settings h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+.check-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 12px;
+}
+.campaign-options {
+  max-height: 190px;
+  overflow: auto;
+  padding-right: 6px;
+  margin: 10px 0;
+}
+.check-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 500;
+}
+.check-option input {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  accent-color: #244b3e;
+}
+.compact {
+  padding: 7px 10px;
+  font-size: 10px;
 }
 .legend {
   font-size: 11px;
@@ -371,6 +428,9 @@ footer {
   .funnel {
     grid-template-columns: repeat(4, 1fr);
   }
+  .visibility-settings {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 @media (max-width: 600px) {
   header {
@@ -421,6 +481,14 @@ footer {
     align-items: start;
     flex-direction: column;
     gap: 8px;
+  }
+  .panel-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .visibility-settings {
+    grid-template-columns: 1fr;
+    padding: 16px 18px;
   }
   .funnel {
     grid-template-columns: repeat(2, 1fr);

@@ -128,13 +128,17 @@ def report(orders, snapshots, filters, start, end):
                 sessions.append(row)
     day_count = (end-start).days+1
     channels = [filters['channel']] if filters.get('channel') in ('google','meta') else ['google','meta']
-    spend_ok = all(len(availability[(c, 'ads')]) == day_count for c in channels)
     ga_ok = all(len(availability[('ga4', k)]) == day_count for k in ('events','products','sessions'))
     order_filter = any(filters.get(k) for k in ('normalized_status','payment_method','courier'))
     media_filter_ok = not order_filter and not filters.get('product')
-    spend_ok = spend_ok and media_filter_ok
+    available_spend_channels = [c for c in channels if len(availability[(c, 'ads')]) == day_count]
+    missing_spend_channels = [c for c in channels if c not in available_spend_channels]
+    spend_ok = bool(available_spend_channels) and media_filter_ok
+    top_ads = [row for row in ads if row.get('channel') in available_spend_channels]
     behavior_ok = ga_ok and not order_filter and not filters.get('group_id') and not filters.get('ad_id')
-    top = enrich(order_metrics(selected), ads, product_ga if filters.get('product') else ga, spend_ok, behavior_ok)
+    top = enrich(order_metrics(selected), top_ads, product_ga if filters.get('product') else ga, spend_ok, behavior_ok)
+    top['spend_channels'] = available_spend_channels if spend_ok else []
+    top['spend_is_partial'] = spend_ok and bool(missing_spend_channels)
     campaign_keys = sorted({(o['attribution'].get('channel', 'Unattributed'), o['attribution'].get('campaign_id') or '') for o in selected} |
                            {(r['channel'],r['campaign_id']) for r in ads + ga})
     campaigns = []
@@ -176,13 +180,13 @@ def report(orders, snapshots, filters, start, end):
                    group_id=sorted({(r['group_id'],r['group_name']) for s in snapshots if s['report_kind']=='ads' for r in s['rows'] if r['group_id']}),
                    ad_id=sorted({(r['ad_id'],r['ad_name']) for s in snapshots if s['report_kind']=='ads' for r in s['rows'] if r['ad_id']}))
     warnings = []
-    warnings.append('Cash on delivery: cancelled or finally returned orders contribute zero delivered revenue. Cancelled value is submitted order value, not cash refunded. Their campaign advertising cost remains included. Being Return stays In process until the final return is confirmed.')
+    warnings.append('Cash on delivery: cancelled or finally returned orders contribute zero delivered revenue. Cancelled value is submitted order value, not cash refunded. Their campaign advertising cost remains included. Being Return and undelivered attempts stay Pending until final return or delivery is confirmed.')
     warnings.append('Delivered revenue is based on courier delivery and order adjustments; it does not confirm courier cash remittance. ROAS excludes product costs, courier fees and return charges. GA4 refunds reverse recorded purchases and do not prove a cash refund.')
-    if not spend_ok:
-        available = [c for c in channels if len(availability[(c, 'ads')]) == day_count]
-        missing = [c for c in channels if c not in available]
-        detail = (' Available campaign rows still show complete ' + ', '.join(available).title() + ' data; overall spend is withheld because ' + ', '.join(missing).title() + ' is unavailable.') if available and missing and media_filter_ok else ''
-        warnings.append('Overall ad spend is unavailable for some channels, dates, or this order/product filter; combined profitability ratios are withheld.' + detail)
+    if spend_ok and missing_spend_channels:
+        warnings.append('Overall ad spend and spend-based ratios include complete ' + ', '.join(available_spend_channels).title() +
+                        ' data only; ' + ', '.join(missing_spend_channels).title() + ' is unavailable and is excluded rather than treated as zero.')
+    elif not spend_ok:
+        warnings.append('Overall ad spend is unavailable for the selected dates or order/product filter; dashes mean unavailable, not zero.')
     if not behavior_ok: warnings.append('GA4 data unavailable for some dates or this filter; dashes mean unavailable, not zero.')
     warnings.append('Product ad spend is unallocated: campaign spend cannot be assigned to individual products without evidence. Product views aggregate Shopify variants to the product ID. Product revenue excludes shipping and tax.')
     warnings.append('Orders use creation dates and their latest status. Ad spend uses activity dates; recent cohorts are still maturing. Product order counts overlap for multi-product orders.')

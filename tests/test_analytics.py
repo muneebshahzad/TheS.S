@@ -12,6 +12,8 @@ from analytics_reporting import report, date_range, order_metrics, product_ident
 @pytest.mark.parametrize('raw,status', [('Un-booked','In process'),('Booked','In process'),('Out for Delivery','In process'),
     ('Need Attention','In process'),('Pending','In process'),('Processing','In process'),('Fulfilled','In process'),
     ('Being Return','In process'),('Return Submission','In process'),('Out for Return','In process'),
+    ('Undelivered - consignee unavailable','In process'),('Delivery attempted','In process'),
+    ('Address issue - undelivered','In process'),
     ('Returned to Shipper','Cancelled'),('RETURN SUBMITTED','Cancelled'),('Returned','Cancelled'),
     ('Returned to sender - received','Cancelled'),('Delivered','Delivered'),('Delivered - OK','Delivered'),('Undelivered','In process')])
 def test_status_classification(raw,status):
@@ -144,6 +146,21 @@ def test_cancelled_cod_retains_ad_cost_without_claiming_cash_refund(order):
     assert result['orders'][0]['refunded_value'] == 0
 
 
+def test_available_meta_spend_is_shown_when_google_is_unavailable(order):
+    record = build_record(order)
+    day = now().date()
+    snapshots = [dict(source='meta', report_kind='ads', report_date=day, fetched_at=now(), rows=[
+        dict(channel='meta', campaign_id='123', campaign_name='Campaign', group_id='456',
+             group_name='Group', ad_id='789', ad_name='Ad', spend=300, currency='PKR',
+             impressions=1000, clicks=20, platform_purchases=2, platform_purchase_value=4000)
+    ])]
+    result = report([record], snapshots, {}, day, day)
+    assert result['kpis']['spend'] == 300
+    assert result['kpis']['spend_channels'] == ['meta']
+    assert result['kpis']['spend_is_partial'] is True
+    assert any('Google is unavailable' in warning for warning in result['warnings'])
+
+
 def test_partial_refund_then_cancellation_no_double_refund(database,order):
     sync_order(order)
     purchase_evidence(['PK101A01'])
@@ -253,7 +270,9 @@ def test_complete_meta_campaign_stats_show_when_google_is_unavailable(order):
                   for kind in ('events', 'products', 'sessions')]
     result = report([record], snapshots, {}, day, day)
     campaign = next(row for row in result['campaigns'] if row['channel'] == 'meta' and row['campaign_id'] == '123')
-    assert result['kpis']['spend'] is None
+    assert result['kpis']['spend'] == 300
+    assert result['kpis']['spend_channels'] == ['meta']
+    assert result['kpis']['spend_is_partial'] is True
     assert campaign['spend'] == 300
     assert campaign['impressions'] == 1000
     assert result['funnel']['submitted_orders'] == 1
