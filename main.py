@@ -5516,6 +5516,18 @@ def check_restart_times():
         time.sleep(30)
 
 
+def warm_runtime_caches():
+    reload_orders()
+    try:
+        refresh_abandoned_checkouts_cache_sync(force=True)
+    except Exception:
+        print("Warning: could not warm abandoned checkout cache")
+
+
+def warm_daraz_cache():
+    refresh_daraz_cache_if_needed()
+
+
 init_db()
 setup_shopify()
 try:
@@ -5526,11 +5538,8 @@ try:
     ensure_required_aghaje_webhooks()
 except Exception as aghaje_webhook_error:
     print(f"Warning: could not ensure Aghaje webhooks: {aghaje_webhook_error}")
-reload_orders()
-try:
-    refresh_abandoned_checkouts_cache_sync(force=True)
-except Exception as abandoned_cache_error:
-    print(f"Warning: could not warm abandoned checkout cache: {abandoned_cache_error}")
+threading.Thread(target=warm_runtime_caches, daemon=True, name="runtime-cache-warm").start()
+threading.Thread(target=warm_daraz_cache, daemon=True, name="daraz-cache-warm").start()
 
 
 if __name__ == "__main__":
