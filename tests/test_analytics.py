@@ -330,5 +330,11 @@ def test_api_uses_json_service_account_for_unique_users(monkeypatch):
     response=client.get('/api/analytics?start=2026-09-01&end=2026-09-02')
 
     assert response.status_code==200
-    assert response.get_json()['funnel']['users']==17
+    assert response.get_json()['funnel']['users'] is None
+    assert users.call_count == 0
+
+    response=client.get('/api/analytics/users?start=2026-09-01&end=2026-09-02')
+
+    assert response.status_code==200
+    assert response.get_json()['users']==17
     users.assert_called_once()

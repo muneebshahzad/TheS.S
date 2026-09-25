@@ -238,6 +238,7 @@ function render() {
   ['users','sessions','engaged_sessions','engagement_rate','view_item','add_to_cart','begin_checkout','submitted_orders','purchase','refund','purchase_revenue'].forEach((k) => {
     const v = data.funnel[k];
     const d = el("div");
+    d.id = `funnel-${k}`;
     d.append(el("span", funnelLabels[k] || k.replaceAll("_", " ")), el("strong", fmt(v, k)));
     funnel.append(d);
   });
@@ -265,12 +266,27 @@ function render() {
     if (key === "currency" && !selected) select.value = data.currency;
   }
 }
+async function loadUsers(params, version) {
+  try {
+    const response = await fetch("/api/analytics/users?" + params, {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    const result = await response.json();
+    if (version !== requestVersion || !response.ok) return;
+    const value = document.querySelector("#funnel-users strong");
+    if (value) value.textContent = fmt(result.users);
+  } catch (_) {
+    // Keep the already rendered report usable if GA4's live range query is slow.
+  }
+}
 async function load() {
   const version = ++requestVersion;
   document.querySelector("#load-status").textContent = "Loading performance…";
   try {
+    const params = new URLSearchParams(new FormData(form));
     const response = await fetch(
-      "/api/analytics?" + new URLSearchParams(new FormData(form)),
+      "/api/analytics?" + params,
       { credentials: "same-origin", cache: "no-store" },
     );
     const result = await response.json();
@@ -279,6 +295,7 @@ async function load() {
     data = result;
     drill = {};
     render();
+    loadUsers(params, version);
     document.querySelector("#load-status").textContent =
       `${data.orders.length} submitted orders · ${form.elements.start.value} — ${form.elements.end.value} · ${data.currency}`;
   } catch (error) {

@@ -59,6 +59,7 @@ def refresh_active():
         refreshed += main.refresh_tracking_summaries_sync(
             numbers[offset:offset + 40], limit=0, fresh_seconds=0,
             deadline_seconds=90,
+            sync_analytics=True,
         )
     return {'shipments_requested': len(numbers), 'shipments_refreshed': refreshed}
 

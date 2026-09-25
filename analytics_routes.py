@@ -41,14 +41,23 @@ def data():
         start, end, since, until = date_range(request.args)
         result = report(load_orders(since, until), load_reports(start,end), request.args, start,end)
         result['funnel']['users'] = None
-        if os.getenv('GOOGLE_APPLICATION_CREDENTIALS') or os.getenv('GOOGLE_REPORTING_SERVICE_ACCOUNT_JSON'):
-            try:
-                from analytics_integrations import unique_users
-                result['funnel']['users'] = unique_users(start,end,request.args)
-            except Exception:
-                result['warnings'].append('Unique users could not be retrieved from GA4 for this range.')
         return jsonify(result)
     except ValueError as error:
         return jsonify(error=str(error)), 400
     except Exception:
         return jsonify(error='Analytics data could not be loaded. Check migration and database connectivity.'), 503
+
+
+@analytics.get('/api/analytics/users')
+@authenticated
+def users():
+    try:
+        start, end, _, _ = date_range(request.args)
+        if not (os.getenv('GOOGLE_APPLICATION_CREDENTIALS') or os.getenv('GOOGLE_REPORTING_SERVICE_ACCOUNT_JSON')):
+            return jsonify(users=None)
+        from analytics_integrations import unique_users
+        return jsonify(users=unique_users(start,end,request.args))
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+    except Exception:
+        return jsonify(users=None, warning='Exact GA4 users are temporarily unavailable.')

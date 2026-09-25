@@ -125,8 +125,11 @@ def test_courier_refresh_commits_bounded_batches(monkeypatch):
 
     batches = []
     monkeypatch.setattr(analytics_store, 'transaction', fake_transaction)
-    monkeypatch.setattr(main, 'refresh_tracking_summaries_sync',
-                        lambda numbers, **kwargs: batches.append(list(numbers)) or len(numbers))
+    def refresh(numbers, **kwargs):
+        assert kwargs['sync_analytics'] is True
+        batches.append(list(numbers))
+        return len(numbers)
+    monkeypatch.setattr(main, 'refresh_tracking_summaries_sync', refresh)
 
     assert analytics_cli.refresh_active() == {
         'shipments_requested': 85,

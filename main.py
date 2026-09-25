@@ -2282,11 +2282,6 @@ def remember_tracking_summary(tracking_number, summary, fetched_at=None):
     tracking_number = str(tracking_number or "").strip()
     if not tracking_number or not summary or not summary.get("status"):
         return False
-    if analytics_enabled():
-        from analytics_store import sync_tracking
-        from datetime import timezone
-        observed = datetime.fromtimestamp(fetched_at or time.time(), timezone.utc)
-        sync_tracking(tracking_number, summary, observed)
     ensure_tracking_summary_cache_loaded()
     tracking_summary_cache[tracking_number.upper()] = {
         "fetched_at": fetched_at or time.time(),
@@ -2347,6 +2342,7 @@ def refresh_tracking_summaries_sync(
     limit=TRACKING_REFRESH_SYNC_LIMIT,
     fresh_seconds=TRACKING_REFRESH_FRESH_SECONDS,
     deadline_seconds=TRACKING_REFRESH_SYNC_DEADLINE_SECONDS,
+    sync_analytics=False,
 ):
     unique_numbers = normalize_tracking_numbers(tracking_numbers)
     ensure_tracking_summary_cache_loaded()
@@ -2402,7 +2398,7 @@ def refresh_tracking_summaries_sync(
                 except Exception as error:
                     print(f"Could not complete tracking refresh task: {error}")
             if updates:
-                if analytics_enabled():
+                if sync_analytics and analytics_enabled():
                     from analytics_store import sync_tracking
                     from datetime import timezone
                     for number, entry in updates.items():
@@ -3381,14 +3377,6 @@ async def process_order(session_obj, order):
                 }
             )
     order_info["status"] = aggregate_order_status(order_info["line_items"])
-
-    if analytics_enabled():
-        from analytics_store import sync_order, sync_tracking
-        sync_order(order.to_dict(), source="shopify_sync")
-        for item in order_info["line_items"]:
-            number = item.get("tracking_number")
-            if number and number != "N/A" and item.get("tracking_observed"):
-                sync_tracking(number, {"status": item["status"]})
 
     return order_info
 
