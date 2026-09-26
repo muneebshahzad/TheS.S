@@ -2,6 +2,7 @@ import asyncio
 import os
 import ssl
 import time
+from datetime import datetime
 
 import certifi
 from aiohttp import ClientTimeout
@@ -16,6 +17,32 @@ _ACTIVE_CACHE_SECONDS = 5 * 60
 _TERMINAL_CACHE_SECONDS = 24 * 60 * 60
 _TERMINAL_STATUSES = {"delivered", "returned", "return delivered", "cancelled"}
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+
+def _event_timestamp(event):
+    raw = str((event or {}).get("date_time") or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        pass
+    for pattern in ("%d/%m/%Y %I:%M %p", "%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(raw, pattern).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def _latest_tracking_event(events):
+    valid = [event for event in (events or []) if isinstance(event, dict) and str(event.get("status") or "").strip()]
+    if not valid:
+        return None
+    dated = [(timestamp, event) for event in valid if (timestamp := _event_timestamp(event)) is not None]
+    # DigiDokaan currently sends newest-first. Keep that as the fallback if a
+    # future courier payload contains an unrecognised date format.
+    return max(dated, key=lambda item: item[0])[1] if dated else valid[0]
 
 
 def configuration():
@@ -107,7 +134,34 @@ async def _fetch_status(session, tracking_number, config):
         (row for row in rows if str(row.get("tracking_no") or "").strip() == tracking_number),
         rows[0],
     )
-    return str(exact.get("courier_status") or exact.get("status") or "").strip() or None
+    summary_status = str(exact.get("courier_status") or exact.get("status") or "").strip() or None
+    order_id = str(exact.get("order_id") or "").strip()
+    if not order_id:
+        return summary_status
+
+    # The search endpoint's courier_status can lag behind the shipment
+    # timeline. The order detail endpoint is the authoritative source for the
+    # latest tracking event shown in DigiDokaan itself.
+    try:
+        async with session.post(
+            config["base_url"] + "/api/seller/order/get_single_order_detail",
+            json={"phone": config["phone"], "order_no": order_id},
+            headers=headers,
+            timeout=ClientTimeout(total=20),
+            ssl=_SSL_CONTEXT,
+        ) as detail_response:
+            detail_body = await detail_response.json(content_type=None)
+        data = detail_body.get("data") if isinstance(detail_body, dict) else None
+        tracking = data.get("tracking_response") if isinstance(data, dict) else None
+        events = tracking.get("data") if isinstance(tracking, dict) else None
+        latest = _latest_tracking_event(events)
+        if detail_response.status == 200 and latest:
+            return str(latest.get("status") or "").strip() or summary_status
+    except Exception:
+        # Preserve the usable search result if the detail endpoint is
+        # temporarily unavailable.
+        pass
+    return summary_status
 
 
 async def fetch_tracking_status(session, tracking_number):

@@ -6,6 +6,29 @@ from unittest.mock import AsyncMock, patch
 import digidokaan
 
 
+class FakeResponse:
+    def __init__(self, body, status=200):
+        self.body = body
+        self.status = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def json(self, content_type=None):
+        return self.body
+
+
+class FakeSession:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+
+    def post(self, *_args, **_kwargs):
+        return FakeResponse(*next(self.responses))
+
+
 class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
     def setUp(self):
         digidokaan._status_cache.clear()
@@ -36,6 +59,53 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
         self.assertEqual(statuses, ["Delivered", "Delivered"])
         self.assertEqual(cached, "Delivered")
         fetch.assert_awaited_once()
+
+    async def test_detail_history_wins_over_stale_search_status(self):
+        config = {
+            "base_url": "https://digidokaan.example",
+            "phone": "923000000000",
+            "password": "secret",
+            "gateway_id": "5",
+        }
+        session = FakeSession(
+            [
+                ({"data": [{
+                    "tracking_no": "22315868148789",
+                    "order_id": "PK2924A01",
+                    "courier_status": "Delivery In Transit",
+                }]},),
+                ({"data": {"tracking_response": {"data": [
+                    {"status": "Shipment - Delivery Unsuccessful", "date_time": "26/09/2026 02:13 PM"},
+                    {"status": "Shipment - Out for Delivery", "date_time": "26/09/2026 11:28 AM"},
+                ]}}},),
+            ]
+        )
+        with patch.object(digidokaan, "_access_token", AsyncMock(return_value="token")):
+            status = await digidokaan._fetch_status(session, "22315868148789", config)
+
+        self.assertEqual(status, "Shipment - Delivery Unsuccessful")
+
+    async def test_search_status_is_fallback_when_detail_is_unavailable(self):
+        config = {
+            "base_url": "https://digidokaan.example",
+            "phone": "923000000000",
+            "password": "secret",
+            "gateway_id": "5",
+        }
+        session = FakeSession(
+            [
+                ({"data": [{
+                    "tracking_no": "22315868148789",
+                    "order_id": "PK2924A01",
+                    "courier_status": "Delivery In Transit",
+                }]},),
+                ({"message": "temporarily unavailable"}, 503),
+            ]
+        )
+        with patch.object(digidokaan, "_access_token", AsyncMock(return_value="token")):
+            status = await digidokaan._fetch_status(session, "22315868148789", config)
+
+        self.assertEqual(status, "Delivery In Transit")
 
 
 def test_sleek_space_routes_digidokaan_tracking(monkeypatch):
