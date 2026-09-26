@@ -57,8 +57,10 @@ from shopify_protected_data import (
 )
 from token_manager import get_access_token, load_tokens, save_tokens
 from digidokaan import (
+    fetch_payment_records as fetch_digidokaan_payment_records,
     fetch_tracking_history as fetch_digidokaan_tracking_history,
     fetch_tracking_status as fetch_digidokaan_tracking_status,
+    summarize_payment_records as summarize_digidokaan_payment_records,
 )
 
 
@@ -4540,6 +4542,7 @@ def build_admin_mobile_sections():
     return [
         {"id": "dashboard", "label": "Dashboard", "icon": "🏠", "src": "/?embedded=1"},
         {"id": "analytics", "label": "Analytics", "icon": "📊", "src": "/analytics", "direct": True},
+        {"id": "payments", "label": "Payments", "icon": "💳", "src": "/payments", "direct": True},
         {"id": "scanner", "label": "Scanner", "icon": "🔍", "src": "/employee_portal"},
         {"id": "employee-orders", "label": "Orders", "icon": "🧾", "src": "/employee_portal/orders"},
         {"id": "pending", "label": "Pending", "icon": "📋", "src": "/pending?embedded=1"},
@@ -5536,11 +5539,51 @@ def employee_portal_report():
     ), 207 if failed else 200
 
 
+def load_digidokaan_payments_sync(force=False):
+    async def run():
+        timeout = aiohttp.ClientTimeout(total=45)
+        async with aiohttp.ClientSession(timeout=timeout) as session_obj:
+            return await fetch_digidokaan_payment_records(session_obj, force=force)
+
+    return asyncio.run(run())
+
+
+@app.route("/payments")
+def payments():
+    if not admin_portal_is_authenticated():
+        return redirect("/admin_portal?next=/payments")
+    response = app.make_response(render_template("payments.html"))
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@app.route("/api/payments")
+def payments_data():
+    if not admin_portal_is_authenticated():
+        return jsonify(error="Authentication required"), 401
+    try:
+        records = load_digidokaan_payments_sync(force=request.args.get("refresh") == "1")
+        response = jsonify(
+            records=records,
+            summary=summarize_digidokaan_payment_records(records),
+            fetched_at=datetime.now().isoformat(timespec="seconds"),
+        )
+    except Exception:
+        response = jsonify(error="DigiDokaan payment data is temporarily unavailable")
+        response.status_code = 503
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 @app.route("/admin_portal", methods=["GET", "POST"])
 def admin_portal():
     selected = (request.values.get("section") or "dashboard").strip().lower()
     requested_next = (request.values.get("next") or "").strip()
-    next_url = requested_next if requested_next in {"/analytics", "/marketing-performance"} else ""
+    next_url = requested_next if requested_next in {"/analytics", "/marketing-performance", "/payments"} else ""
     sections = build_admin_mobile_sections()
     section_ids = {section["id"] for section in sections}
     if selected not in section_ids:

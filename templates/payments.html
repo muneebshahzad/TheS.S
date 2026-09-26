@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DigiDokaan payments · The Sleek Space</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='payments.css') }}">
+  <script src="{{ url_for('static', filename='payments.js') }}" defer></script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="/admin_portal"><span>SS</span> THE SLEEK SPACE <small>OPERATIONS</small></a>
+    <a href="/admin_portal">Back to operations ↗</a>
+  </header>
+  <main>
+    <section class="heading">
+      <div><p class="eyebrow">COD &amp; SETTLEMENTS</p><h1>DigiDokaan payments.</h1><p>Expected COD, deductions and actual settlements reported by DigiDokaan.</p></div>
+      <span class="badge">Live courier ledger</span>
+    </section>
+    <form id="filters" class="filters">
+      <label>From<input type="date" name="start"></label>
+      <label>Through<input type="date" name="end"></label>
+      <label>Payment status<select name="status"><option value="">All statuses</option></select></label>
+      <label>Search<input type="search" name="search" placeholder="Order, tracking or settlement"></label>
+      <button type="submit">Apply filters</button>
+      <button type="button" class="secondary" id="reset">Reset</button>
+    </form>
+    <p id="load-status" role="status" aria-live="polite">Loading DigiDokaan payments…</p>
+    <section class="kpis" id="kpis" aria-label="Payment totals"></section>
+    <section class="panel">
+      <div class="panel-heading"><div><h2>Shipment payments</h2><p id="row-count">DigiDokaan account shipments</p></div><button type="button" class="secondary" id="refresh">Refresh</button></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Order</th><th>Created</th><th>Tracking</th><th>Shipment status</th><th>Payment status</th><th>Gross COD</th><th>Delivery charges</th><th>Other / reserve</th><th>Expected net COD</th><th>Amount paid</th><th>Unsettled</th><th>Settlement ID</th></tr></thead>
+          <tbody id="payment-rows"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="empty" hidden>No matching DigiDokaan shipments.</p>
+    </section>
+    <aside class="notes">
+      <h2>How these figures work</h2>
+      <p><strong>Expected net COD</strong> is the shipment amount less DigiDokaan delivery, other and reserve deductions. It is not money received.</p>
+      <p><strong>Amount paid</strong> is the actual amount DigiDokaan reports as paid. Only delivered, unpaid shipments are counted as pending settlement; active shipments remain awaiting delivery.</p>
+      <p id="freshness"></p>
+    </aside>
+  </main>
+</body>
+</html>

@@ -33,6 +33,7 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
     def setUp(self):
         digidokaan._status_cache.clear()
         digidokaan._inflight.clear()
+        digidokaan._payments_cache.clear()
 
     def test_requires_credentials(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -107,6 +108,67 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(status, "Delivery In Transit")
 
+    def test_payment_record_separates_active_cod_from_settlement(self):
+        record = digidokaan._payment_record(
+            {
+                "order_id": "10498383",
+                "external_reference_no": "PK2924A01",
+                "tracking_no": "22315868148789",
+                "courier_status": "Delivery In Transit",
+                "created_at": "2026-09-25 14:15:00",
+                "price": "11950",
+            },
+            {"data": {
+                "order_detail": {"amount": "11950", "payment_mode": "COD", "payment_status": "0"},
+                "tracking_response": {
+                    "data": [{"status": "Shipment - Delivery Unsuccessful", "date_time": "26/09/2026 02:13 PM"}],
+                    "delivery_charges": "307",
+                    "other_charges": "0",
+                    "reserve_amount": "0",
+                    "total_cod_amount": "11643",
+                    "amount_paid": "0",
+                    "settlement_id": "",
+                },
+            }},
+        )
+
+        self.assertEqual(record["order_id"], "PK2924A01")
+        self.assertEqual(record["shipment_status"], "Shipment - Delivery Unsuccessful")
+        self.assertEqual(record["payment_status"], "Awaiting delivery")
+        self.assertEqual(record["net_cod"], 11643.0)
+        self.assertEqual(record["amount_paid"], 0.0)
+
+    def test_payment_record_marks_only_final_payment_states(self):
+        base_order = {"order_id": "1", "tracking_no": "2231", "price": "10000"}
+        delivered = digidokaan._payment_record(base_order, {"data": {
+            "order_detail": {"amount": "10000", "payment_status": "0"},
+            "tracking_response": {"data": [{"status": "Shipment - Delivered"}], "total_cod_amount": "9500", "amount_paid": "0"},
+        }})
+        returned = digidokaan._payment_record(base_order, {"data": {
+            "order_detail": {"amount": "10000", "payment_status": "0"},
+            "tracking_response": {"data": [{"status": "Shipment - Returned to Shipper"}], "total_cod_amount": "9500", "amount_paid": "0"},
+        }})
+        settled = digidokaan._payment_record(base_order, {"data": {
+            "order_detail": {"amount": "10000", "payment_status": "1"},
+            "tracking_response": {"data": [{"status": "Shipment - Delivered"}], "total_cod_amount": "9500", "amount_paid": "9500", "settlement_id": "SET-1"},
+        }})
+
+        self.assertEqual(delivered["payment_status"], "Pending settlement")
+        self.assertEqual(returned["payment_status"], "Not payable")
+        self.assertEqual(settled["payment_status"], "Settled")
+
+    def test_payment_summary_does_not_treat_active_shipments_as_due(self):
+        records = [
+            {"order_amount": 10000, "delivery_charges": 500, "other_charges": 0, "reserve_amount": 0, "net_cod": 9500, "amount_paid": 0, "outstanding": 9500, "payment_status": "Awaiting delivery"},
+            {"order_amount": 12000, "delivery_charges": 500, "other_charges": 0, "reserve_amount": 0, "net_cod": 11500, "amount_paid": 0, "outstanding": 11500, "payment_status": "Pending settlement"},
+        ]
+
+        summary = digidokaan.summarize_payment_records(records)
+
+        self.assertEqual(summary["expected_net_cod"], 21000.0)
+        self.assertEqual(summary["awaiting_delivery"], 9500.0)
+        self.assertEqual(summary["pending_settlement"], 11500.0)
+
 
 def test_sleek_space_routes_digidokaan_tracking(monkeypatch):
     monkeypatch.setenv("INITIALIZE_APP", "false")
@@ -115,3 +177,41 @@ def test_sleek_space_routes_digidokaan_tracking(monkeypatch):
     assert main.is_digidokaan_tracking("22322367960798")
     assert main.courier_label_for_tracking("", "22322367960798") == "DigiDokaan"
     assert not main.is_digidokaan_tracking("LE123456")
+
+
+def test_payments_page_is_private_and_api_returns_digidokaan_ledger(monkeypatch):
+    monkeypatch.setenv("INITIALIZE_APP", "false")
+    import main
+
+    client = main.app.test_client()
+    response = client.get("/payments")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/admin_portal?next=/payments")
+
+    record = {
+        "order_id": "PK2924A01",
+        "digidokaan_order_id": "10498383",
+        "tracking_number": "22315868148789",
+        "created_at": "2026-09-25 14:15:00",
+        "shipment_status": "Shipment - Delivery Unsuccessful",
+        "payment_mode": "COD",
+        "payment_status": "Awaiting delivery",
+        "raw_payment_status": "0",
+        "order_amount": 11950.0,
+        "delivery_charges": 307.0,
+        "other_charges": 0.0,
+        "reserve_amount": 0.0,
+        "net_cod": 11643.0,
+        "amount_paid": 0.0,
+        "outstanding": 11643.0,
+        "settlement_id": "",
+    }
+    monkeypatch.setattr(main, "load_digidokaan_payments_sync", lambda force=False: [record])
+    with client.session_transaction() as session:
+        session[main.ADMIN_PORTAL_SESSION_KEY] = True
+
+    assert client.get("/payments").status_code == 200
+    payload = client.get("/api/payments").get_json()
+    assert payload["records"] == [record]
+    assert payload["summary"]["awaiting_delivery"] == 11643.0
+    assert payload["summary"]["pending_settlement"] == 0.0
