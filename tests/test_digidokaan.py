@@ -179,6 +179,27 @@ def test_sleek_space_routes_digidokaan_tracking(monkeypatch):
     assert not main.is_digidokaan_tracking("LE123456")
 
 
+def test_digidokaan_delivery_exceptions_need_attention(monkeypatch):
+    monkeypatch.setenv("INITIALIZE_APP", "false")
+    import main
+
+    for status in (
+        "Shipment - Shipper Advise Requested",
+        "Shipment - Shipper Advice Requested",
+        "Shipment - Reason Validation Required",
+        "Shipment - Delivery Unsuccessful",
+        "Shipment - Delivery Failed",
+    ):
+        assert main.is_need_attention_status(status)
+        assert main.aggregate_order_status([
+            {"status": status, "tracking_number": "22325168148793"}
+        ]) == "Need Attention"
+
+    assert main.aggregate_order_status([
+        {"status": "Shipment - In Transit", "tracking_number": "22325168148793"}
+    ]) == "Shipment - In Transit"
+
+
 def test_payments_page_is_private_and_api_returns_digidokaan_ledger(monkeypatch):
     monkeypatch.setenv("INITIALIZE_APP", "false")
     import main

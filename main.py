@@ -1000,7 +1000,15 @@ def is_need_attention_status(status):
     normalized = normalize_status_bucket(status)
     attention_keywords = (
         "UNDELIVERED",
+        "DELIVERY UNSUCCESSFUL",
+        "DELIVERY FAILED",
         "CONTACTING CONSIGNEE",
+        "CONSIGNEE REFUSED",
+        "CUSTOMER REFUSED",
+        "SHIPPER ADVISE REQUESTED",
+        "SHIPPER ADVICE REQUESTED",
+        "REASON VALIDATION REQUIRED",
+        "ADDRESS CLOSED",
         "MOVED TO ORIGIN BRANCH",
         "RETURN SUBMITTED",
         "RETURN SUBMISSION",

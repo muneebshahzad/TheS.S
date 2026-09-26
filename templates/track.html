@@ -705,7 +705,15 @@ function itemNeedsAttention(item) {
     bucket === 'Undelivered' ||
     bucket === 'Being Return' ||
     raw.includes('UNDELIVERED') ||
+    raw.includes('DELIVERY UNSUCCESSFUL') ||
+    raw.includes('DELIVERY FAILED') ||
     raw.includes('CONTACTING CONSIGNEE') ||
+    raw.includes('CONSIGNEE REFUSED') ||
+    raw.includes('CUSTOMER REFUSED') ||
+    raw.includes('SHIPPER ADVISE REQUESTED') ||
+    raw.includes('SHIPPER ADVICE REQUESTED') ||
+    raw.includes('REASON VALIDATION REQUIRED') ||
+    raw.includes('ADDRESS CLOSED') ||
     raw.includes('MOVED TO ORIGIN BRANCH') ||
     raw.includes('RETURN SUBMITTED') ||
     raw.includes('RETURN SUBMISSION') ||
