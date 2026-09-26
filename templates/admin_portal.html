@@ -311,6 +311,7 @@
   <div class="shell">
     {% if view == 'login' %}
       <form class="login-card card" method="post">
+        {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
         <a class="brand-lockup" href="#">
           <img src="/static/sleekspace-wordmark.svg" alt="The Sleek Space">
         </a>
@@ -405,6 +406,11 @@
 
       function openSection(sectionId, persist = true) {
         const section = getSectionById(sectionId);
+        if (section.direct) {
+          localStorage.removeItem('tbAdminPortalSection');
+          window.location.assign(section.src);
+          return;
+        }
         currentSectionId = section.id;
         toolFrame.src = section.src;
         updateActiveTab(section.id);

@@ -33,7 +33,16 @@ def match_order(order, filters):
 
 
 def order_metrics(orders, product=None):
-    result = dict(gross_orders=len(orders), delivered=0, cancelled=0, in_process=0, delivered_revenue=0., cancelled_value=0.)
+    result = dict(
+        gross_orders=len(orders),
+        delivered=0,
+        cancelled=0,
+        in_process=0,
+        delivered_revenue=0.,
+        delivered_value=0.,
+        cancelled_value=0.,
+        in_process_value=0.,
+    )
     for order in orders:
         status = order['normalized_status']
         result[{'Delivered':'delivered', 'Cancelled':'cancelled', 'In process':'in_process'}[status]] += 1
@@ -45,8 +54,11 @@ def order_metrics(orders, product=None):
             value = max(money(0), cancelled_value - refunds)
         if status == 'Delivered':
             result['delivered_revenue'] += float(value)
+            result['delivered_value'] += float(value)
         if status == 'Cancelled':
             result['cancelled_value'] += float(cancelled_value)
+        if status == 'In process':
+            result['in_process_value'] += float(value)
     finals = result['delivered'] + result['cancelled']
     result['delivery_rate'] = ratio(result['delivered'], finals)
     result['cancellation_rate'] = ratio(result['cancelled'], finals)

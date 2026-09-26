@@ -272,24 +272,21 @@ function render() {
   document.querySelector("#currency").textContent = data.currency;
   const box = document.querySelector("#kpis");
   box.replaceChildren();
-  for (const [key, label, status] of [
+  for (const [key, label, status, valueKey, valueLabel] of [
     ["spend", "Ad spend"],
     ["product_views", "Product views"],
     ["add_to_carts", "Add to carts"],
     ["gross_orders", "Gross orders"],
-    ["delivered", "Delivered orders", "Delivered"],
-    ["cancelled", "Cancelled orders", "Cancelled"],
-    ["in_process", "Pending orders", "In process"],
-    ["delivered_revenue", "Delivered revenue"],
-    ["delivery_rate", "Delivery rate"],
-    ["cancellation_rate", "Cancellation rate"],
+    ["delivered", "Delivered orders", "Delivered", "delivered_value", "Delivered value"],
+    ["cancelled", "Cancelled orders", "Cancelled", "cancelled_value", "Cancelled value"],
+    ["in_process", "Pending orders", "In process", "in_process_value", "Pending value"],
     ["cost_per_delivered", "Cost per delivered"],
     ["delivered_roas", "Delivered ROAS"],
   ]) {
     const card = el(
         "article",
         undefined,
-        `kpi ${["delivered", "delivered_revenue", "delivered_roas"].includes(key) ? "success" : ""}`,
+        `kpi ${["delivered", "delivered_revenue", "delivered_roas"].includes(key) ? "success" : ""} ${key === "cancelled" ? "cancelled" : key === "in_process" ? "pending" : ""}`,
       ),
       inner = status ? el("button") : el("div");
     const displayLabel =
@@ -300,6 +297,14 @@ function render() {
       el("span", displayLabel, "label"),
       el("strong", fmt(data.kpis[key], key)),
     );
+    if (valueKey)
+      inner.append(
+        el(
+          "small",
+          `${valueLabel} · ${data.currency} ${fmt(data.kpis[valueKey])}`,
+          "status-value",
+        ),
+      );
     if (
       data.kpis.spend_is_partial &&
       ["spend", "cost_per_delivered", "delivered_roas"].includes(key)

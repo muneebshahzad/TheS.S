@@ -4539,7 +4539,7 @@ def verify_shopify_webhook(req):
 def build_admin_mobile_sections():
     return [
         {"id": "dashboard", "label": "Dashboard", "icon": "🏠", "src": "/?embedded=1"},
-        {"id": "analytics", "label": "Analytics", "icon": "📊", "src": "/analytics"},
+        {"id": "analytics", "label": "Analytics", "icon": "📊", "src": "/analytics", "direct": True},
         {"id": "scanner", "label": "Scanner", "icon": "🔍", "src": "/employee_portal"},
         {"id": "employee-orders", "label": "Orders", "icon": "🧾", "src": "/employee_portal/orders"},
         {"id": "pending", "label": "Pending", "icon": "📋", "src": "/pending?embedded=1"},
@@ -5539,6 +5539,8 @@ def employee_portal_report():
 @app.route("/admin_portal", methods=["GET", "POST"])
 def admin_portal():
     selected = (request.values.get("section") or "dashboard").strip().lower()
+    requested_next = (request.values.get("next") or "").strip()
+    next_url = requested_next if requested_next in {"/analytics", "/marketing-performance"} else ""
     sections = build_admin_mobile_sections()
     section_ids = {section["id"] for section in sections}
     if selected not in section_ids:
@@ -5548,11 +5550,13 @@ def admin_portal():
         submitted_password = (request.form.get("password") or "").strip()
         if submitted_password == ADMIN_PORTAL_PASSWORD:
             session[ADMIN_PORTAL_SESSION_KEY] = True
+            if next_url:
+                return redirect(next_url)
             return redirect(url_for("admin_portal", section=selected))
-        return render_template("admin_portal.html", view="login", login_error="Wrong password. Try again.", sections=sections, selected_section=selected), 401
+        return render_template("admin_portal.html", view="login", login_error="Wrong password. Try again.", sections=sections, selected_section=selected, next_url=next_url), 401
 
     if not admin_portal_is_authenticated():
-        return render_template("admin_portal.html", view="login", login_error="", sections=sections, selected_section=selected)
+        return render_template("admin_portal.html", view="login", login_error="", sections=sections, selected_section=selected, next_url=next_url)
 
     return render_template("admin_portal.html", view="portal", sections=sections, selected_section=selected, employee_approvals=build_employee_approval_items())
 

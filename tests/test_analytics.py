@@ -244,6 +244,9 @@ def test_campaign_and_product_filters_reconcile(order):
     result=report(records,[],{},start,end)
     assert result['kpis']['gross_orders']==3
     assert result['kpis']['delivery_rate']==.5
+    assert result['kpis']['delivered_value']==2200
+    assert result['kpis']['cancelled_value']==2200
+    assert result['kpis']['in_process_value']==2200
     assert result['kpis']['gross_orders']==sum(result['kpis'][k] for k in ('delivered','cancelled','in_process'))
     assert sum(c['gross_orders'] for c in result['campaigns'])==3
     assert report(records,[],{'campaign_id':'123','product':'501'},start,end)['kpis']['gross_orders']==3
@@ -319,7 +322,9 @@ def test_authenticated_route(monkeypatch):
     app=Flask(__name__,template_folder='../templates');app.secret_key='test-only'
     app.register_blueprint(analytics);client=app.test_client()
     assert client.get('/api/analytics').status_code==401
-    assert client.get('/analytics').status_code==302
+    login_redirect = client.get('/analytics')
+    assert login_redirect.status_code==302
+    assert login_redirect.headers['Location'].endswith('/admin_portal?next=/analytics')
     monkeypatch.setenv('ORDER_ANALYTICS_ENABLED','true')
     with client.session_transaction() as session: session['admin_portal_authenticated']=True
     response=client.get('/analytics')

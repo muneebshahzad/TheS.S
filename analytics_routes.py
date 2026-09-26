@@ -11,7 +11,7 @@ def authenticated(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if not session.get('admin_portal_authenticated'):
-            return (jsonify(error='Authentication required'), 401) if request.path.startswith('/api/') else redirect('/admin_portal')
+            return (jsonify(error='Authentication required'), 401) if request.path.startswith('/api/') else redirect('/admin_portal?next=' + request.path)
         if os.getenv('ORDER_ANALYTICS_ENABLED') != 'true':
             return (jsonify(error='Analytics migration and activation are required'), 503) if request.path.startswith('/api/') else render_template('analytics.html', enabled=False)
         return fn(*args, **kwargs)

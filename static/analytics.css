@@ -195,6 +195,14 @@ a:focus-visible {
   background: #eaf1e9;
   border-color: #cbddce;
 }
+.kpi.cancelled {
+  background: #fff1ef;
+  border-color: #edcec8;
+}
+.kpi.pending {
+  background: #fff8e8;
+  border-color: #eadbb5;
+}
 .kpi .label {
   font-size: 11px;
   color: #697a6e;
@@ -212,6 +220,14 @@ a:focus-visible {
   margin-top: 7px;
   color: #7b6a3b;
   font-size: 9px;
+  line-height: 1.35;
+}
+.status-value {
+  display: block;
+  margin-top: 8px;
+  color: #52685b;
+  font-size: 10px;
+  font-weight: 600;
   line-height: 1.35;
 }
 .kpi button {
