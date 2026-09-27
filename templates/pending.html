@@ -7,11 +7,13 @@
   #app { min-height: 100vh; height: auto; overflow: visible; }
   #main { min-height: 100vh; height: auto; overflow: visible; display: block; }
   .pending-shell { display:flex; flex-direction:column; min-height:100vh; overflow:visible; }
-  .pending-topbar { height:52px; background:#fff; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; padding:0 20px; gap:12px; flex-shrink:0; }
+  .pending-topbar { min-height:58px; background:#fff; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; padding:8px 20px; gap:12px; flex-shrink:0; position:sticky; top:0; z-index:20; }
   .pending-title { font-size:16px; font-weight:700; color:#3a3b45; }
   .pending-scroll { flex:1 1 auto; min-height:0; overflow:visible; padding:16px; display:flex; flex-direction:column; gap:16px; }
   .stats-grid { display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:12px; }
   .section-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; align-items:start; }
+  .item-summary-card { grid-column:1; grid-row:1; min-width:0; }
+  .vendor-card { grid-column:2; grid-row:1; min-width:0; position:sticky; top:74px; }
   .summary-list, .order-list { display:flex; flex-direction:column; gap:10px; }
   .summary-row { display:grid; grid-template-columns:56px 1fr auto auto; gap:12px; align-items:center; padding:10px 12px; border:1px solid #e3e6f0; border-radius:10px; background:#fff; }
   .summary-thumb { width:56px; height:56px; border-radius:10px; overflow:hidden; background:#f2f4f8; display:flex; align-items:center; justify-content:center; }
@@ -32,16 +34,19 @@
   .item-title { font-size:12px; font-weight:600; color:#2d2e36; }
   .item-meta { font-size:10px; color:#858796; margin-top:2px; }
   .item-qty { font-size:11px; font-weight:700; color:#4e73df; white-space:nowrap; }
-  .quick-add-btn { width:34px; height:34px; border-radius:10px; border:1px solid #d7dceb; background:#fff; color:#4e73df; font-size:20px; line-height:1; font-weight:700; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all .15s; }
+  .quick-add-btn { min-width:54px; height:34px; padding:0 10px; border-radius:10px; border:1px solid #d7dceb; background:#fff; color:#4e73df; font-size:11px; line-height:1; font-weight:800; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all .15s; }
   .quick-add-btn:hover { background:#eef3ff; border-color:#b8c7f0; }
+  .quick-add-btn.added { color:#16764f; border-color:#acd9c6; background:#eaf8f1; }
   .vendor-panel { padding:14px 16px; display:flex; flex-direction:column; gap:12px; min-height:420px; }
-  .vendor-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-  .vendor-actions { display:flex; align-items:center; gap:12px; }
+  .vendor-top { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+  .vendor-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .vendor-count { display:inline-flex; align-items:center; justify-content:center; min-width:24px; height:24px; padding:0 8px; border-radius:999px; background:#eef3ff; color:#4e73df; font-size:11px; font-weight:700; }
-  .vendor-open { border:none; background:none; color:#4e73df; font-size:11px; font-weight:700; cursor:pointer; padding:0; }
-  .vendor-add { border:none; background:none; color:#1cc88a; font-size:11px; font-weight:700; cursor:pointer; padding:0; }
-  .vendor-clear { border:none; background:none; color:#858796; font-size:11px; font-weight:700; cursor:pointer; padding:0; }
-  .vendor-list { display:flex; flex-direction:column; gap:10px; }
+  .vendor-open, .vendor-add, .vendor-clear { min-height:42px; border-radius:10px; padding:9px 12px; font-size:11px; font-weight:800; cursor:pointer; font-family:'DM Sans',sans-serif; }
+  .vendor-open { border:1px solid #4e73df; background:#4e73df; color:#fff; }
+  .vendor-add { border:1px solid #bde5d5; background:#eefaf5; color:#16764f; }
+  .vendor-clear { border:1px solid #e0e3eb; background:#fff; color:#717582; }
+  .vendor-open:disabled { opacity:.45; cursor:not-allowed; }
+  .vendor-list { display:flex; flex-direction:column; gap:10px; max-height:50vh; overflow:auto; overscroll-behavior:contain; padding-right:2px; }
   .vendor-custom-form { border:1px solid #dce2ee; border-radius:12px; background:#f8faff; padding:12px; display:flex; flex-direction:column; gap:10px; }
   .vendor-custom-grid { display:grid; grid-template-columns:1fr 1fr 1fr 90px; gap:10px; }
   .vendor-item { border:1px solid #e3e6f0; border-radius:12px; background:#fff; padding:12px; display:grid; grid-template-columns:52px 1fr auto; gap:10px; align-items:start; }
@@ -59,6 +64,16 @@
   .vendor-empty { flex:1; border:1px dashed #d6dbea; border-radius:14px; background:#fafbfe; color:#858796; font-size:13px; display:flex; align-items:center; justify-content:center; text-align:center; padding:20px; min-height:220px; }
   .vendor-note { font-size:11px; color:#858796; line-height:1.5; }
   .vendor-money { display:flex; gap:10px; flex-wrap:wrap; font-size:10px; color:#6f7280; }
+  .vendor-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .vendor-summary div { border:1px solid #e5e8f0; border-radius:10px; background:#fafbfe; padding:9px; }
+  .vendor-summary span { display:block; color:#858796; font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
+  .vendor-summary strong { display:block; margin-top:3px; color:#2d2e36; font-size:13px; }
+  .summary-tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .summary-search { width:min(240px,48vw); border:1px solid #dce2ee; border-radius:10px; padding:9px 11px; font:12px 'DM Sans',sans-serif; }
+  .top-vendor-btn { border:1px solid #4e73df; border-radius:999px; background:#eef3ff; color:#365ebf; padding:8px 12px; font:800 11px 'DM Sans',sans-serif; cursor:pointer; white-space:nowrap; }
+  .vendor-dock { display:none; }
+  .vendor-toast { position:fixed; z-index:80; left:50%; bottom:22px; transform:translate(-50%,16px); opacity:0; pointer-events:none; border-radius:12px; background:#202331; color:#fff; padding:11px 15px; font-size:12px; font-weight:700; box-shadow:0 14px 36px rgba(25,34,62,.22); transition:.18s ease; }
+  .vendor-toast.show { opacity:1; transform:translate(-50%,0); }
   .order-side { display:flex; flex-direction:column; gap:10px; }
   .mini-block { padding:10px 12px; border:1px solid #e8eaef; border-radius:10px; background:#fff; }
   .mini-label { font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#858796; margin-bottom:6px; }
@@ -68,6 +83,9 @@
   .empty-state { padding:34px 16px; text-align:center; color:#858796; font-size:13px; }
   @media (max-width: 900px) {
     .section-grid, .order-body { grid-template-columns:1fr; }
+    .vendor-card, .item-summary-card { grid-column:1; position:static; }
+    .vendor-card { grid-row:1; }
+    .item-summary-card { grid-row:2; }
   }
   @media (max-width: 767px) {
     .pending-topbar { padding:0 14px; }
@@ -75,10 +93,21 @@
     .stats-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
     .summary-row { grid-template-columns:48px 1fr auto auto; gap:10px; }
     .summary-thumb { width:48px; height:48px; }
-    .item-row { grid-template-columns:44px 1fr auto auto; }
+    .item-row { grid-template-columns:44px 1fr auto; }
+    .item-row .quick-add-btn { grid-column:2 / -1; width:100%; }
     .vendor-custom-grid { grid-template-columns:1fr; }
     .vendor-item { grid-template-columns:48px 1fr; }
     .vendor-remove { grid-column: 1 / -1; justify-self:end; }
+    .vendor-actions { grid-template-columns:1fr; }
+    .vendor-list { max-height:none; }
+    .pending-scroll { padding-bottom:92px; }
+    .vendor-dock { position:fixed; z-index:45; left:12px; right:12px; bottom:12px; display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid #d7deef; border-radius:16px; background:rgba(255,255,255,.96); box-shadow:0 14px 40px rgba(25,34,62,.2); backdrop-filter:blur(12px); }
+    .vendor-dock-copy { flex:1; min-width:0; }
+    .vendor-dock-copy strong, .vendor-dock-copy span { display:block; }
+    .vendor-dock-copy strong { font-size:13px; color:#2d2e36; }
+    .vendor-dock-copy span { font-size:10px; color:#858796; margin-top:2px; }
+    .vendor-dock button { min-height:42px; border:0; border-radius:11px; background:#4e73df; color:#fff; padding:8px 13px; font:800 11px 'DM Sans',sans-serif; }
+    .pending-waiting { display:none; }
   }
 </style>
 
@@ -86,7 +115,8 @@
   <div class="pending-topbar">
     <span class="pending-title">Pending Orders</span>
     <div style="flex:1"></div>
-    <span style="font-size:11px;color:#858796;">{{ all_orders|length }} order{{ '' if all_orders|length == 1 else 's' }} waiting</span>
+    <span class="pending-waiting" style="font-size:11px;color:#858796;">{{ all_orders|length }} order{{ '' if all_orders|length == 1 else 's' }} waiting</span>
+    <button class="top-vendor-btn" type="button" onclick="focusVendorBuilder()">Vendor order · <span id="topVendorCount">0</span></button>
   </div>
 
   <div class="pending-scroll">
@@ -101,14 +131,18 @@
     </div>
 
     <div class="section-grid">
-      <div class="section-card">
+      <div class="section-card item-summary-card">
         <div class="section-header">
           <span style="font-size:14px;font-weight:700;color:#3a3b45;">Item Summary</span>
-          <span class="section-count">{{ pending_items|length }}</span>
+          <div class="summary-tools">
+            <input class="summary-search" id="itemSummarySearch" type="search" placeholder="Search products…" aria-label="Search pending products">
+            <button class="vendor-add" type="button" onclick="addAllSummaryItems()">Add all items</button>
+            <span class="section-count" id="visibleItemCount">{{ pending_items|length }}</span>
+          </div>
         </div>
         <div class="summary-list" style="padding:12px;">
           {% for item in pending_items %}
-          <div class="summary-row">
+          <div class="summary-row" data-summary-title="{{ item.item_title|lower }}">
             <div class="summary-thumb">
               {% if item.item_image %}<img src="{{ item.item_image }}" alt="">{% else %}📦{% endif %}
             </div>
@@ -135,9 +169,10 @@
               data-image="{{ item.item_image or '' }}"
               data-price="{{ item.unit_price }}"
               data-cost="{{ item.unit_cost }}"
+              data-summary-item="true"
               onclick="addVendorItemFromButton(this)"
               title="Add to vendor list"
-            >+</button>
+            >Add</button>
           </div>
           {% else %}
           <div class="empty-state">No pending items right now.</div>
@@ -145,41 +180,49 @@
         </div>
       </div>
 
-      <div class="section-card">
+      <div class="section-card vendor-card" id="vendorBuilder">
         <div class="section-header">
-          <span style="font-size:14px;font-weight:700;color:#3a3b45;">Vendor List</span>
+          <span style="font-size:14px;font-weight:700;color:#3a3b45;">Build vendor order</span>
         </div>
         <div class="vendor-panel">
           <div class="vendor-top">
-            <div style="display:flex;align-items:center;gap:8px;">
-              <span style="font-size:13px;font-weight:700;color:#3a3b45;">Selected items</span>
-              <span class="vendor-count" id="vendorCount">0</span>
+            <div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:13px;font-weight:700;color:#3a3b45;">Selected products</span>
+                <span class="vendor-count" id="vendorCount">0</span>
+              </div>
+              <div style="font-size:10px;color:#858796;margin-top:4px;">Add products, confirm quantities and create the vendor sheet.</div>
             </div>
-            <div class="vendor-actions">
-              <button class="vendor-add" type="button" onclick="toggleCustomVendorForm(true)">Add custom</button>
-              <button class="vendor-open" type="button" onclick="openVendorListPage()">Show list</button>
-              <button class="vendor-open" type="button" onclick="openVendorInvoicePage()">Create invoice</button>
-              <button class="vendor-clear" type="button" onclick="clearVendorList()">Clear all</button>
-            </div>
+          </div>
+          <div class="vendor-summary">
+            <div><span>Products</span><strong id="vendorProductTotal">0</strong></div>
+            <div><span>Total units</span><strong id="vendorUnitTotal">0</strong></div>
+            <div><span>Est. cost</span><strong id="vendorCostTotal">PKR 0</strong></div>
+          </div>
+          <div class="vendor-actions">
+            <button class="vendor-open" id="createVendorOrderBtn" type="button" onclick="openVendorInvoicePage()">Create vendor order</button>
+            <button class="vendor-add" type="button" onclick="openVendorListPage()">Preview item sheet</button>
+            <button class="vendor-add" type="button" onclick="toggleCustomVendorForm(true)">Add custom item</button>
+            <button class="vendor-clear" type="button" onclick="clearVendorList()">Clear selection</button>
           </div>
           <div class="vendor-custom-form" id="vendorCustomForm" style="display:none;">
             <div class="vendor-custom-grid">
               <input class="vendor-input" id="customVendorName" type="text" placeholder="Product name" />
-              <input class="vendor-input" id="customVendorImage" type="url" placeholder="Image URL" />
-              <input class="vendor-input" id="customVendorCost" type="number" min="0" step="0.01" value="0" placeholder="Cost" />
-              <input class="vendor-input" id="customVendorQty" type="number" min="1" step="1" value="1" placeholder="Qty" />
+              <input class="vendor-input" id="customVendorImage" type="url" placeholder="Image URL (optional)" />
+              <input class="vendor-input" id="customVendorCost" type="number" min="0" step="0.01" value="0" placeholder="Unit cost" />
+              <input class="vendor-input" id="customVendorQty" type="number" min="1" step="1" value="1" placeholder="Quantity" />
             </div>
             <div class="vendor-custom-actions">
               <button class="vendor-secondary-btn" type="button" onclick="toggleCustomVendorForm(false)">Cancel</button>
-              <button class="vendor-primary-btn" type="button" onclick="saveCustomVendorItem()">Add item</button>
+              <button class="vendor-primary-btn" type="button" onclick="saveCustomVendorItem()">Add to order</button>
             </div>
           </div>
           <div class="vendor-list" id="vendorList"></div>
           <div class="vendor-empty" id="vendorEmpty">
-            Click the <strong style="margin:0 4px;">+</strong> beside any item to build your vendor list here.
+            Choose <strong style="margin:0 4px;">Add</strong> beside a product, or use <strong style="margin-left:4px;">Add all items</strong> for a complete pending-stock order.
           </div>
           <div class="vendor-note">
-            This list is only for you in this browser. You can rename products, tweak quantities, and it will stay after refresh.
+            Your draft is saved automatically on this device. Quantities and costs can be edited before creating the order.
           </div>
         </div>
       </div>
@@ -237,7 +280,7 @@
                   data-cost="{{ item.unit_cost }}"
                   onclick="addVendorItemFromButton(this)"
                   title="Add to vendor list"
-                >+</button>
+                >Add</button>
               </div>
               {% endfor %}
             </div>
@@ -274,9 +317,32 @@
   </div>
 </div>
 
+<div class="vendor-dock" id="vendorDock">
+  <div class="vendor-dock-copy">
+    <strong><span id="dockVendorCount">0</span> products · <span id="dockVendorUnits">0</span> units</strong>
+    <span id="dockVendorCost">Estimated cost PKR 0</span>
+  </div>
+  <button type="button" onclick="focusVendorBuilder()">Review order</button>
+</div>
+<div class="vendor-toast" id="vendorToast" role="status" aria-live="polite"></div>
+
 <script>
   const vendorStorageKey = 'sleekspace_vendor_list_v1';
   let vendorItems = [];
+  let vendorToastTimer = null;
+
+  function showVendorToast(message) {
+    const toast = document.getElementById('vendorToast');
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.add('show');
+    window.clearTimeout(vendorToastTimer);
+    vendorToastTimer = window.setTimeout(() => toast.classList.remove('show'), 2200);
+  }
+
+  function focusVendorBuilder() {
+    document.getElementById('vendorBuilder')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   function loadVendorItems() {
     try {
@@ -291,11 +357,11 @@
     localStorage.setItem(vendorStorageKey, JSON.stringify(vendorItems));
   }
 
-  function addVendorItem(item) {
+  function addVendorItem(item, options = {}) {
     const normalizedKey = String(item.key || item.title || '').trim();
     const existing = vendorItems.find((entry) => entry.key === normalizedKey);
     if (existing) {
-      existing.quantity = Number(existing.quantity || 0) + Number(item.quantity || 1);
+      existing.quantity = Math.max(Number(existing.quantity || 1), Number(item.quantity || 1));
     } else {
       vendorItems.push({
         key: normalizedKey,
@@ -306,8 +372,11 @@
         cost: Number(item.cost || 0),
       });
     }
-    saveVendorItems();
-    renderVendorItems();
+    if (!options.deferRender) {
+      saveVendorItems();
+      renderVendorItems();
+    }
+    if (!options.quiet) showVendorToast(existing ? 'This product is already in the vendor order.' : 'Product added to the vendor order.');
   }
 
   function addVendorItemFromButton(button) {
@@ -321,6 +390,22 @@
     });
   }
 
+  function addAllSummaryItems() {
+    const buttons = [...document.querySelectorAll('[data-summary-item="true"]')];
+    buttons.forEach((button) => addVendorItem({
+      key: button.dataset.key || button.dataset.title || '',
+      title: button.dataset.title || 'Vendor item',
+      quantity: Number(button.dataset.quantity || 1),
+      image: button.dataset.image || '',
+      price: Number(button.dataset.price || 0),
+      cost: Number(button.dataset.cost || 0),
+    }, { quiet: true, deferRender: true }));
+    saveVendorItems();
+    renderVendorItems();
+    showVendorToast(`${buttons.length} pending products added.`);
+    focusVendorBuilder();
+  }
+
   function updateVendorTitle(index, value) {
     if (!vendorItems[index]) return;
     vendorItems[index].title = value;
@@ -332,14 +417,18 @@
     const parsed = Math.max(1, parseInt(value || '1', 10) || 1);
     vendorItems[index].quantity = parsed;
     saveVendorItems();
-    renderVendorItems();
+    refreshVendorSummary();
+    const total = document.querySelector(`[data-vendor-line-total="${index}"]`);
+    if (total) total.textContent = `Total: PKR ${(Number(vendorItems[index].cost || 0) * parsed).toLocaleString('en-PK')}`;
   }
 
   function updateVendorCost(index, value) {
     if (!vendorItems[index]) return;
     vendorItems[index].cost = Math.max(0, Number(value || 0));
     saveVendorItems();
-    renderVendorItems();
+    refreshVendorSummary();
+    const total = document.querySelector(`[data-vendor-line-total="${index}"]`);
+    if (total) total.textContent = `Total: PKR ${(vendorItems[index].cost * Number(vendorItems[index].quantity || 0)).toLocaleString('en-PK')}`;
   }
 
   function removeVendorItem(index) {
@@ -349,9 +438,12 @@
   }
 
   function clearVendorList() {
+    if (!vendorItems.length) return;
+    if (!window.confirm('Clear every product from this vendor order?')) return;
     vendorItems = [];
     saveVendorItems();
     renderVendorItems();
+    showVendorToast('Vendor order cleared.');
   }
 
   function toggleCustomVendorForm(forceOpen) {
@@ -499,40 +591,43 @@
   }
 
   function openVendorListPage() {
-    if (!vendorItems.length) return;
-    const html = buildVendorListHtml(vendorItems);
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const popup = window.open(url, '_blank');
-    if (!popup) {
-      URL.revokeObjectURL(url);
+    if (!vendorItems.length) {
+      showVendorToast('Add at least one product first.');
       return;
     }
-    popup.addEventListener('load', () => {
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }, { once: true });
+    const html = buildVendorListHtml(vendorItems);
+    const popup = window.open('', '_blank');
+    if (!popup) {
+      showVendorToast('Your browser blocked the preview. Allow pop-ups and try again.');
+      return;
+    }
+    popup.document.open();
+    popup.document.write(html);
+    popup.document.close();
   }
 
   function buildVendorInvoiceHtml(items) {
     const safeItems = Array.isArray(items) ? items : [];
+    const createdAt = new Date();
+    const reference = `PO-${createdAt.getFullYear()}${String(createdAt.getMonth() + 1).padStart(2, '0')}${String(createdAt.getDate()).padStart(2, '0')}`;
     const rows = safeItems.map((item) => {
       const qty = Math.max(1, Number(item.quantity || 1));
-      const price = Math.max(0, Number(item.price || 0));
-      const total = Math.max(0, price * qty);
+      const cost = Math.max(0, Number(item.cost || 0));
+      const total = Math.max(0, cost * qty);
       return `
         <tr>
           <td class="name">${escapeHtml(item.title || '')}</td>
           <td class="image-cell">${item.image ? `<img class="product-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || '')}">` : ''}</td>
           <td class="qty">${qty}</td>
-          <td class="money">PKR ${price.toLocaleString('en-PK')}</td>
+          <td class="money">PKR ${cost.toLocaleString('en-PK')}</td>
           <td class="money strong">PKR ${total.toLocaleString('en-PK')}</td>
         </tr>
       `;
     }).join('');
     const subtotal = safeItems.reduce((sum, item) => {
       const qty = Math.max(1, Number(item.quantity || 1));
-      const price = Math.max(0, Number(item.price || 0));
-      return sum + (price * qty);
+      const cost = Math.max(0, Number(item.cost || 0));
+      return sum + (cost * qty);
     }, 0);
 
     return `<!DOCTYPE html>
@@ -540,7 +635,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Vendor Invoice</title>
+  <title>Vendor Purchase Order</title>
   <style>
     :root { --bg:#f6f7fb; --panel:#fff; --text:#202331; --muted:#687085; --line:#dfe3ec; --head:#eef2f8; }
     * { box-sizing:border-box; }
@@ -550,6 +645,8 @@
     h1 { margin:0; font-size:24px; line-height:1.15; }
     .summary { margin:4px 0 0; color:var(--muted); }
     .count { flex:0 0 auto; padding:7px 11px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--muted); font-weight:700; }
+    .header-side { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .print-btn { border:0; border-radius:9px; background:#315b4d; color:#fff; padding:9px 13px; font-weight:800; cursor:pointer; }
     .table-wrap { border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 10px 26px rgba(25,34,62,0.08); overflow:hidden; }
     table { width:100%; border-collapse:collapse; table-layout:fixed; }
     th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
@@ -569,6 +666,7 @@
     @media (max-width:900px) {
       main { width:min(100% - 16px, 760px); }
       .header { align-items:flex-start; flex-direction:column; }
+      .header-side { justify-content:flex-start; }
       .table-wrap { overflow-x:auto; }
       table { min-width:920px; }
       .totals { justify-content:stretch; }
@@ -578,6 +676,7 @@
       body { background:#fff; }
       main { width:100%; margin:0; }
       .table-wrap, .totals-card { box-shadow:none; }
+      .print-btn { display:none; }
     }
   </style>
 </head>
@@ -585,10 +684,10 @@
   <main>
     <div class="header">
       <div>
-        <h1>Vendor Invoice</h1>
-        <p class="summary">Product names, images, quantities, and selling price totals.</p>
+        <h1>Vendor Purchase Order</h1>
+        <p class="summary">${reference} · ${createdAt.toLocaleDateString('en-PK')} · The Sleek Space</p>
       </div>
-      <div class="count">${safeItems.length} item${safeItems.length === 1 ? '' : 's'}</div>
+      <div class="header-side"><div class="count">${safeItems.length} product${safeItems.length === 1 ? '' : 's'}</div><button class="print-btn" onclick="window.print()">Print / Save PDF</button></div>
     </div>
     <div class="table-wrap">
       <table>
@@ -597,7 +696,7 @@
             <th>Name</th>
             <th>Image</th>
             <th>Qty</th>
-            <th>Price</th>
+            <th>Unit cost</th>
             <th>Total</th>
           </tr>
         </thead>
@@ -606,7 +705,7 @@
     </div>
     <div class="totals">
       <div class="totals-card">
-        <div class="totals-row"><span>Subtotal</span><strong>PKR ${subtotal.toLocaleString('en-PK')}</strong></div>
+        <div class="totals-row"><span>Estimated order cost</span><strong>PKR ${subtotal.toLocaleString('en-PK')}</strong></div>
       </div>
     </div>
   </main>
@@ -615,18 +714,48 @@
   }
 
   function openVendorInvoicePage() {
-    if (!vendorItems.length) return;
-    const html = buildVendorInvoiceHtml(vendorItems);
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const popup = window.open(url, '_blank');
-    if (!popup) {
-      URL.revokeObjectURL(url);
+    if (!vendorItems.length) {
+      showVendorToast('Add at least one product first.');
       return;
     }
-    popup.addEventListener('load', () => {
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }, { once: true });
+    const html = buildVendorInvoiceHtml(vendorItems);
+    const popup = window.open('', '_blank');
+    if (!popup) {
+      showVendorToast('Your browser blocked the order. Allow pop-ups and try again.');
+      return;
+    }
+    popup.document.open();
+    popup.document.write(html);
+    popup.document.close();
+  }
+
+  function refreshVendorSummary() {
+    const products = vendorItems.length;
+    const units = vendorItems.reduce((sum, item) => sum + Math.max(1, Number(item.quantity || 1)), 0);
+    const cost = vendorItems.reduce((sum, item) => sum + (Math.max(0, Number(item.cost || 0)) * Math.max(1, Number(item.quantity || 1))), 0);
+    const values = {
+      vendorCount: products,
+      topVendorCount: products,
+      vendorProductTotal: products,
+      vendorUnitTotal: units,
+      vendorCostTotal: `PKR ${cost.toLocaleString('en-PK')}`,
+      dockVendorCount: products,
+      dockVendorUnits: units,
+      dockVendorCost: `Estimated cost PKR ${cost.toLocaleString('en-PK')}`,
+    };
+    Object.entries(values).forEach(([id, value]) => {
+      const element = document.getElementById(id);
+      if (element) element.textContent = value;
+    });
+    const createButton = document.getElementById('createVendorOrderBtn');
+    if (createButton) createButton.disabled = products === 0;
+    const selectedKeys = new Set(vendorItems.map((item) => String(item.key || '')));
+    document.querySelectorAll('.quick-add-btn').forEach((button) => {
+      const selected = selectedKeys.has(String(button.dataset.key || ''));
+      button.classList.toggle('added', selected);
+      button.textContent = selected ? 'Added ✓' : 'Add';
+      button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
   }
 
   function renderVendorItems() {
@@ -635,7 +764,7 @@
     const count = document.getElementById('vendorCount');
     if (!list || !empty || !count) return;
 
-    count.textContent = vendorItems.length;
+    refreshVendorSummary();
     if (!vendorItems.length) {
       list.innerHTML = '';
       empty.style.display = 'flex';
@@ -663,13 +792,13 @@
               min="1"
               step="1"
               value="${Number(item.quantity || 1)}"
-              oninput="updateVendorQuantity(${index}, this.value)"
+              onchange="updateVendorQuantity(${index}, this.value)"
             />
           </div>
           <div class="vendor-money">
             <span>Price: PKR ${Number(item.price || 0).toLocaleString('en-PK')}</span>
-            <span>Cost: PKR <input class="vendor-input" style="max-width:90px;display:inline-block;margin-left:4px;" type="number" min="0" step="0.01" value="${Number(item.cost || 0)}" oninput="updateVendorCost(${index}, this.value)"></span>
-            <span>Total: PKR ${(Number(item.cost || 0) * Number(item.quantity || 0)).toLocaleString('en-PK')}</span>
+            <span>Cost: PKR <input class="vendor-input" style="max-width:90px;display:inline-block;margin-left:4px;" type="number" min="0" step="0.01" value="${Number(item.cost || 0)}" onchange="updateVendorCost(${index}, this.value)"></span>
+            <span data-vendor-line-total="${index}">Total: PKR ${(Number(item.cost || 0) * Number(item.quantity || 0)).toLocaleString('en-PK')}</span>
           </div>
         </div>
         <button class="vendor-remove" type="button" onclick="removeVendorItem(${index})">×</button>
@@ -688,5 +817,16 @@
 
   loadVendorItems();
   renderVendorItems();
+  document.getElementById('itemSummarySearch')?.addEventListener('input', (event) => {
+    const query = String(event.target.value || '').trim().toLowerCase();
+    let visible = 0;
+    document.querySelectorAll('[data-summary-title]').forEach((row) => {
+      const matches = !query || String(row.dataset.summaryTitle || '').includes(query);
+      row.style.display = matches ? 'grid' : 'none';
+      if (matches) visible += 1;
+    });
+    const counter = document.getElementById('visibleItemCount');
+    if (counter) counter.textContent = visible;
+  });
 </script>
 {% endblock %}

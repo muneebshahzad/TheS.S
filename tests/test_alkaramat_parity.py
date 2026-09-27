@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -79,6 +80,18 @@ def test_admin_mobile_portal_exposes_install_passkey_and_embedded_navigation():
     assert not any(section.get("direct") for section in main.build_admin_mobile_sections())
     assert "/static/sleekspace-logo-v2.png" in portal_html
     assert "/static/admin-portal-icon-v2-192.png" in portal_html
+
+
+def test_pending_page_has_mobile_friendly_vendor_order_builder():
+    source = (Path(__file__).resolve().parents[1] / "templates" / "pending.html").read_text()
+    assert 'id="vendorBuilder"' in source
+    assert 'class="vendor-dock"' in source
+    assert "Add all items" in source
+    assert "Create vendor order" in source
+    assert "Vendor Purchase Order" in source
+    assert "Unit cost" in source
+    assert "itemSummarySearch" in source
+    assert "existing.quantity = Math.max" in source
 
 class FakeDraftOrder:
     instances = []
