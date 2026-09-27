@@ -183,13 +183,19 @@ def normalize_scan_term(term):
     return (term or "").strip().lower().replace("#", "")
 
 
+def normalize_courier_status_label(status):
+    """Remove courier presentation prefixes before operational classification."""
+    raw = str(status or "").strip()
+    return re.sub(r"^shipment\s*[-–—:]\s*", "", raw, flags=re.IGNORECASE).strip()
+
+
 def is_lahore_city(city):
     normalized = (city or "").strip().lower()
     return "lahore" in normalized or "lhr" in normalized
 
 
 def is_undelivered_status(status):
-    normalized = (status or "").strip().upper()
+    normalized = normalize_courier_status_label(status).upper()
     if not normalized:
         return False
     delivered_like = {"DELIVERED", "BOOKED", "UN-BOOKED", "UN-FULFILLED", "UNFULFILLED", "CANCELLED"}
@@ -202,12 +208,12 @@ def is_undelivered_status(status):
 
 
 def is_delivered_status(status):
-    normalized = (status or "").strip().upper()
+    normalized = normalize_courier_status_label(status).upper()
     return normalized == "DELIVERED" or normalized.startswith("DELIVERED ")
 
 
 def normalize_status_bucket(status):
-    raw = (status or "Un-Booked").strip()
+    raw = normalize_courier_status_label(status) or "Un-Booked"
     upper = raw.upper()
     if "PARTIALLY DELIVERED" in upper:
         return "Partially Delivered"
@@ -223,7 +229,7 @@ def normalize_status_bucket(status):
         return "Delivered"
     if "PICKED FROM SHIPPER" in upper:
         return "Picked From Shipper"
-    if upper == "BOOKED" or "CONSIGNMENT BOOKED" or "Shipment - Booked" in upper:
+    if upper == "BOOKED" or "CONSIGNMENT BOOKED" in upper:
         return "Booked"
     if upper in {"UN-BOOKED", "UNBOOKED"}:
         return "Un-Booked"
@@ -3354,7 +3360,7 @@ def summarize_tracking_result(tracking_number, data):
         if final_status in {"Pickup Request not Send", "Pickup Request Sent"}:
             final_status = "Booked"
         return {
-            "status": final_status,
+            "status": normalize_courier_status_label(final_status),
             "name": packet.get("consignment_name_eng") or "",
             "address": packet.get("consignment_address") or "",
             "phone": packet.get("consignment_phone") or "",
@@ -3364,7 +3370,7 @@ def summarize_tracking_result(tracking_number, data):
     if isinstance(data, list) and data:
         first = data[0]
         last = data[-1]
-        status = last.get("ProcessDescForPortal") or "Booked"
+        status = normalize_courier_status_label(last.get("ProcessDescForPortal") or "Booked")
         return {
             "status": status,
             "name": first.get("ConsigneeName") or "",
@@ -4696,8 +4702,8 @@ def verify_shopify_webhook(req):
 def build_admin_mobile_sections():
     return [
         {"id": "dashboard", "label": "Dashboard", "icon": "🏠", "src": "/?embedded=1"},
-        {"id": "analytics", "label": "Analytics", "icon": "📊", "src": "/analytics", "direct": True},
-        {"id": "payments", "label": "Payments", "icon": "💳", "src": "/payments", "direct": True},
+        {"id": "analytics", "label": "Analytics", "icon": "📊", "src": "/analytics?embedded=1"},
+        {"id": "payments", "label": "Payments", "icon": "💳", "src": "/payments?embedded=1"},
         {"id": "scanner", "label": "Scanner", "icon": "🔍", "src": "/employee_portal"},
         {"id": "employee-orders", "label": "Orders", "icon": "🧾", "src": "/employee_portal/orders"},
         {"id": "pending", "label": "Pending", "icon": "📋", "src": "/pending?embedded=1"},

@@ -253,7 +253,7 @@
       </button>
     </div>
 
-    <a class="abandoned-link-card" href="/abandoned">
+    <a class="abandoned-link-card" href="/admin_portal?section=abandoned" target="_top">
       <div class="abandoned-icon">🛒</div>
       <div>
         <div class="abandoned-title">Abandoned checkouts</div>
@@ -678,7 +678,7 @@ const STATUS_QUERY_ALIASES = {
 
 // ── Stats strip ──
 function normalizeStatusBucket(status) {
-  const raw = (status || 'Un-Booked').trim();
+  const raw = (status || 'Un-Booked').trim().replace(/^shipment\s*[-–—:]\s*/i, '');
   const upper = raw.toUpperCase();
 
   if (upper.includes('PARTIALLY DELIVERED')) return 'Partially Delivered';

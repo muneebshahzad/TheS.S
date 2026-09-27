@@ -28,6 +28,11 @@ _TERMINAL_STATUSES = {"delivered", "returned", "return delivered", "cancelled"}
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
+def _clean_status(value):
+    raw = str(value or "").strip()
+    return re.sub(r"^shipment\s*[-–—:]\s*", "", raw, flags=re.IGNORECASE).strip()
+
+
 def _event_timestamp(event):
     raw = str((event or {}).get("date_time") or "").strip()
     if not raw:
@@ -84,12 +89,12 @@ def _payment_record(order, detail_body):
     detail = detail if isinstance(detail, dict) else {}
     tracking = tracking if isinstance(tracking, dict) else {}
     latest = _latest_tracking_event(tracking.get("data"))
-    shipment_status = str(
+    shipment_status = _clean_status(
         (latest or {}).get("status")
         or order.get("courier_status")
         or order.get("status")
         or "Unknown"
-    ).strip()
+    )
     upper_status = shipment_status.upper()
     order_amount = _money(detail.get("amount") if detail else order.get("price"))
     delivery_charges = _money(tracking.get("delivery_charges"))
@@ -199,7 +204,7 @@ def display_status_from_detail(body, fallback=None):
     events = tracking.get("data") if isinstance(tracking, dict) else None
     latest = _latest_tracking_event(events)
     if isinstance(latest, dict):
-        event_status = str(latest.get("status") or "").strip()
+        event_status = _clean_status(latest.get("status"))
         reason = str(latest.get("status_reason") or "").strip()
         if reason and any(
             marker in event_status.casefold()
@@ -208,7 +213,7 @@ def display_status_from_detail(body, fallback=None):
             return f"Undelivered - {reason}"
         if event_status:
             return event_status
-    current = str(tracking.get("courier_status") or "").strip() if isinstance(tracking, dict) else ""
+    current = _clean_status(tracking.get("courier_status")) if isinstance(tracking, dict) else ""
     return current or fallback
 
 
@@ -289,7 +294,7 @@ async def _fetch_status(session, tracking_number, config):
         (row for row in rows if str(row.get("tracking_no") or "").strip() == tracking_number),
         rows[0],
     )
-    summary_status = str(exact.get("courier_status") or exact.get("status") or "").strip() or None
+    summary_status = _clean_status(exact.get("courier_status") or exact.get("status")) or None
     order_id = str(exact.get("order_id") or "").strip()
     if not order_id:
         return summary_status
@@ -397,7 +402,7 @@ async def fetch_tracking_history(session, tracking_number):
                 {
                     "ConsignmentNo": normalized,
                     "TransactionDate": event.get("date_time") or "",
-                    "ProcessDescForPortal": event.get("status") or "",
+                    "ProcessDescForPortal": _clean_status(event.get("status")),
                     "ReasonDesc": event.get("status_reason") or "",
                     "ConsigneeName": detail.get("customer_name") or "",
                     "ConsigneeCity": detail.get("customer_city") or "",

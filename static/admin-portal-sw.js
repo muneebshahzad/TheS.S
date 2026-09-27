@@ -1,6 +1,5 @@
-const CACHE_NAME = 'sleek-admin-portal-v2';
+const CACHE_NAME = 'sleek-admin-portal-v3';
 const APP_SHELL = [
-  '/admin_portal',
   '/admin_portal-manifest.webmanifest',
   '/static/employee-portal-icon.svg',
   '/static/sleekspace-wordmark.svg'

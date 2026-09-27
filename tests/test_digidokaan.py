@@ -84,7 +84,7 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
         with patch.object(digidokaan, "_access_token", AsyncMock(return_value="token")):
             status = await digidokaan._fetch_status(session, "22315868148789", config)
 
-        self.assertEqual(status, "Shipment - Delivery Unsuccessful")
+        self.assertEqual(status, "Delivery Unsuccessful")
 
     async def test_search_status_is_fallback_when_detail_is_unavailable(self):
         config = {
@@ -133,7 +133,7 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(record["order_id"], "PK2924A01")
-        self.assertEqual(record["shipment_status"], "Shipment - Delivery Unsuccessful")
+        self.assertEqual(record["shipment_status"], "Delivery Unsuccessful")
         self.assertEqual(record["payment_status"], "Awaiting delivery")
         self.assertEqual(record["net_cod"], 11643.0)
         self.assertEqual(record["amount_paid"], 0.0)
@@ -197,7 +197,18 @@ def test_digidokaan_delivery_exceptions_need_attention(monkeypatch):
 
     assert main.aggregate_order_status([
         {"status": "Shipment - In Transit", "tracking_number": "22325168148793"}
-    ]) == "Shipment - In Transit"
+    ]) == "In Transit"
+
+
+def test_digidokaan_shipment_prefix_is_removed_before_pending_classification():
+    import main
+
+    assert main.normalize_status_bucket("Shipment - Booked") == "Booked"
+    assert main.normalize_status_bucket("Shipment – Booked") == "Booked"
+    assert main.is_pending_line_item_status("Shipment - Booked")
+    assert main.aggregate_order_status([
+        {"status": "Shipment - Booked", "tracking_number": "22317268166527"}
+    ]) == "Booked"
 
 
 def test_payments_page_is_private_and_api_returns_digidokaan_ledger(monkeypatch):

@@ -61,6 +61,24 @@ def test_unpaid_cheque_is_never_paid():
     assert main.build_digidokaan_payment_dashboard(payments)["shipments"][0]["payment_status"] != "Paid"
 
 
+def test_admin_mobile_portal_exposes_install_passkey_and_embedded_navigation():
+    client = main.app.test_client()
+    login_html = client.get("/admin_portal").get_data(as_text=True)
+    assert "Install mobile app" in login_html
+
+    with client.session_transaction() as session:
+        session[main.ADMIN_PORTAL_SESSION_KEY] = True
+    portal_html = client.get("/admin_portal?section=abandoned").get_data(as_text=True)
+
+    assert "Install App" in portal_html
+    assert "setupPasskeyBtn" in portal_html
+    assert "bottom-nav" in portal_html
+    assert 'data-bottom-section="payments"' in portal_html
+    assert '"src": "/abandoned?embedded=1"' in portal_html
+    assert '"src": "/payments?embedded=1"' in portal_html
+    assert not any(section.get("direct") for section in main.build_admin_mobile_sections())
+
+
 class FakeDraftOrder:
     instances = []
     def __init__(self):

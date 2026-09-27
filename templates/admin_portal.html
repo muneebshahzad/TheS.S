@@ -7,6 +7,10 @@
   <title>Sleek Space Admin Portal</title>
   <link rel="manifest" href="/admin_portal-manifest.webmanifest">
   <link rel="icon" href="/static/employee-portal-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/employee-portal-icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Sleek Admin">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -32,7 +36,8 @@
         radial-gradient(circle at top left, rgba(242, 182, 50, 0.24), transparent 30%),
         radial-gradient(circle at top right, rgba(38, 103, 255, 0.16), transparent 28%),
         linear-gradient(180deg, #fbf7f0 0%, #f4efe6 55%, #efe6da 100%);
-      padding: 14px 12px 20px;
+      padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+      overscroll-behavior: none;
     }
     .shell {
       max-width: 760px;
@@ -151,6 +156,7 @@
       overflow: hidden;
       padding: 0;
     }
+    .bottom-nav { display: none; }
     .viewer-toolbar {
       padding: 10px 12px;
       border-bottom: 1px solid var(--line);
@@ -223,6 +229,20 @@
       color: var(--red);
       font-weight: 700;
     }
+    .login-actions { display:grid; gap:10px; }
+    .secondary-btn { background:#fff; color:var(--ink); border:1px solid var(--line); border-radius:14px; min-height:48px; padding:11px 14px; font:700 14px inherit; cursor:pointer; }
+    .login-divider { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:12px; }
+    .login-divider::before, .login-divider::after { content:""; height:1px; background:var(--line); flex:1; }
+    .app-hint { font-size:12px; color:var(--muted); text-align:center; line-height:1.45; }
+    .app-dialog { border:0; border-radius:22px; width:min(92vw,420px); padding:0; color:var(--ink); box-shadow:0 24px 70px rgba(20,33,61,.28); }
+    .app-dialog::backdrop { background:rgba(20,33,61,.4); backdrop-filter:blur(4px); }
+    .dialog-body { padding:22px; display:grid; gap:12px; }
+    .dialog-body h2 { margin:0; font-size:22px; }
+    .dialog-body p { margin:0; color:var(--muted); line-height:1.5; }
+    .dialog-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:4px; }
+    .app-toast { position:fixed; left:50%; bottom:max(20px,env(safe-area-inset-bottom)); transform:translate(-50%,20px); opacity:0; pointer-events:none; z-index:100; width:min(90vw,420px); background:var(--ink); color:#fff; border-radius:14px; padding:12px 16px; text-align:center; font-size:13px; font-weight:700; transition:.2s ease; }
+    .app-toast.show { opacity:1; transform:translate(-50%,0); }
+    body.auto-passkey .password-fallback { display:none; }
     .menu-overlay {
       position: fixed;
       inset: 0;
@@ -301,35 +321,58 @@
       min-height: 44px;
       font-size: 13px;
     }
+    #setupPasskeyBtn { flex-basis:100%; }
+    .menu-actions { flex-wrap:wrap; }
     .notification-wrap { position:relative; }
     .notification-badge { position:absolute; top:-5px; right:-5px; min-width:18px; height:18px; padding:0 4px; display:none; place-items:center; border-radius:99px; background:var(--red); color:#fff; font-size:10px; font-weight:900; }
-    .notification-panel { position:fixed; z-index:40; top:76px; right:14px; width:min(380px,calc(100vw - 28px)); max-height:70vh; overflow:auto; display:none; padding:10px; background:#fff; border:1px solid var(--line); border-radius:18px; box-shadow:var(--shadow); }
+    .notification-panel { position:fixed; top:76px; left:max(12px,env(safe-area-inset-left)); z-index:55; width:min(420px,calc(100vw - 24px)); max-height:min(70dvh,620px); overflow:auto; display:none; background:#fffdf9; border:1px solid var(--line); border-radius:18px; box-shadow:var(--shadow); }
     .notification-panel.open { display:block; }
-    .notification-item { display:block; width:100%; padding:11px; border:0; border-bottom:1px solid var(--line); background:#fff; text-align:left; color:var(--ink); }
-    .notification-item strong,.notification-item span { display:block; }
-    .notification-item span { margin-top:3px; color:var(--muted); font-size:12px; }
+    .notification-head { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line); font-weight:800; }
+    .notification-group-title { padding:12px 15px 6px; color:var(--muted); font-size:10px; font-weight:900; letter-spacing:.08em; text-transform:uppercase; }
+    .notification-item { width:100%; display:grid; grid-template-columns:1fr auto; gap:4px 10px; padding:12px 15px; text-align:left; background:transparent; border:0; border-bottom:1px solid rgba(20,33,61,.07); }
+    .notification-item strong { font-size:13px; color:var(--ink); }.notification-item span { font-size:11px; color:var(--muted); }.notification-item em { font-size:11px; color:var(--blue); font-style:normal; font-weight:800; }
+    .notification-empty { padding:28px 16px; text-align:center; color:var(--muted); font-size:13px; }
     @media (max-width: 640px) {
-      .viewer-frame { height: calc(100vh - 146px); min-height: 500px; }
+      body { padding-bottom:max(82px,calc(68px + env(safe-area-inset-bottom))); }
+      .hero { top:max(6px,env(safe-area-inset-top)); }
+      .viewer-frame { height: calc(100dvh - 162px); min-height: 480px; }
       .menu-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .bottom-nav {
+        position:fixed; left:0; right:0; bottom:0; z-index:45;
+        display:grid; grid-template-columns:repeat(5,1fr);
+        padding:7px 8px max(7px,env(safe-area-inset-bottom));
+        background:rgba(255,252,247,.96); border-top:1px solid var(--line);
+        box-shadow:0 -10px 30px rgba(20,33,61,.1); backdrop-filter:blur(14px);
+      }
+      .bottom-nav button { min-width:0; min-height:48px; border-radius:12px; background:transparent; color:var(--muted); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; font-size:10px; font-weight:800; }
+      .bottom-nav button.active { color:var(--blue); background:rgba(38,103,255,.08); }
+      .bottom-nav .nav-glyph { font-size:18px; line-height:1; }
     }
   </style>
 </head>
-<body>
+<body class="{% if view == 'login' and passkey_available and not login_error %}auto-passkey{% endif %}">
   <div class="shell">
     {% if view == 'login' %}
-      <form class="login-card card" method="post">
+      <form class="login-card card" method="post" id="passwordLoginForm">
         {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
         <a class="brand-lockup" href="#">
           <img src="/static/sleekspace-wordmark.svg" alt="The Sleek Space">
         </a>
         <h1>Admin mobile.</h1>
-        <p class="subcopy">Password-protected mobile admin access.</p>
+        <p class="subcopy">Secure mobile access to orders, tracking, payments and fulfilment.</p>
         {% if login_error %}
           <div class="error">{{ login_error }}</div>
         {% endif %}
-        <input class="login-field" type="password" name="password" placeholder="Password" autocomplete="current-password" required>
-        <button class="primary-btn" type="submit">Enter Admin Portal</button>
-        {% if passkey_available %}<button class="text-btn" type="button" id="passkeyLoginBtn">Use Face ID or fingerprint</button>{% endif %}
+        <input class="login-field password-fallback" type="password" name="password" placeholder="Password" autocomplete="current-password" required>
+        <div class="login-actions">
+          <button class="primary-btn password-fallback" type="submit">Log in with password</button>
+          {% if passkey_available %}
+            <div class="login-divider password-fallback">or</div>
+            <button class="secondary-btn" type="button" id="passkeyLoginBtn">Use Face ID or fingerprint</button>
+          {% endif %}
+          <button class="secondary-btn" type="button" data-install-app>Install mobile app</button>
+        </div>
+        <div class="app-hint">Install directly from your browser. No App Store or Play Store is required.</div>
       </form>
     {% else %}
       <section class="hero card">
@@ -339,6 +382,7 @@
           </button>
           <div class="hero-actions">
             <span class="notification-wrap"><button class="icon-btn" type="button" id="notificationBtn" title="Alerts">🔔</button><span class="notification-badge" id="notificationBadge">0</span></span>
+            <button class="icon-btn" type="button" data-install-app title="Install App" aria-label="Install App">↓</button>
             <button class="icon-btn" type="button" id="addOrderBtn" title="Add Order">＋</button>
             <button class="icon-btn" type="button" id="menuToggleBtn" title="Open Navigation">☰</button>
           </div>
@@ -348,6 +392,14 @@
       <section class="card iframe-card">
         <iframe id="toolFrame" class="viewer-frame" title="Admin portal tool view" src=""></iframe>
       </section>
+
+      <nav class="bottom-nav" aria-label="Primary navigation">
+        <button type="button" data-bottom-section="dashboard"><span class="nav-glyph">⌂</span><span>Home</span></button>
+        <button type="button" data-bottom-section="employee-orders"><span class="nav-glyph">☷</span><span>Orders</span></button>
+        <button type="button" data-bottom-section="scanner"><span class="nav-glyph">▣</span><span>Scan</span></button>
+        <button type="button" data-bottom-section="payments"><span class="nav-glyph">₨</span><span>Payments</span></button>
+        <button type="button" id="bottomMoreBtn"><span class="nav-glyph">•••</span><span>More</span></button>
+      </nav>
 
       <div class="menu-overlay" id="menuOverlay" aria-hidden="true">
         <aside class="menu-drawer" aria-label="Admin navigation">
@@ -378,9 +430,24 @@
           </div>
         </aside>
       </div>
-      <aside class="notification-panel" id="notificationPanel"><strong style="display:block;padding:8px 10px;">Operations alerts</strong><div id="notificationContent"><span style="display:block;padding:12px;color:var(--muted);">Loading…</span></div></aside>
+      <section class="notification-panel" id="notificationPanel" aria-label="Notifications">
+        <div class="notification-head"><span>Notifications</span><button class="icon-btn" type="button" id="notificationCloseBtn">×</button></div>
+        <div id="notificationContent"><div class="notification-empty">Loading notifications…</div></div>
+      </section>
     {% endif %}
   </div>
+
+  <dialog class="app-dialog" id="installDialog">
+    <div class="dialog-body">
+      <h2>Install Sleek Admin</h2>
+      <p id="installInstructions">Install this portal on your Home Screen for a full-screen app experience.</p>
+      <div class="dialog-actions">
+        <button class="secondary-btn" type="button" id="installCancelBtn">Close</button>
+        <button class="primary-btn" type="button" id="installConfirmBtn">Install</button>
+      </div>
+    </div>
+  </dialog>
+  <div class="app-toast" id="appToast" role="status" aria-live="polite"></div>
 
   {% if view == 'portal' %}
     <script>
@@ -395,7 +462,23 @@
       const openCurrentToolBtn = document.getElementById('openCurrentToolBtn');
       const notificationBtn = document.getElementById('notificationBtn');
       const notificationPanel = document.getElementById('notificationPanel');
+      const notificationBadge = document.getElementById('notificationBadge');
+      const notificationContent = document.getElementById('notificationContent');
       let currentSectionId = defaultSection;
+      const DEVICE_NOTIFICATION_KEY = 'sleekAdminDeviceNotificationsV1';
+
+      function notifiedEventIds(){try{return new Set(JSON.parse(localStorage.getItem(DEVICE_NOTIFICATION_KEY)||'[]'));}catch(_){return new Set();}}
+      async function showDeviceNotifications(result){
+        if(!('Notification' in window)||Notification.permission!=='granted'||!('serviceWorker' in navigator))return;
+        const seen=notifiedEventIds();
+        const registration=await navigator.serviceWorker.ready;
+        for(const event of [...(result.abandoned||[]),...(result.shipper_advice||[])]){
+          if(!event.id||seen.has(event.id))continue;
+          await registration.showNotification(event.title||'Sleek Space alert',{body:event.body||'',icon:'/static/employee-portal-icon.svg',badge:'/static/employee-portal-icon.svg',tag:event.id,data:{url:event.url||'/admin_portal'}});
+          seen.add(event.id);
+        }
+        localStorage.setItem(DEVICE_NOTIFICATION_KEY,JSON.stringify([...seen].slice(-200)));
+      }
 
       function getSectionById(id) {
         return sections.find(section => section.id === id) || sections[0];
@@ -404,6 +487,9 @@
       function updateActiveTab(sectionId) {
         document.querySelectorAll('.menu-nav-btn').forEach(button => {
           button.classList.toggle('active', button.dataset.section === sectionId);
+        });
+        document.querySelectorAll('[data-bottom-section]').forEach(button => {
+          button.classList.toggle('active', button.dataset.bottomSection === sectionId);
         });
       }
 
@@ -419,16 +505,15 @@
 
       function openSection(sectionId, persist = true) {
         const section = getSectionById(sectionId);
-        if (section.direct) {
-          localStorage.removeItem('tbAdminPortalSection');
-          window.location.assign(section.src);
-          return;
-        }
         currentSectionId = section.id;
         toolFrame.src = section.src;
         updateActiveTab(section.id);
         if (openCurrentToolBtn) {
-          openCurrentToolBtn.onclick = () => window.open(section.src, '_blank', 'noopener');
+          openCurrentToolBtn.onclick = () => {
+            const standaloneUrl = new URL(section.src, window.location.origin);
+            standaloneUrl.searchParams.delete('embedded');
+            window.open(standaloneUrl.href, '_blank', 'noopener');
+          };
         }
         if (persist) {
           localStorage.setItem('tbAdminPortalSection', section.id);
@@ -454,41 +539,83 @@
         }
       });
       function escapeAlert(value){const el=document.createElement('span');el.textContent=value||'';return el.innerHTML;}
-      async function loadNotifications(){
+      async function loadNotifications(open=false){
+        if(open)notificationPanel?.classList.add('open');
         try {
           const response=await fetch('/api/admin/notifications'); const result=await response.json();
           if(!response.ok) throw new Error(result.error||'Alerts unavailable');
           const items=[...(result.abandoned||[]),...(result.shipper_advice||[])];
-          const badge=document.getElementById('notificationBadge'); badge.textContent=items.length; badge.style.display=items.length?'grid':'none';
-          document.getElementById('notificationContent').innerHTML=items.length?items.map(item=>`<button class="notification-item" data-url="${escapeAlert(item.url)}"><strong>${escapeAlert(item.title)}</strong><span>${escapeAlert(item.body)}</span></button>`).join(''):'<span style="display:block;padding:12px;color:var(--muted);">No new alerts.</span>';
-          document.querySelectorAll('.notification-item').forEach(item=>item.onclick=()=>location.assign(item.dataset.url));
-        } catch(error){document.getElementById('notificationContent').textContent=error.message;}
+          notificationBadge.textContent=items.length||''; notificationBadge.style.display=items.length?'grid':'none';
+          notificationContent.innerHTML=items.length?items.map(item=>`<button class="notification-item" data-url="${escapeAlert(item.url)}"><strong>${escapeAlert(item.title)}</strong><em>Open</em><span>${escapeAlert(item.body)}</span></button>`).join(''):'<div class="notification-empty">You are all caught up.</div>';
+          notificationContent.querySelectorAll('.notification-item').forEach(item=>item.onclick=()=>{notificationPanel.classList.remove('open');const section=new URL(item.dataset.url,location.origin).searchParams.get('section');section?openSection(section):location.assign(item.dataset.url);});
+          await showDeviceNotifications(result);
+        } catch(error){notificationContent.innerHTML=`<div class="notification-empty">${escapeAlert(error.message)}</div>`;}
       }
-      notificationBtn?.addEventListener('click',()=>notificationPanel.classList.toggle('open'));
-      loadNotifications();
+      notificationBtn?.addEventListener('click',async()=>{
+        if(notificationPanel.classList.contains('open'))return notificationPanel.classList.remove('open');
+        if('Notification' in window&&Notification.permission==='default'){try{await Notification.requestPermission();}catch(_){}}
+        loadNotifications(true);
+      });
+      document.getElementById('notificationCloseBtn')?.addEventListener('click',()=>notificationPanel.classList.remove('open'));
+      document.addEventListener('click',event=>{if(notificationPanel.classList.contains('open')&&!notificationPanel.contains(event.target)&&!notificationBtn?.contains(event.target))notificationPanel.classList.remove('open');});
       document.addEventListener('keydown', event => {
         if (event.key === 'Escape') {
           closeMenu();
         }
       });
       addOrderBtn?.addEventListener('click', () => {
-        openSection('employee-orders');
-        window.setTimeout(() => {
-          toolFrame.src = '/employee_portal/orders?show_add_order=1';
-        }, 40);
+        currentSectionId = 'employee-orders';
+        updateActiveTab('employee-orders');
+        localStorage.setItem('tbAdminPortalSection', 'employee-orders');
+        history.replaceState(null, '', '/admin_portal?section=employee-orders');
+        toolFrame.src = '/employee_portal/orders?show_add_order=1';
+        closeMenu();
       });
 
+      document.querySelectorAll('[data-bottom-section]').forEach(button => {
+        button.addEventListener('click', () => openSection(button.dataset.bottomSection));
+      });
+      document.getElementById('bottomMoreBtn')?.addEventListener('click', openMenu);
+
       const remembered = localStorage.getItem('tbAdminPortalSection');
-      openSection(remembered || defaultSection, false);
+      const requestedSection = new URLSearchParams(window.location.search).get('section');
+      openSection(requestedSection || remembered || defaultSection, false);
+      window.setTimeout(()=>loadNotifications(false),800);
+      window.setInterval(()=>loadNotifications(false),60000);
     </script>
   {% endif %}
   <script>
+    let deferredInstallPrompt = null;
+    const installDialog = document.getElementById('installDialog');
+    const installConfirmBtn = document.getElementById('installConfirmBtn');
+    const installInstructions = document.getElementById('installInstructions');
+    const appToast = document.getElementById('appToast');
+    function showAppToast(message){if(!appToast)return;appToast.textContent=message;appToast.classList.add('show');window.setTimeout(()=>appToast.classList.remove('show'),3200);}
     function b64bytes(value){const p=value.replace(/-/g,'+').replace(/_/g,'/');const b=atob(p+'='.repeat((4-p.length%4)%4));return Uint8Array.from(b,c=>c.charCodeAt(0));}
     function bytes64(value){let b='';new Uint8Array(value).forEach(x=>b+=String.fromCharCode(x));return btoa(b).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
     function credentialJSON(c){const r=c.response,o={clientDataJSON:bytes64(r.clientDataJSON)};['attestationObject','authenticatorData','signature','userHandle'].forEach(k=>{if(r[k])o[k]=bytes64(r[k]);});if(r.getTransports)o.transports=r.getTransports();return{id:c.id,rawId:bytes64(c.rawId),type:c.type,response:o,clientExtensionResults:c.getClientExtensionResults()};}
     async function passkeyRequest(path, creation){const response=await fetch(path+'/options',{method:'POST'});const options=await response.json();if(!response.ok)throw new Error(options.error||'Passkey request failed');options.challenge=b64bytes(options.challenge);if(creation)options.user.id=b64bytes(options.user.id);(options[creation?'excludeCredentials':'allowCredentials']||[]).forEach(x=>x.id=b64bytes(x.id));const credential=creation?await navigator.credentials.create({publicKey:options}):await navigator.credentials.get({publicKey:options});const verify=await fetch(path+'/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:credentialJSON(credential),device_name:navigator.platform||'Mobile device'})});const result=await verify.json();if(!verify.ok)throw new Error(result.error||'Passkey verification failed');return result;}
-    document.getElementById('passkeyLoginBtn')?.addEventListener('click',async e=>{try{const r=await passkeyRequest('/admin_portal/passkeys/login',false);location.assign(r.redirect||'/admin_portal');}catch(x){alert(x.message);}});
-    document.getElementById('setupPasskeyBtn')?.addEventListener('click',async e=>{try{const r=await passkeyRequest('/admin_portal/passkeys/register',true);alert(r.message);}catch(x){alert(x.message);}});
+    async function loginWithPasskey(button){if(!window.PublicKeyCredential)throw new Error('Passkeys are not supported by this browser.');button.disabled=true;try{const r=await passkeyRequest('/admin_portal/passkeys/login',false);location.assign(r.redirect||'/admin_portal');}finally{button.disabled=false;}}
+    async function registerPasskey(button){if(!window.PublicKeyCredential)throw new Error('Passkeys are not supported by this browser.');button.disabled=true;try{const r=await passkeyRequest('/admin_portal/passkeys/register',true);button.textContent='Add Passkey';showAppToast(r.message);}finally{button.disabled=false;}}
+    document.getElementById('passkeyLoginBtn')?.addEventListener('click',e=>loginWithPasskey(e.currentTarget).catch(x=>showAppToast(x.message)));
+    document.getElementById('setupPasskeyBtn')?.addEventListener('click',e=>registerPasskey(e.currentTarget).catch(x=>showAppToast(x.message)));
+    const automaticPasskeyButton=document.getElementById('passkeyLoginBtn');
+    if(automaticPasskeyButton&&!sessionStorage.getItem('sleekPasskeyAttempted')){sessionStorage.setItem('sleekPasskeyAttempted','1');window.setTimeout(()=>loginWithPasskey(automaticPasskeyButton).catch(()=>{document.body.classList.remove('auto-passkey');automaticPasskeyButton.focus();}),250);}
+
+    window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();deferredInstallPrompt=event;});
+    window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;installDialog?.close();showAppToast('Sleek Admin installed.');});
+    document.querySelectorAll('[data-install-app]').forEach(button=>button.addEventListener('click',()=>{
+      const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
+      const isStandalone=window.matchMedia('(display-mode: standalone)').matches||navigator.standalone;
+      if(isStandalone)return showAppToast('Sleek Admin is already installed.');
+      installInstructions.textContent=isIOS?'In Safari, tap the Share button, choose “Add to Home Screen”, then tap Add.':deferredInstallPrompt?'Tap Install to add Sleek Admin to your Home Screen.':'Open your browser menu and choose “Install app” or “Add to Home screen”.';
+      installConfirmBtn.hidden=isIOS||!deferredInstallPrompt;
+      installDialog.showModal();
+    }));
+    if(window.matchMedia('(display-mode: standalone)').matches||navigator.standalone){document.querySelectorAll('[data-install-app]').forEach(button=>button.hidden=true);}
+    installConfirmBtn?.addEventListener('click',async()=>{if(!deferredInstallPrompt)return;await deferredInstallPrompt.prompt();deferredInstallPrompt=null;installDialog.close();});
+    document.getElementById('installCancelBtn')?.addEventListener('click',()=>installDialog.close());
+    if('serviceWorker' in navigator){navigator.serviceWorker.register('/admin_portal-sw.js').catch(()=>{});}
   </script>
 </body>
 </html>
