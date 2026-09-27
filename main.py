@@ -5809,7 +5809,14 @@ def load_digidokaan_payments_sync(force=False):
     async def run():
         timeout = aiohttp.ClientTimeout(total=45)
         async with aiohttp.ClientSession(timeout=timeout) as session_obj:
-            return await fetch_digidokaan_payments(session_obj, force=force)
+            try:
+                return await fetch_digidokaan_payments(session_obj, force=force)
+            except Exception as error:
+                # Some DigiDokaan accounts expose shipment payment details but
+                # not every settlement-ledger endpoint. Keep the payments page
+                # useful by falling back to the order-level COD feed.
+                print(f"Official DigiDokaan settlement ledger unavailable; using shipment ledger: {error}")
+                return await fetch_digidokaan_payment_records(session_obj, force=force)
 
     return asyncio.run(run())
 
@@ -5829,6 +5836,13 @@ def _payment_identifier(row, keys):
         if value:
             return value
     return ""
+
+
+def _is_digidokaan_delivered_status(value):
+    status = str(value or "").strip().casefold()
+    if any(marker in status for marker in ("unsuccess", "failed", "undeliver", "return", "cancel")):
+        return False
+    return status == "delivered" or status.endswith(" - delivered") or status.startswith("delivered ")
 
 
 def build_digidokaan_payment_dashboard(payments):
@@ -5951,7 +5965,7 @@ def build_digidokaan_payment_dashboard(payments):
     )
     paid_shipments = [row for row in shipments if row["payment_status"] == "Paid"]
     unpaid_shipments = [row for row in shipments if row["payment_status"] != "Paid"]
-    delivered_shipments = [row for row in shipments if "deliver" in row.get("order_status", "").casefold() and "undeliver" not in row.get("order_status", "").casefold()]
+    delivered_shipments = [row for row in shipments if _is_digidokaan_delivered_status(row.get("order_status"))]
     deducted_shipments = [row for row in shipments if row["deductions"] > 0]
     cheque_total = round(sum(parse_money(row.get("amount") or row.get("cheque_amount"), 0) for row in cheque_rows), 2)
     received = cheque_total if cheque_rows else parse_money(ledger.get("total_paid"), parse_money(balance.get("payment_received"), sum(max(row["net"], 0) for row in paid_shipments)))
@@ -5973,6 +5987,63 @@ def build_digidokaan_payment_dashboard(payments):
     return {"cards": cards, "shipments": shipments, "cheques": [dict(row) for row in cheque_rows]}
 
 
+def build_legacy_digidokaan_payment_dashboard(records):
+    """Present the order-level DigiDokaan feed in the settlement dashboard."""
+    records = [dict(row) for row in (records or []) if isinstance(row, dict)]
+    summary = summarize_digidokaan_payment_records(records)
+    shipments = []
+    delivered = []
+    ready = []
+    for row in records:
+        payment_status = str(row.get("payment_status") or "Not paid").strip()
+        shipment_status = str(row.get("shipment_status") or "").strip()
+        net = parse_money(row.get("net_cod"), 0)
+        amount_paid = parse_money(row.get("amount_paid"), 0)
+        deductions = sum(
+            parse_money(row.get(field), 0)
+            for field in ("delivery_charges", "other_charges", "reserve_amount")
+        )
+        is_paid = payment_status.casefold() in {"paid", "settled", "completed"}
+        display_payment_status = "Paid" if is_paid else (
+            "Pending cheque" if payment_status in {"Pending settlement", "Partially paid"} else "Not paid"
+        )
+        shipment = {
+            "order_no": row.get("order_id") or "",
+            "reference": row.get("digidokaan_order_id") or "",
+            "tracking_no": row.get("tracking_number") or "",
+            "order_date": row.get("created_at") or "",
+            "order_status": shipment_status,
+            "payment_status": display_payment_status,
+            "cheque_no": row.get("settlement_id") or "",
+            "cheque_status": payment_status if row.get("settlement_id") else "",
+            "cod": parse_money(row.get("order_amount"), 0),
+            "deductions": round(deductions, 2),
+            "net": net,
+        }
+        shipments.append(shipment)
+        if _is_digidokaan_delivered_status(shipment_status):
+            delivered.append(shipment)
+        if payment_status in {"Pending settlement", "Partially paid"}:
+            ready.append(shipment)
+
+    gross_cod = parse_money(summary.get("gross_cod"), 0)
+    deductions = parse_money(summary.get("deductions"), 0)
+    received = parse_money(summary.get("amount_paid"), 0)
+    outstanding = round(sum(max(parse_money(row.get("outstanding"), 0), 0) for row in records), 2)
+    cards = [
+        {"label": "Gross COD", "value": gross_cod, "count": len(shipments), "note": "dispatched shipments"},
+        {"label": "Total shipments", "value": len(shipments), "count": len(shipments), "note": f"PKR {gross_cod:,.2f} combined gross COD", "count_primary": True},
+        {"label": "Payment received", "value": received, "count": int(summary.get("settled_shipments") or 0), "note": "shipments explicitly reported paid"},
+        {"label": "Outstanding payment", "value": outstanding, "count": sum(1 for row in shipments if row["payment_status"] != "Paid"), "note": "shipments not confirmed paid"},
+        {"label": "Ready for payout", "value": round(sum(row["net"] for row in ready), 2), "count": len(ready), "note": "delivered shipments not yet paid"},
+        {"label": "Courier deductions", "value": deductions, "count": sum(1 for row in shipments if row["deductions"] > 0), "note": "shipments with recorded deductions"},
+        {"label": "Effective deduction", "value": deductions / gross_cod * 100 if gross_cod else 0, "count": sum(1 for row in shipments if row["deductions"] > 0), "note": "percent of gross COD", "percent": True},
+        {"label": "Delivered COD", "value": round(sum(row["net"] for row in delivered), 2), "count": len(delivered), "note": "delivered shipments"},
+        {"label": "Ledger balance", "value": outstanding, "count": sum(1 for row in shipments if row["payment_status"] != "Paid"), "note": "DigiDokaan current net balance"},
+    ]
+    return {"cards": cards, "shipments": shipments, "cheques": []}
+
+
 @app.route("/payments")
 def payments():
     if not admin_portal_is_authenticated():
@@ -5982,7 +6053,7 @@ def payments():
         payment_dashboard = (
             build_digidokaan_payment_dashboard(payment_payload)
             if isinstance(payment_payload, dict)
-            else {"cards": [], "shipments": payment_payload or [], "cheques": []}
+            else build_legacy_digidokaan_payment_dashboard(payment_payload)
         )
         error = ""
     except Exception as fetch_error:
@@ -6004,7 +6075,7 @@ def payments_data():
         payment_payload = load_digidokaan_payments_sync(force=request.args.get("refresh") == "1")
         if isinstance(payment_payload, list):
             response = jsonify(
-                dashboard={"cards": [], "shipments": payment_payload, "cheques": []},
+                dashboard=build_legacy_digidokaan_payment_dashboard(payment_payload),
                 records=payment_payload,
                 summary=summarize_digidokaan_payment_records(payment_payload),
                 fetched_at=datetime.now().isoformat(timespec="seconds"),

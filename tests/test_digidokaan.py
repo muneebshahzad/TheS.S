@@ -236,3 +236,44 @@ def test_payments_page_is_private_and_api_returns_digidokaan_ledger(monkeypatch)
     assert payload["records"] == [record]
     assert payload["summary"]["awaiting_delivery"] == 11643.0
     assert payload["summary"]["pending_settlement"] == 0.0
+
+
+def test_legacy_payment_feed_populates_alkaramat_dashboard_without_treating_failed_delivery_as_delivered():
+    import main
+
+    records = [
+        {
+            "order_id": "PK2924A01",
+            "digidokaan_order_id": "10498383",
+            "tracking_number": "22315868148789",
+            "created_at": "2026-09-25 14:15:00",
+            "shipment_status": "Shipment - Delivery Unsuccessful",
+            "payment_status": "Awaiting delivery",
+            "order_amount": 11950.0,
+            "delivery_charges": 307.0,
+            "net_cod": 11643.0,
+            "amount_paid": 0.0,
+            "outstanding": 11643.0,
+        },
+        {
+            "order_id": "PK2925A01",
+            "tracking_number": "22315868148790",
+            "shipment_status": "Shipment - Delivered",
+            "payment_status": "Pending settlement",
+            "order_amount": 10000.0,
+            "delivery_charges": 300.0,
+            "net_cod": 9700.0,
+            "amount_paid": 0.0,
+            "outstanding": 9700.0,
+        },
+    ]
+
+    dashboard = main.build_legacy_digidokaan_payment_dashboard(records)
+    cards = {card["label"]: card for card in dashboard["cards"]}
+
+    assert cards["Gross COD"]["value"] == 21950.0
+    assert cards["Total shipments"]["value"] == 2
+    assert cards["Delivered COD"]["value"] == 9700.0
+    assert cards["Delivered COD"]["count"] == 1
+    assert cards["Ready for payout"]["value"] == 9700.0
+    assert len(dashboard["shipments"]) == 2
