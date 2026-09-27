@@ -1,8 +1,9 @@
-const CACHE_NAME = 'sleek-admin-portal-v3';
+const CACHE_NAME = 'sleek-admin-portal-v4';
 const APP_SHELL = [
   '/admin_portal-manifest.webmanifest',
-  '/static/employee-portal-icon.svg',
-  '/static/sleekspace-wordmark.svg'
+  '/static/admin-portal-icon-v2-192.png',
+  '/static/admin-portal-icon-v2-512.png',
+  '/static/sleekspace-logo-v2.png'
 ];
 
 self.addEventListener('install', event => {

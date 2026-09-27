@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#14213d">
   <title>Sleek Space Admin Portal</title>
   <link rel="manifest" href="/admin_portal-manifest.webmanifest">
-  <link rel="icon" href="/static/employee-portal-icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/static/employee-portal-icon.svg">
+  <link rel="icon" href="/static/admin-portal-icon-v2-192.png" type="image/png">
+  <link rel="apple-touch-icon" sizes="192x192" href="/static/admin-portal-icon-v2-192.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Sleek Admin">
@@ -356,7 +356,7 @@
       <form class="login-card card" method="post" id="passwordLoginForm">
         {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
         <a class="brand-lockup" href="#">
-          <img src="/static/sleekspace-wordmark.svg" alt="The Sleek Space">
+          <img src="/static/sleekspace-logo-v2.png" alt="The Sleek Space">
         </a>
         <h1>Admin mobile.</h1>
         <p class="subcopy">Secure mobile access to orders, tracking, payments and fulfilment.</p>
@@ -378,7 +378,7 @@
       <section class="hero card">
         <div class="hero-topline">
           <button class="brand-lockup" type="button" id="logoHomeBtn" style="background:none;border:none;padding:0;cursor:pointer;">
-            <img src="/static/sleekspace-wordmark.svg" alt="The Sleek Space">
+            <img src="/static/sleekspace-logo-v2.png" alt="The Sleek Space">
           </button>
           <div class="hero-actions">
             <span class="notification-wrap"><button class="icon-btn" type="button" id="notificationBtn" title="Alerts">🔔</button><span class="notification-badge" id="notificationBadge">0</span></span>
@@ -474,7 +474,7 @@
         const registration=await navigator.serviceWorker.ready;
         for(const event of [...(result.abandoned||[]),...(result.shipper_advice||[])]){
           if(!event.id||seen.has(event.id))continue;
-          await registration.showNotification(event.title||'Sleek Space alert',{body:event.body||'',icon:'/static/employee-portal-icon.svg',badge:'/static/employee-portal-icon.svg',tag:event.id,data:{url:event.url||'/admin_portal'}});
+          await registration.showNotification(event.title||'Sleek Space alert',{body:event.body||'',icon:'/static/admin-portal-icon-v2-192.png',badge:'/static/admin-portal-icon-v2-192.png',tag:event.id,data:{url:event.url||'/admin_portal'}});
           seen.add(event.id);
         }
         localStorage.setItem(DEVICE_NOTIFICATION_KEY,JSON.stringify([...seen].slice(-200)));

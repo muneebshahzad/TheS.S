@@ -77,7 +77,8 @@ def test_admin_mobile_portal_exposes_install_passkey_and_embedded_navigation():
     assert '"src": "/abandoned?embedded=1"' in portal_html
     assert '"src": "/payments?embedded=1"' in portal_html
     assert not any(section.get("direct") for section in main.build_admin_mobile_sections())
-
+    assert "/static/sleekspace-logo-v2.png" in portal_html
+    assert "/static/admin-portal-icon-v2-192.png" in portal_html
 
 class FakeDraftOrder:
     instances = []
