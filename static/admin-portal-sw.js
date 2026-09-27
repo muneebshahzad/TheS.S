@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tb-admin-portal-v1';
+const CACHE_NAME = 'sleek-admin-portal-v2';
 const APP_SHELL = [
   '/admin_portal',
   '/admin_portal-manifest.webmanifest',
@@ -24,7 +24,19 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.origin !== self.location.origin) return;
   event.respondWith(
-    caches.match(event.request).then(cached => cached || fetch(event.request))
+    fetch(event.request).catch(() => caches.match(event.request))
   );
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const targetUrl = new URL((event.notification.data || {}).url || '/admin_portal', self.location.origin).href;
+  event.waitUntil(self.clients.matchAll({type:'window', includeUncontrolled:true}).then(clients => {
+    const existing = clients.find(client => new URL(client.url).origin === self.location.origin);
+    if (existing) return existing.navigate(targetUrl).then(client => client.focus());
+    return self.clients.openWindow(targetUrl);
+  }));
 });

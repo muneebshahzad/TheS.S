@@ -76,6 +76,36 @@ def _ensure_aghaje_order_item_cost_overrides_table(cur):
     )
 
 
+def _ensure_admin_passkeys_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_passkeys (
+            credential_id BYTEA PRIMARY KEY,
+            public_key BYTEA NOT NULL,
+            sign_count BIGINT NOT NULL DEFAULT 0,
+            device_name TEXT NOT NULL DEFAULT 'Mobile device',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            last_used_at TIMESTAMPTZ
+        )
+        """
+    )
+
+
+def _ensure_employee_passkeys_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS employee_passkeys (
+            credential_id BYTEA PRIMARY KEY,
+            public_key BYTEA NOT NULL,
+            sign_count BIGINT NOT NULL DEFAULT 0,
+            device_name TEXT NOT NULL DEFAULT 'Mobile device',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            last_used_at TIMESTAMPTZ
+        )
+        """
+    )
+
+
 def get_conn():
     url = (
         os.getenv("DATABASE_URL", "")
@@ -128,6 +158,8 @@ def init_db():
                 _ensure_aghaje_order_overrides_table(cur)
                 _ensure_aghaje_item_cost_overrides_table(cur)
                 _ensure_aghaje_order_item_cost_overrides_table(cur)
+                _ensure_admin_passkeys_table(cur)
+                _ensure_employee_passkeys_table(cur)
             conn.commit()
         _set_last_db_error("")
         print("DB initialized.")
@@ -221,6 +253,80 @@ def set_app_setting(key: str, value: str):
         _set_last_db_error(str(e))
         print(f"DB set_app_setting error: {e}")
         return False
+
+
+def _load_passkeys(table, ensure):
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                ensure(cur)
+                cur.execute(f"SELECT credential_id, public_key, sign_count, device_name, created_at, last_used_at FROM {table} ORDER BY created_at")
+                rows = [dict(row) for row in cur.fetchall()]
+            conn.commit()
+        _set_last_db_error("")
+        return rows
+    except Exception as error:
+        _set_last_db_error(str(error))
+        print(f"DB load {table} error: {error}")
+        return []
+
+
+def _save_passkey(table, ensure, credential_id, public_key, sign_count, device_name):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                ensure(cur)
+                cur.execute(
+                    f"""INSERT INTO {table} (credential_id, public_key, sign_count, device_name)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (credential_id) DO UPDATE SET
+                        public_key=EXCLUDED.public_key, sign_count=EXCLUDED.sign_count,
+                        device_name=EXCLUDED.device_name""",
+                    (credential_id, public_key, sign_count, device_name),
+                )
+            conn.commit()
+        return True
+    except Exception as error:
+        _set_last_db_error(str(error))
+        print(f"DB save {table} error: {error}")
+        return False
+
+
+def _update_passkey_usage(table, ensure, credential_id, sign_count):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                ensure(cur)
+                cur.execute(f"UPDATE {table} SET sign_count=%s, last_used_at=NOW() WHERE credential_id=%s", (sign_count, credential_id))
+            conn.commit()
+        return True
+    except Exception as error:
+        _set_last_db_error(str(error))
+        return False
+
+
+def load_admin_passkeys():
+    return _load_passkeys("admin_passkeys", _ensure_admin_passkeys_table)
+
+
+def save_admin_passkey(credential_id, public_key, sign_count, device_name):
+    return _save_passkey("admin_passkeys", _ensure_admin_passkeys_table, credential_id, public_key, sign_count, device_name)
+
+
+def update_admin_passkey_usage(credential_id, sign_count):
+    return _update_passkey_usage("admin_passkeys", _ensure_admin_passkeys_table, credential_id, sign_count)
+
+
+def load_employee_passkeys():
+    return _load_passkeys("employee_passkeys", _ensure_employee_passkeys_table)
+
+
+def save_employee_passkey(credential_id, public_key, sign_count, device_name):
+    return _save_passkey("employee_passkeys", _ensure_employee_passkeys_table, credential_id, public_key, sign_count, device_name)
+
+
+def update_employee_passkey_usage(credential_id, sign_count):
+    return _update_passkey_usage("employee_passkeys", _ensure_employee_passkeys_table, credential_id, sign_count)
 
 
 def load_aghaje_order_overrides() -> dict:

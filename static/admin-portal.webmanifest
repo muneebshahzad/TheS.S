@@ -1,11 +1,16 @@
 {
   "name": "Sleek Space Admin Portal",
   "short_name": "Sleek Admin",
+  "id": "/admin_portal",
   "start_url": "/admin_portal",
-  "scope": "/admin_portal",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
   "background_color": "#f4efe6",
   "theme_color": "#14213d",
+  "description": "The Sleek Space mobile operations dashboard for orders, tracking, payments and fulfilment.",
+  "categories": ["business", "productivity"],
   "icons": [
     {
       "src": "/static/employee-portal-icon.svg",

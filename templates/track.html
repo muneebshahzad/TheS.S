@@ -275,6 +275,40 @@
       </div>
     </a>
 
+    {% if shipper_advice_orders %}
+    <div style="padding:10px 14px 12px;max-width:960px;">
+      <section class="shipper-advice-card" aria-label="Shipper advice required">
+        <div class="shipper-advice-head">
+          <strong>⚠️ Shipper Advice Required</strong>
+          <span class="section-count">{{ shipper_advice_orders|length }}</span>
+          <span class="shipper-advice-meta">Pending courier exceptions · refreshed every 6 hours</span>
+        </div>
+        <div class="shipper-advice-list">
+          {% for advice in shipper_advice_orders %}
+          <article class="shipper-advice-item">
+            <div class="shipper-advice-thumb">
+              {% if advice.shopify_order and advice.shopify_order['items'] and advice.shopify_order['items'][0].image %}<img src="{{ advice.shopify_order['items'][0].image }}" alt="" loading="lazy">{% else %}📦{% endif %}
+            </div>
+            <div>
+              <div class="shipper-advice-title">Order #{{ advice.external_reference_no or advice.order_id or '—' }}</div>
+              <div class="shipper-advice-meta">Tracking {{ advice.tracking_no or '—' }}{% if advice.shopify_order %} · {{ advice.shopify_order.display_total }}{% endif %}</div>
+              <div class="shipper-advice-tags"><span class="shipper-advice-pill pending">{{ advice.courier_status_reason or 'Advice required' }}</span></div>
+              {% if advice.shopify_order and advice.shopify_order['items'] %}<div class="shipper-advice-meta">{{ advice.shopify_order['items'][0].title }} ×{{ advice.shopify_order['items'][0].quantity }}</div>{% endif %}
+            </div>
+            <div class="shipper-advice-actions" data-tracking="{{ advice.tracking_no }}">
+              <textarea class="shipper-advice-remarks" maxlength="250" placeholder="Required remarks"></textarea>
+              <div class="shipper-advice-btns">
+                <button class="btn btn-outline" type="button" onclick="postShipperAdvice(this,'reattempt')">Reattempt</button>
+                <button class="btn btn-danger" type="button" onclick="postShipperAdvice(this,'return')">Return</button>
+              </div>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+    {% endif %}
+
     {% if employee_approvals %}
     <div style="padding:10px 14px 0;display:flex;align-items:center;gap:8px;margin-bottom:8px;">
       <div style="width:24px;height:24px;border-radius:6px;background:#f2b632;display:flex;align-items:center;justify-content:center;font-size:12px;">🛂</div>
@@ -1093,6 +1127,24 @@ async function bulkMark(tag) {
   }
   showToast(`Applied "${tag}" to ${ids.length} orders`);
   clearSelection();
+}
+
+async function postShipperAdvice(button, action) {
+  const form = button.closest('.shipper-advice-actions');
+  const remarks = form.querySelector('.shipper-advice-remarks').value.trim();
+  if (!remarks) { showToast('Add remarks before submitting.'); return; }
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/shipper-advice', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({tracking_number: form.dataset.tracking, advice_status: action, remarks})
+    });
+    const result = await response.json();
+    if (!response.ok || !result.success) throw new Error(result.error || 'Could not submit advice');
+    showToast(result.message || 'Shipper advice submitted.');
+    form.closest('.shipper-advice-item').remove();
+  } catch (error) { showToast(error.message); }
+  finally { button.disabled = false; }
 }
 
 // ── Apply Delivered to All (Delivered tab or Out For Delivery → Delivered) ──

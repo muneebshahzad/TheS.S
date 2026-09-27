@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import smtplib
 import sys
 import threading
@@ -32,15 +33,35 @@ from db import (
     delete_order_status,
     get_app_setting,
     init_db,
+    load_admin_passkeys,
+    load_employee_passkeys,
     load_aghaje_item_cost_overrides,
     load_aghaje_order_item_cost_overrides,
     load_aghaje_order_overrides,
     load_order_statuses,
+    save_admin_passkey,
+    save_employee_passkey,
     set_app_setting,
     upsert_aghaje_item_cost_override,
     upsert_aghaje_order_item_cost_override,
     upsert_aghaje_order_override,
     upsert_order_status,
+    update_admin_passkey_usage,
+    update_employee_passkey_usage,
+)
+from webauthn import (
+    generate_authentication_options,
+    generate_registration_options,
+    options_to_json,
+    verify_authentication_response,
+    verify_registration_response,
+)
+from webauthn.helpers import base64url_to_bytes
+from webauthn.helpers.structs import (
+    AuthenticatorSelectionCriteria,
+    PublicKeyCredentialDescriptor,
+    ResidentKeyRequirement,
+    UserVerificationRequirement,
 )
 from shopify_protected_data import (
     create_oauth_state,
@@ -57,9 +78,12 @@ from shopify_protected_data import (
 )
 from token_manager import get_access_token, load_tokens, save_tokens
 from digidokaan import (
+    fetch_payments as fetch_digidokaan_payments,
     fetch_payment_records as fetch_digidokaan_payment_records,
+    fetch_pending_shipper_advice,
     fetch_tracking_history as fetch_digidokaan_tracking_history,
     fetch_tracking_status as fetch_digidokaan_tracking_status,
+    submit_shipper_advice,
     summarize_payment_records as summarize_digidokaan_payment_records,
 )
 
@@ -80,6 +104,10 @@ SHOPIFY_OAUTH_STATE_SESSION_KEY = "shopify_oauth_state"
 EMPLOYEE_PORTAL_PASSWORD = os.getenv("EMPLOYEE_PORTAL_PASSWORD", "@@@t")
 ADMIN_PORTAL_PASSWORD = os.getenv("ADMIN_PORTAL_PASSWORD", "security")
 AGHAJE_PORTAL_PASSWORD = os.getenv("AGHAJE_PORTAL_PASSWORD", "security")
+ADMIN_PORTAL_RP_ID = os.getenv("ADMIN_PORTAL_RP_ID", "dashboard.thesleekspace.com").strip()
+ADMIN_PORTAL_ORIGIN = os.getenv("ADMIN_PORTAL_ORIGIN", "https://dashboard.thesleekspace.com").rstrip("/")
+ADMIN_PASSKEY_CHALLENGE_KEY = "admin_passkey_challenge"
+EMPLOYEE_PASSKEY_CHALLENGE_KEY = "employee_passkey_challenge"
 
 order_details = []
 daraz_orders_cache = []
@@ -935,6 +963,14 @@ def format_number(value):
         return str(value)
 
 
+@app.template_filter("format_currency")
+def format_currency(value):
+    try:
+        return f"{float(value or 0):,.2f}"
+    except (TypeError, ValueError):
+        return "0.00"
+
+
 @app.template_global()
 def tag_style(label):
     return _TAG_STYLES.get(label, "background:#e8eaf6;color:#283593")
@@ -1071,6 +1107,116 @@ def employee_portal_is_authenticated():
 
 def admin_portal_is_authenticated():
     return bool(session.get(ADMIN_PORTAL_SESSION_KEY))
+
+
+def _passkey_store(portal):
+    if portal == "admin":
+        return {
+            "authenticated": admin_portal_is_authenticated,
+            "load": load_admin_passkeys, "save": save_admin_passkey,
+            "update": update_admin_passkey_usage, "session": ADMIN_PORTAL_SESSION_KEY,
+            "challenge": ADMIN_PASSKEY_CHALLENGE_KEY,
+            "user_id": b"sleek-space-admin", "name": "Sleek Space Admin",
+            "redirect": url_for("admin_portal"),
+        }
+    if portal == "employee":
+        return {
+            "authenticated": employee_portal_is_authenticated,
+            "load": load_employee_passkeys, "save": save_employee_passkey,
+            "update": update_employee_passkey_usage, "session": EMPLOYEE_PORTAL_SESSION_KEY,
+            "challenge": EMPLOYEE_PASSKEY_CHALLENGE_KEY,
+            "user_id": b"sleek-space-employee", "name": "Sleek Space Employee",
+            "redirect": url_for("employee_portal"),
+        }
+    return None
+
+
+def _passkey_descriptors(rows):
+    return [PublicKeyCredentialDescriptor(id=bytes(row["credential_id"])) for row in rows]
+
+
+@app.route("/<portal>_portal/passkeys/register/options", methods=["POST"])
+def passkey_registration_options(portal):
+    store = _passkey_store(portal)
+    if not store or not store["authenticated"]():
+        return jsonify({"success": False, "error": "Password login required."}), 401
+    options = generate_registration_options(
+        rp_id=ADMIN_PORTAL_RP_ID,
+        rp_name="The Sleek Space",
+        user_id=store["user_id"],
+        user_name=f"{portal}@thesleekspace.com",
+        user_display_name=store["name"],
+        exclude_credentials=_passkey_descriptors(store["load"]()),
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
+        ),
+    )
+    session[store["challenge"]] = base64.urlsafe_b64encode(options.challenge).decode().rstrip("=")
+    return app.response_class(options_to_json(options), mimetype="application/json")
+
+
+@app.route("/<portal>_portal/passkeys/register/verify", methods=["POST"])
+def passkey_registration_verify(portal):
+    store = _passkey_store(portal)
+    if not store or not store["authenticated"]():
+        return jsonify({"success": False, "error": "Password login required."}), 401
+    data = request.get_json(silent=True) or {}
+    challenge = session.pop(store["challenge"], "")
+    try:
+        verified = verify_registration_response(
+            credential=data.get("credential"), expected_challenge=base64url_to_bytes(challenge),
+            expected_rp_id=ADMIN_PORTAL_RP_ID, expected_origin=ADMIN_PORTAL_ORIGIN,
+            require_user_verification=True,
+        )
+        if not store["save"](verified.credential_id, verified.credential_public_key, verified.sign_count, str(data.get("device_name") or "Mobile device")[:80]):
+            raise RuntimeError("Could not save passkey")
+        return jsonify({"success": True, "message": "Face ID / fingerprint login is ready."})
+    except Exception as error:
+        print(f"{portal} passkey registration failed: {error}")
+        return jsonify({"success": False, "error": "Passkey setup could not be verified."}), 400
+
+
+@app.route("/<portal>_portal/passkeys/login/options", methods=["POST"])
+def passkey_login_options(portal):
+    store = _passkey_store(portal)
+    rows = store["load"]() if store else []
+    if not rows:
+        return jsonify({"success": False, "error": "Log in with the password once to enable passkey login."}), 404
+    options = generate_authentication_options(
+        rp_id=ADMIN_PORTAL_RP_ID,
+        allow_credentials=_passkey_descriptors(rows),
+        user_verification=UserVerificationRequirement.REQUIRED,
+    )
+    session[store["challenge"]] = base64.urlsafe_b64encode(options.challenge).decode().rstrip("=")
+    return app.response_class(options_to_json(options), mimetype="application/json")
+
+
+@app.route("/<portal>_portal/passkeys/login/verify", methods=["POST"])
+def passkey_login_verify(portal):
+    store = _passkey_store(portal)
+    data = request.get_json(silent=True) or {}
+    credential = data.get("credential") or {}
+    challenge = session.pop(store["challenge"], "") if store else ""
+    try:
+        credential_id = base64url_to_bytes(credential.get("id") or "")
+        passkey = next((row for row in store["load"]() if bytes(row["credential_id"]) == credential_id), None)
+        if not passkey:
+            raise ValueError("Unknown passkey")
+        verified = verify_authentication_response(
+            credential=credential, expected_challenge=base64url_to_bytes(challenge),
+            expected_rp_id=ADMIN_PORTAL_RP_ID, expected_origin=ADMIN_PORTAL_ORIGIN,
+            credential_public_key=bytes(passkey["public_key"]),
+            credential_current_sign_count=int(passkey["sign_count"] or 0),
+            require_user_verification=True,
+        )
+        store["update"](credential_id, verified.new_sign_count)
+        session[store["session"]] = True
+        session.permanent = True
+        return jsonify({"success": True, "redirect": store["redirect"]})
+    except Exception as error:
+        print(f"{portal} passkey login failed: {error}")
+        return jsonify({"success": False, "error": "Face ID / fingerprint login was not verified."}), 401
 
 
 def aghaje_portal_is_authenticated():
@@ -4381,6 +4527,7 @@ def create_shopify_employee_order(payload):
     discount_amount = parse_money(payload.get("discount_amount"))
     delivery_charges = parse_money(payload.get("delivery_charges"))
     payment_method = (payload.get("payment_method") or "").strip()
+    payment_status = (payload.get("payment_status") or ("Paid" if payment_method.lower() == "full" else "Unpaid")).strip().title()
     delivery_method = (payload.get("delivery_method") or "").strip()
     advance_amount = parse_money(payload.get("advance_amount"))
     catalog_items = payload.get("catalog_items") or []
@@ -4391,8 +4538,10 @@ def create_shopify_employee_order(payload):
         raise ValueError("Customer name is required.")
     if not phone:
         raise ValueError("Phone number is required.")
-    if payment_method.lower() == "partial" and advance_amount <= 0:
-        raise ValueError("Enter the advance paid amount for partial payment.")
+    if payment_method not in {"Cash on Delivery", "Bank Deposit", "Full", "Partial"}:
+        raise ValueError("Choose Cash on Delivery or Bank Deposit.")
+    if payment_status not in {"Paid", "Unpaid"}:
+        raise ValueError("Choose Paid or Unpaid.")
 
     first_name, last_name = split_customer_name(customer_name)
     line_items = []
@@ -4436,8 +4585,7 @@ def create_shopify_employee_order(payload):
     for item in normalized_custom_items:
         estimated_total += parse_money(item.get("price")) * int(item.get("quantity") or 1)
     estimated_total = round(estimated_total - discount_amount + delivery_charges, 2)
-    if advance_amount > estimated_total:
-        raise ValueError("Advance paid cannot be greater than the order total.")
+    advance_amount = estimated_total if payment_status == "Paid" else 0.0
 
     note = format_employee_order_note(
         payment_method=payment_method,
@@ -4449,11 +4597,12 @@ def create_shopify_employee_order(payload):
         custom_items=normalized_custom_items,
         extra_notes=extra_notes,
     )
+    note += f"\nPayment status: {payment_status}"
 
     draft_order = shopify.DraftOrder()
     draft_order.line_items = line_items
     draft_order.note = note
-    draft_order.tags = "Employee Portal"
+    draft_order.tags = f"Employee Portal, {payment_method}, {payment_status}"
     draft_order.use_customer_default_address = False
     draft_order.shipping_address = {
         "first_name": first_name,
@@ -4489,9 +4638,7 @@ def create_shopify_employee_order(payload):
     if not draft_order.save():
         raise RuntimeError(json.dumps(getattr(draft_order, "errors", {}) or {"error": "Could not save draft order"}))
 
-    complete_params = {}
-    if payment_method.lower() == "partial":
-        complete_params["payment_pending"] = True
+    complete_params = {"payment_pending": payment_status != "Paid"}
     try:
         draft_order.complete(complete_params)
     except Exception as error:
@@ -4507,7 +4654,7 @@ def create_shopify_employee_order(payload):
     if not order_id:
         raise RuntimeError("Shopify created the draft, but the completed order ID did not come back. Please check Draft Orders in Shopify.")
 
-    if payment_method.lower() == "full":
+    if payment_status == "Paid":
         try:
             mark_shopify_order_as_paid(order_id)
         except Exception as error:
@@ -4525,7 +4672,7 @@ def create_shopify_employee_order(payload):
         custom_items=normalized_custom_items,
         discount_amount=discount_amount,
         delivery_charges=delivery_charges,
-        advance_amount=advance_amount if payment_method.lower() == "partial" else 0,
+        advance_amount=advance_amount,
     )
     return {
         "draft_order_id": getattr(draft_order, "id", None),
@@ -4554,8 +4701,58 @@ def build_admin_mobile_sections():
         {"id": "scanner", "label": "Scanner", "icon": "🔍", "src": "/employee_portal"},
         {"id": "employee-orders", "label": "Orders", "icon": "🧾", "src": "/employee_portal/orders"},
         {"id": "pending", "label": "Pending", "icon": "📋", "src": "/pending?embedded=1"},
+        {"id": "abandoned", "label": "Abandoned", "icon": "🛒", "src": "/abandoned?embedded=1"},
+        {"id": "product-costs", "label": "Product Costs", "icon": "💰", "src": "/product-costs?embedded=1"},
         {"id": "undelivered", "label": "Undelivered", "icon": "🚚", "src": "/undelivered?embedded=1"},
     ]
+
+
+def enrich_shipper_advice_orders(advice_rows, shopify_orders):
+    def digits(value):
+        return "".join(character for character in str(value or "") if character.isdigit())
+
+    by_reference = {}
+    by_tracking = {}
+    for order in shopify_orders or []:
+        reference = digits(order.get("order_num") or order.get("order_id"))
+        if reference:
+            by_reference[reference] = order
+        for item in order.get("line_items") or []:
+            tracking = digits(item.get("tracking_number"))
+            if tracking and tracking != "0":
+                by_tracking[tracking] = order
+
+    enriched = []
+    for raw in advice_rows or []:
+        advice = dict(raw or {})
+        tracking = digits(advice.get("tracking_no"))
+        reference = digits(advice.get("external_reference_no") or advice.get("order_id"))
+        order = by_reference.get(reference) or by_tracking.get(tracking)
+        if order:
+            items = [
+                item for item in (order.get("line_items") or [])
+                if not tracking or digits(item.get("tracking_number")) == tracking
+            ] or list(order.get("line_items") or [])
+            advice["shopify_order"] = {
+                "order_num": order.get("order_num") or order.get("order_id") or reference,
+                "display_total": format_currency_amount(order.get("total_price"), "PKR"),
+                "items": [{
+                    "title": item.get("product_title") or item.get("item_title") or "Product",
+                    "image": item.get("image_src") or item.get("item_image") or "",
+                    "quantity": parse_int(item.get("quantity"), 1),
+                } for item in items],
+            }
+        else:
+            advice["shopify_order"] = None
+        enriched.append(advice)
+    return enriched
+
+
+def load_shipper_advice_sync(force=False):
+    async def run():
+        async with aiohttp.ClientSession() as client:
+            return await fetch_pending_shipper_advice(client, force=force)
+    return enrich_shipper_advice_orders(asyncio.run(run()), order_details)
 
 
 @app.route("/send-email", methods=["POST"])
@@ -4641,13 +4838,73 @@ def apply_tag():
 def tracking():
     if not daraz_orders_cache:
         refresh_daraz_cache_if_needed()
+    try:
+        shipper_advice_orders = load_shipper_advice_sync()
+    except Exception as error:
+        print(f"Could not load DigiDokaan shipper advice: {error}")
+        shipper_advice_orders = []
     return render_template(
         "track.html",
         order_details=order_details,
         darazOrders=daraz_orders_cache,
         employee_approvals=build_employee_approval_items(),
         abandoned_summary=get_abandoned_summary_safe(),
+        shipper_advice_orders=shipper_advice_orders,
     )
+
+
+@app.route("/api/shipper-advice", methods=["POST"])
+def post_shipper_advice():
+    if not admin_portal_is_authenticated():
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+    data = request.get_json(silent=True) or {}
+    tracking_number = "".join(ch for ch in str(data.get("tracking_number") or "") if ch.isdigit())
+    advice_status = str(data.get("advice_status") or "").strip().casefold()
+    remarks = str(data.get("remarks") or "").strip()
+    if not tracking_number or advice_status not in {"reattempt", "return"} or not remarks:
+        return jsonify({"success": False, "error": "Tracking number, action and remarks are required."}), 400
+
+    async def submit():
+        async with aiohttp.ClientSession() as client:
+            pending = await fetch_pending_shipper_advice(client)
+            shipment = next((row for row in pending if str(row.get("tracking_no") or "").strip() == tracking_number), None)
+            if not shipment:
+                raise ValueError("This shipment is no longer awaiting shipper advice.")
+            return await submit_shipper_advice(client, tracking_number, shipment.get("gateway_id"), advice_status, remarks)
+
+    try:
+        result = asyncio.run(submit())
+        return jsonify({"success": True, "message": result.get("msg") or result.get("message") or "Shipper advice submitted successfully."})
+    except ValueError as error:
+        return jsonify({"success": False, "error": str(error)}), 409
+    except Exception as error:
+        print(f"Could not submit DigiDokaan shipper advice: {error}")
+        return jsonify({"success": False, "error": "DigiDokaan did not accept the shipper advice."}), 502
+
+
+@app.route("/api/admin/notifications")
+def admin_notifications():
+    if not admin_portal_is_authenticated():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    try:
+        cache = load_abandoned_cache()
+        abandoned = cache.get("rows") or []
+        abandoned_items = [{
+            "id": f"abandoned:{row.get('token')}",
+            "title": row.get("customer_name") or "Abandoned checkout",
+            "body": f"{row.get('display_total') or ''} · {row.get('created_date') or ''}".strip(" ·"),
+            "url": "/admin_portal?section=abandoned",
+        } for row in abandoned if not row.get("viewed") and not row.get("recovered")][:20]
+        advice_items = [{
+            "id": f"advice:{row.get('tracking_no')}",
+            "title": f"Shipper advice · {row.get('external_reference_no') or row.get('order_id') or 'Order'}",
+            "body": f"{row.get('courier_status_reason') or 'Advice required'} · {row.get('tracking_no') or ''}",
+            "url": "/admin_portal?section=dashboard",
+        } for row in load_shipper_advice_sync()][:20]
+        return jsonify({"success": True, "count": len(abandoned_items) + len(advice_items), "abandoned": abandoned_items, "shipper_advice": advice_items})
+    except Exception as error:
+        print(f"Could not load admin notifications: {error}")
+        return jsonify({"success": False, "error": "Notifications are temporarily unavailable."}), 503
 
 
 @app.route("/refresh", methods=["POST"])
@@ -5404,11 +5661,12 @@ def employee_portal():
         submitted_password = (request.form.get("password") or "").strip()
         if submitted_password == EMPLOYEE_PORTAL_PASSWORD:
             session[EMPLOYEE_PORTAL_SESSION_KEY] = True
+            session.permanent = True
             return redirect(next_url)
-        return render_template("employee_portal.html", view="login", login_error="Wrong password. Try again.", next_url=next_url), 401
+        return render_template("employee_portal.html", view="login", login_error="Wrong password. Try again.", next_url=next_url, passkey_available=bool(load_employee_passkeys())), 401
     if not employee_portal_is_authenticated():
-        return render_template("employee_portal.html", view="login", login_error="", next_url=next_url)
-    return render_template("employee_portal.html", view="portal", employee_orders=build_safe_employee_portal_orders())
+        return render_template("employee_portal.html", view="login", login_error="", next_url=next_url, passkey_available=bool(load_employee_passkeys()))
+    return render_template("employee_portal.html", view="portal", employee_orders=build_safe_employee_portal_orders(), passkey_available=bool(load_employee_passkeys()))
 
 
 @app.route("/employee_portal/orders")
@@ -5551,16 +5809,187 @@ def load_digidokaan_payments_sync(force=False):
     async def run():
         timeout = aiohttp.ClientTimeout(total=45)
         async with aiohttp.ClientSession(timeout=timeout) as session_obj:
-            return await fetch_digidokaan_payment_records(session_obj, force=force)
+            return await fetch_digidokaan_payments(session_obj, force=force)
 
     return asyncio.run(run())
+
+
+def _digidokaan_rows(payload):
+    data = (payload or {}).get("data") if isinstance(payload, dict) else None
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and isinstance(data.get("data"), list):
+        return data["data"]
+    return []
+
+
+def _payment_identifier(row, keys):
+    for key in keys:
+        value = str((row or {}).get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def build_digidokaan_payment_dashboard(payments):
+    """Reconcile open ledger lines and paid-cheque shipment details once."""
+    balance = payments.get("balance") or {}
+    ledger = payments.get("ledger") or {}
+    ledger_rows = _digidokaan_rows(ledger)
+    cheque_rows = payments.get("cheques") if isinstance(payments.get("cheques"), list) else []
+    shipment_keys = ("tracking_no", "tracking_number", "consignment_no", "order_no", "external_reference_no", "reference_no")
+    cheque_keys = ("cheque_no", "cheque_number", "settlement_id", "payment_id", "batch_id")
+
+    cheque_by_id = {}
+    cheque_by_shipment = {}
+    for cheque in cheque_rows:
+        cheque_id = _payment_identifier(cheque, cheque_keys)
+        if cheque_id:
+            cheque_by_id[cheque_id.casefold()] = cheque
+        for key in shipment_keys:
+            value = str(cheque.get(key) or "").strip()
+            if value:
+                cheque_by_shipment[value.casefold()] = cheque
+
+    def row_signature(row):
+        return (
+            str(row.get("tracking_no") or "").strip(),
+            str(row.get("order_no") or "").strip(),
+            str(row.get("payment_type") or row.get("payment_mode") or "").strip().casefold(),
+            str(row.get("amount") or "0"),
+            str(row.get("sub_amount") or "0"),
+        )
+
+    merged_rows = {row_signature(row): dict(row) for row in ledger_rows}
+    for cheque in cheque_rows:
+        for row in _digidokaan_rows(cheque.get("shipments") or {}):
+            annotated = dict(row)
+            annotated["cheque_no"] = cheque.get("cheque_no")
+            annotated["cheque_status"] = cheque.get("status")
+            merged_rows[row_signature(row)] = annotated
+    ledger_rows = list(merged_rows.values())
+
+    grouped = {}
+    for index, row in enumerate(ledger_rows):
+        tracking = _payment_identifier(row, ("tracking_no", "tracking_number", "consignment_no"))
+        order_no = _payment_identifier(row, ("order_no", "external_reference_no", "reference_no"))
+        key = tracking or order_no or f"ledger-{index}"
+        group = grouped.setdefault(key, {
+            "order_no": order_no,
+            "reference": str(row.get("external_reference_no") or "").strip(),
+            "tracking_no": tracking,
+            "order_date": str(row.get("order_date") or "").strip(),
+            "order_status": str(row.get("order_status") or "").strip(),
+            "price": 0.0,
+            "rows": [],
+        })
+        group["rows"].append(row)
+        group["price"] = max(group["price"], parse_money(row.get("price"), 0))
+        for field, value in (
+            ("tracking_no", tracking), ("order_no", order_no),
+            ("reference", str(row.get("external_reference_no") or "").strip()),
+            ("order_date", str(row.get("order_date") or "").strip()),
+            ("order_status", str(row.get("order_status") or "").strip()),
+        ):
+            if value:
+                group[field] = value
+
+    paid_words = ("cleared", "completed", "disbursed", "transferred", "success")
+    pending_words = ("pending", "ready", "processing", "generated", "issued", "scheduled")
+    shipments = []
+    for group in grouped.values():
+        cod = deductions = 0.0
+        linked_cheque = None
+        cheque_id = ledger_cheque_status = ""
+        entry_types = []
+        for row in group.pop("rows"):
+            entry_type = str(row.get("payment_type") or row.get("payment_mode") or "").strip().upper()
+            if entry_type and entry_type not in entry_types:
+                entry_types.append(entry_type)
+            amount = parse_money(row.get("amount"), 0)
+            charge = parse_money(row.get("sub_amount"), 0)
+            if "COD" in entry_type:
+                cod += amount
+            elif amount < 0 and not charge:
+                deductions += abs(amount)
+            deductions += abs(charge)
+            row_cheque_id = _payment_identifier(row, cheque_keys)
+            if row_cheque_id:
+                cheque_id = row_cheque_id
+                linked_cheque = cheque_by_id.get(row_cheque_id.casefold()) or linked_cheque
+                ledger_cheque_status = str(row.get("cheque_status") or row.get("settlement_status") or row.get("payment_status") or "").strip() or ledger_cheque_status
+        if not linked_cheque:
+            for value in (group.get("tracking_no"), group.get("order_no"), group.get("reference")):
+                if value and value.casefold() in cheque_by_shipment:
+                    linked_cheque = cheque_by_shipment[value.casefold()]
+                    cheque_id = _payment_identifier(linked_cheque, cheque_keys)
+                    break
+        settlement_status = str((linked_cheque or {}).get("status") or (linked_cheque or {}).get("settlement_status") or ledger_cheque_status).strip()
+        normalized = settlement_status.casefold()
+        explicitly_paid = bool(re.search(r"\bpaid\b", normalized)) or any(word in normalized for word in paid_words)
+        explicitly_unpaid = "unpaid" in normalized or "not paid" in normalized
+        if explicitly_unpaid:
+            payment_status = "Not paid"
+        elif (linked_cheque or cheque_id) and explicitly_paid:
+            payment_status = "Paid"
+        elif linked_cheque or cheque_id:
+            payment_status = "Pending cheque" if not normalized or any(word in normalized for word in pending_words) else "Unconfirmed"
+        else:
+            payment_status = "Not paid"
+        group.update({
+            "cod": round(cod, 2), "deductions": round(deductions, 2),
+            "net": round(cod - deductions, 2), "entry_types": ", ".join(entry_types),
+            "cheque_no": cheque_id, "cheque_status": settlement_status,
+            "payment_status": payment_status,
+        })
+        shipments.append(group)
+
+    total_deductions = round(
+        sum(parse_money(ledger.get(key), 0) for key in ("total_delivery_charges", "total_sales_tax", "total_income_tax"))
+        if any(ledger.get(key) is not None for key in ("total_delivery_charges", "total_sales_tax", "total_income_tax"))
+        else sum(row["deductions"] for row in shipments), 2,
+    )
+    paid_shipments = [row for row in shipments if row["payment_status"] == "Paid"]
+    unpaid_shipments = [row for row in shipments if row["payment_status"] != "Paid"]
+    delivered_shipments = [row for row in shipments if "deliver" in row.get("order_status", "").casefold() and "undeliver" not in row.get("order_status", "").casefold()]
+    deducted_shipments = [row for row in shipments if row["deductions"] > 0]
+    cheque_total = round(sum(parse_money(row.get("amount") or row.get("cheque_amount"), 0) for row in cheque_rows), 2)
+    received = cheque_total if cheque_rows else parse_money(ledger.get("total_paid"), parse_money(balance.get("payment_received"), sum(max(row["net"], 0) for row in paid_shipments)))
+    outstanding = parse_money(ledger.get("total_balance"), sum(max(row["net"], 0) for row in unpaid_shipments))
+    gross_shipments = [row for row in shipments if row.get("price", 0) > 0 or row.get("cod", 0) > 0]
+    gross_cod = round(sum(row.get("price", 0) or row.get("cod", 0) for row in gross_shipments), 2)
+    ready_shipments = [row for row in delivered_shipments if row["payment_status"] != "Paid"]
+    cards = [
+        {"label": "Gross COD", "value": gross_cod, "count": len(gross_shipments), "note": "dispatched shipments"},
+        {"label": "Total shipments", "value": len(shipments), "count": len(shipments), "note": f"PKR {gross_cod:,.2f} combined gross COD", "count_primary": True},
+        {"label": "Payment received", "value": received, "count": len(paid_shipments), "note": "shipments explicitly linked to paid cheques"},
+        {"label": "Outstanding payment", "value": outstanding, "count": len(unpaid_shipments), "note": "shipments not confirmed paid"},
+        {"label": "Ready for payout", "value": parse_money(balance.get("deliver_orders_payments"), 0), "count": len(ready_shipments), "note": "delivered shipments not yet paid"},
+        {"label": "Courier deductions", "value": total_deductions, "count": len(deducted_shipments), "note": "shipments with recorded deductions"},
+        {"label": "Effective deduction", "value": total_deductions / gross_cod * 100 if gross_cod else 0, "count": len(deducted_shipments), "note": "percent of gross COD", "percent": True},
+        {"label": "Delivered COD", "value": round(sum(row["cod"] for row in delivered_shipments), 2), "count": len(delivered_shipments), "note": "delivered shipments"},
+        {"label": "Ledger balance", "value": parse_money(ledger.get("total_balance"), outstanding), "count": len(unpaid_shipments), "note": "DigiDokaan current net balance"},
+    ]
+    return {"cards": cards, "shipments": shipments, "cheques": [dict(row) for row in cheque_rows]}
 
 
 @app.route("/payments")
 def payments():
     if not admin_portal_is_authenticated():
         return redirect("/admin_portal?next=/payments")
-    response = app.make_response(render_template("payments.html"))
+    try:
+        payment_payload = load_digidokaan_payments_sync()
+        payment_dashboard = (
+            build_digidokaan_payment_dashboard(payment_payload)
+            if isinstance(payment_payload, dict)
+            else {"cards": [], "shipments": payment_payload or [], "cheques": []}
+        )
+        error = ""
+    except Exception as fetch_error:
+        print(f"Could not load DigiDokaan payments: {fetch_error}")
+        payment_dashboard = {"cards": [], "shipments": [], "cheques": []}
+        error = "DigiDokaan payment data is temporarily unavailable."
+    response = app.make_response(render_template("payments.html", payment_dashboard=payment_dashboard, payments_error=error))
     response.headers["Cache-Control"] = "private, no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -5572,10 +6001,40 @@ def payments_data():
     if not admin_portal_is_authenticated():
         return jsonify(error="Authentication required"), 401
     try:
-        records = load_digidokaan_payments_sync(force=request.args.get("refresh") == "1")
+        payment_payload = load_digidokaan_payments_sync(force=request.args.get("refresh") == "1")
+        if isinstance(payment_payload, list):
+            response = jsonify(
+                dashboard={"cards": [], "shipments": payment_payload, "cheques": []},
+                records=payment_payload,
+                summary=summarize_digidokaan_payment_records(payment_payload),
+                fetched_at=datetime.now().isoformat(timespec="seconds"),
+            )
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
+        dashboard = build_digidokaan_payment_dashboard(payment_payload)
+        records = [
+            {
+                **row,
+                "order_id": row.get("order_no") or row.get("reference"),
+                "created_at": row.get("order_date"),
+                "tracking_number": row.get("tracking_no"),
+                "shipment_status": row.get("order_status"),
+                "order_amount": row.get("price") or row.get("cod"),
+                "delivery_charges": row.get("deductions"),
+                "other_charges": 0,
+                "reserve_amount": 0,
+                "net_cod": row.get("net"),
+                "amount_paid": row.get("net") if row.get("payment_status") == "Paid" else 0,
+                "outstanding": row.get("net") if row.get("payment_status") != "Paid" else 0,
+                "settlement_id": row.get("cheque_no"),
+            }
+            for row in dashboard["shipments"]
+        ]
         response = jsonify(
+            dashboard=dashboard,
             records=records,
-            summary=summarize_digidokaan_payment_records(records),
             fetched_at=datetime.now().isoformat(timespec="seconds"),
         )
     except Exception:
@@ -5601,15 +6060,16 @@ def admin_portal():
         submitted_password = (request.form.get("password") or "").strip()
         if submitted_password == ADMIN_PORTAL_PASSWORD:
             session[ADMIN_PORTAL_SESSION_KEY] = True
+            session.permanent = True
             if next_url:
                 return redirect(next_url)
             return redirect(url_for("admin_portal", section=selected))
-        return render_template("admin_portal.html", view="login", login_error="Wrong password. Try again.", sections=sections, selected_section=selected, next_url=next_url), 401
+        return render_template("admin_portal.html", view="login", login_error="Wrong password. Try again.", sections=sections, selected_section=selected, next_url=next_url, passkey_available=bool(load_admin_passkeys())), 401
 
     if not admin_portal_is_authenticated():
-        return render_template("admin_portal.html", view="login", login_error="", sections=sections, selected_section=selected, next_url=next_url)
+        return render_template("admin_portal.html", view="login", login_error="", sections=sections, selected_section=selected, next_url=next_url, passkey_available=bool(load_admin_passkeys()))
 
-    return render_template("admin_portal.html", view="portal", sections=sections, selected_section=selected, employee_approvals=build_employee_approval_items())
+    return render_template("admin_portal.html", view="portal", sections=sections, selected_section=selected, employee_approvals=build_employee_approval_items(), passkey_available=bool(load_admin_passkeys()))
 
 
 @app.route("/admin_portal/logout", methods=["POST"])

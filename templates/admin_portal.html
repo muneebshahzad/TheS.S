@@ -301,6 +301,13 @@
       min-height: 44px;
       font-size: 13px;
     }
+    .notification-wrap { position:relative; }
+    .notification-badge { position:absolute; top:-5px; right:-5px; min-width:18px; height:18px; padding:0 4px; display:none; place-items:center; border-radius:99px; background:var(--red); color:#fff; font-size:10px; font-weight:900; }
+    .notification-panel { position:fixed; z-index:40; top:76px; right:14px; width:min(380px,calc(100vw - 28px)); max-height:70vh; overflow:auto; display:none; padding:10px; background:#fff; border:1px solid var(--line); border-radius:18px; box-shadow:var(--shadow); }
+    .notification-panel.open { display:block; }
+    .notification-item { display:block; width:100%; padding:11px; border:0; border-bottom:1px solid var(--line); background:#fff; text-align:left; color:var(--ink); }
+    .notification-item strong,.notification-item span { display:block; }
+    .notification-item span { margin-top:3px; color:var(--muted); font-size:12px; }
     @media (max-width: 640px) {
       .viewer-frame { height: calc(100vh - 146px); min-height: 500px; }
       .menu-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -322,6 +329,7 @@
         {% endif %}
         <input class="login-field" type="password" name="password" placeholder="Password" autocomplete="current-password" required>
         <button class="primary-btn" type="submit">Enter Admin Portal</button>
+        {% if passkey_available %}<button class="text-btn" type="button" id="passkeyLoginBtn">Use Face ID or fingerprint</button>{% endif %}
       </form>
     {% else %}
       <section class="hero card">
@@ -330,6 +338,7 @@
             <img src="/static/sleekspace-wordmark.svg" alt="The Sleek Space">
           </button>
           <div class="hero-actions">
+            <span class="notification-wrap"><button class="icon-btn" type="button" id="notificationBtn" title="Alerts">🔔</button><span class="notification-badge" id="notificationBadge">0</span></span>
             <button class="icon-btn" type="button" id="addOrderBtn" title="Add Order">＋</button>
             <button class="icon-btn" type="button" id="menuToggleBtn" title="Open Navigation">☰</button>
           </div>
@@ -361,6 +370,7 @@
             {% endfor %}
           </div>
           <div class="menu-actions">
+            <button class="text-btn" type="button" id="setupPasskeyBtn">{% if passkey_available %}Add Passkey{% else %}Enable Face ID{% endif %}</button>
             <button class="text-btn" type="button" id="openCurrentToolBtn">Open Tool</button>
             <form method="post" action="/admin_portal/logout" style="margin:0;flex:1;">
               <button class="primary-btn" type="submit" style="width:100%;">Logout</button>
@@ -368,6 +378,7 @@
           </div>
         </aside>
       </div>
+      <aside class="notification-panel" id="notificationPanel"><strong style="display:block;padding:8px 10px;">Operations alerts</strong><div id="notificationContent"><span style="display:block;padding:12px;color:var(--muted);">Loading…</span></div></aside>
     {% endif %}
   </div>
 
@@ -382,6 +393,8 @@
       const menuCloseBtn = document.getElementById('menuCloseBtn');
       const menuOverlay = document.getElementById('menuOverlay');
       const openCurrentToolBtn = document.getElementById('openCurrentToolBtn');
+      const notificationBtn = document.getElementById('notificationBtn');
+      const notificationPanel = document.getElementById('notificationPanel');
       let currentSectionId = defaultSection;
 
       function getSectionById(id) {
@@ -440,6 +453,19 @@
           closeMenu();
         }
       });
+      function escapeAlert(value){const el=document.createElement('span');el.textContent=value||'';return el.innerHTML;}
+      async function loadNotifications(){
+        try {
+          const response=await fetch('/api/admin/notifications'); const result=await response.json();
+          if(!response.ok) throw new Error(result.error||'Alerts unavailable');
+          const items=[...(result.abandoned||[]),...(result.shipper_advice||[])];
+          const badge=document.getElementById('notificationBadge'); badge.textContent=items.length; badge.style.display=items.length?'grid':'none';
+          document.getElementById('notificationContent').innerHTML=items.length?items.map(item=>`<button class="notification-item" data-url="${escapeAlert(item.url)}"><strong>${escapeAlert(item.title)}</strong><span>${escapeAlert(item.body)}</span></button>`).join(''):'<span style="display:block;padding:12px;color:var(--muted);">No new alerts.</span>';
+          document.querySelectorAll('.notification-item').forEach(item=>item.onclick=()=>location.assign(item.dataset.url));
+        } catch(error){document.getElementById('notificationContent').textContent=error.message;}
+      }
+      notificationBtn?.addEventListener('click',()=>notificationPanel.classList.toggle('open'));
+      loadNotifications();
       document.addEventListener('keydown', event => {
         if (event.key === 'Escape') {
           closeMenu();
@@ -456,5 +482,13 @@
       openSection(remembered || defaultSection, false);
     </script>
   {% endif %}
+  <script>
+    function b64bytes(value){const p=value.replace(/-/g,'+').replace(/_/g,'/');const b=atob(p+'='.repeat((4-p.length%4)%4));return Uint8Array.from(b,c=>c.charCodeAt(0));}
+    function bytes64(value){let b='';new Uint8Array(value).forEach(x=>b+=String.fromCharCode(x));return btoa(b).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+    function credentialJSON(c){const r=c.response,o={clientDataJSON:bytes64(r.clientDataJSON)};['attestationObject','authenticatorData','signature','userHandle'].forEach(k=>{if(r[k])o[k]=bytes64(r[k]);});if(r.getTransports)o.transports=r.getTransports();return{id:c.id,rawId:bytes64(c.rawId),type:c.type,response:o,clientExtensionResults:c.getClientExtensionResults()};}
+    async function passkeyRequest(path, creation){const response=await fetch(path+'/options',{method:'POST'});const options=await response.json();if(!response.ok)throw new Error(options.error||'Passkey request failed');options.challenge=b64bytes(options.challenge);if(creation)options.user.id=b64bytes(options.user.id);(options[creation?'excludeCredentials':'allowCredentials']||[]).forEach(x=>x.id=b64bytes(x.id));const credential=creation?await navigator.credentials.create({publicKey:options}):await navigator.credentials.get({publicKey:options});const verify=await fetch(path+'/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:credentialJSON(credential),device_name:navigator.platform||'Mobile device'})});const result=await verify.json();if(!verify.ok)throw new Error(result.error||'Passkey verification failed');return result;}
+    document.getElementById('passkeyLoginBtn')?.addEventListener('click',async e=>{try{const r=await passkeyRequest('/admin_portal/passkeys/login',false);location.assign(r.redirect||'/admin_portal');}catch(x){alert(x.message);}});
+    document.getElementById('setupPasskeyBtn')?.addEventListener('click',async e=>{try{const r=await passkeyRequest('/admin_portal/passkeys/register',true);alert(r.message);}catch(x){alert(x.message);}});
+  </script>
 </body>
 </html>

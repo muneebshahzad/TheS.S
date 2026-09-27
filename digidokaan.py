@@ -1,5 +1,7 @@
 import asyncio
+import html
 import os
+import re
 import ssl
 import time
 from datetime import datetime
@@ -13,10 +15,15 @@ _token_created_at = 0.0
 _status_cache = {}
 _inflight = {}
 _payments_cache = {}
+_settlements_cache = None
+_settlements_cache_expires_at = 0.0
+_shipper_advice_cache = None
+_shipper_advice_cache_expires_at = 0.0
 _TOKEN_TTL_SECONDS = 6 * 60 * 60
 _ACTIVE_CACHE_SECONDS = 5 * 60
 _TERMINAL_CACHE_SECONDS = 24 * 60 * 60
 _PAYMENTS_CACHE_SECONDS = 5 * 60
+_OPERATIONS_REFRESH_SECONDS = 6 * 60 * 60
 _TERMINAL_STATUSES = {"delivered", "returned", "return delivered", "cancelled"}
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
@@ -173,10 +180,36 @@ def configuration():
         "phone": (os.getenv("DIGIDOKAAN_PHONE") or "").strip(),
         "password": os.getenv("DIGIDOKAAN_PASSWORD") or "",
         "gateway_id": str(os.getenv("DIGIDOKAAN_GATEWAY_ID") or "5").strip(),
+        "web_url": (os.getenv("DIGIDOKAAN_WEB_URL") or "https://web.digidokaan.pk").rstrip("/"),
     }
     if not values["phone"] or not values["password"]:
         return None
     return values
+
+
+def display_status_from_detail(body, fallback=None):
+    """Return the actionable latest status shown by DigiDokaan.
+
+    Exception events carry the useful courier reason separately from the
+    account's lagging summary status.  Surface that reason so the dashboard
+    routes these orders to Need Attention.
+    """
+    data = body.get("data") if isinstance(body, dict) else None
+    tracking = data.get("tracking_response") if isinstance(data, dict) else None
+    events = tracking.get("data") if isinstance(tracking, dict) else None
+    latest = _latest_tracking_event(events)
+    if isinstance(latest, dict):
+        event_status = str(latest.get("status") or "").strip()
+        reason = str(latest.get("status_reason") or "").strip()
+        if reason and any(
+            marker in event_status.casefold()
+            for marker in ("delivery unsuccessful", "reason validation", "shipper advise", "undelivered")
+        ):
+            return f"Undelivered - {reason}"
+        if event_status:
+            return event_status
+    current = str(tracking.get("courier_status") or "").strip() if isinstance(tracking, dict) else ""
+    return current or fallback
 
 
 async def _access_token(session, config):
@@ -275,10 +308,8 @@ async def _fetch_status(session, tracking_number, config):
             detail_body = await detail_response.json(content_type=None)
         data = detail_body.get("data") if isinstance(detail_body, dict) else None
         tracking = data.get("tracking_response") if isinstance(data, dict) else None
-        events = tracking.get("data") if isinstance(tracking, dict) else None
-        latest = _latest_tracking_event(events)
-        if detail_response.status == 200 and latest:
-            return str(latest.get("status") or "").strip() or summary_status
+        if detail_response.status == 200:
+            return display_status_from_detail(detail_body, summary_status) or summary_status
     except Exception:
         # Preserve the usable search result if the detail endpoint is
         # temporarily unavailable.
@@ -431,3 +462,193 @@ async def fetch_payment_records(session, search_value=None, force=False):
     except Exception as error:
         print(f"DigiDokaan payments unavailable: {error}")
         return []
+
+
+def _digidokaan_response_ok(response_status, body):
+    return response_status == 200 and isinstance(body, dict) and body.get("code") in {None, 200}
+
+
+async def fetch_payments(session, force=False):
+    """Return the official settlement ledger and paid-cheque history."""
+    global _settlements_cache, _settlements_cache_expires_at
+    if not force and _settlements_cache is not None and _settlements_cache_expires_at > time.monotonic():
+        return _settlements_cache
+    config = configuration()
+    if not config:
+        raise RuntimeError("DigiDokaan payment credentials are not configured")
+    token = await _access_token(session, config)
+    headers = {"Accept": "application/json", "Authorization": "Bearer " + token}
+    payload = {"phone": config["phone"]}
+    timeout = ClientTimeout(total=30)
+
+    async def post(path):
+        async with session.post(
+            config["base_url"] + "/api/" + path,
+            json=payload,
+            headers=headers,
+            timeout=timeout,
+            ssl=_SSL_CONTEXT,
+        ) as response:
+            body = await response.json(content_type=None)
+        if not _digidokaan_response_ok(response.status, body):
+            raise RuntimeError("DigiDokaan payments are temporarily unavailable")
+        return body
+
+    balance, ready, ledger = await asyncio.gather(
+        post("settlements/ledger_ready_for_payment_balance"),
+        post("settlements/ledger_ready_for_payments"),
+        post("settlements/ledger_single_cheque_detail"),
+    )
+    try:
+        cheques = await _fetch_cheque_history(session, config, headers)
+    except Exception as error:
+        print(f"DigiDokaan cheque history unavailable: {error}")
+        cheques = []
+    result = {"balance": balance, "ready": ready, "ledger": ledger, "cheques": cheques}
+    _settlements_cache = result
+    _settlements_cache_expires_at = time.monotonic() + _OPERATIONS_REFRESH_SECONDS
+    return result
+
+
+def _money_from_text(value):
+    matches = re.findall(r"-?\d[\d,]*(?:\.\d+)?", str(value or ""))
+    cleaned = matches[-1].replace(",", "") if matches else ""
+    try:
+        return round(float(cleaned or 0), 2)
+    except ValueError:
+        return 0.0
+
+
+def _plain_html(value):
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", value or "")).split())
+
+
+async def _fetch_cheque_history(session, config, api_headers):
+    """Discover cheque IDs from the merchant page, then load their shipments."""
+    timeout = ClientTimeout(total=30)
+    async with session.get(config["web_url"] + "/", timeout=timeout, ssl=_SSL_CONTEXT) as response:
+        login_html = await response.text()
+    csrf_match = re.search(r'<meta[^>]+name=["\']csrf-token["\'][^>]+content=["\']([^"\']+)', login_html, re.I)
+    if not csrf_match:
+        csrf_match = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']csrf-token["\']', login_html, re.I)
+    if not csrf_match:
+        raise RuntimeError("DigiDokaan web login token was not found")
+    csrf = html.unescape(csrf_match.group(1))
+    digits = re.sub(r"\D", "", config["phone"])
+    number = digits[2:] if digits.startswith("92") else digits.lstrip("0")
+    web_headers = {"Accept": "application/json", "X-CSRF-TOKEN": csrf, "X-Requested-With": "XMLHttpRequest"}
+    async with session.post(
+        config["web_url"] + "/user/send-otp",
+        data={"country_code": "+92", "number": number},
+        headers=web_headers,
+        timeout=timeout,
+        ssl=_SSL_CONTEXT,
+    ) as response:
+        login_step = await response.json(content_type=None)
+    if login_step.get("code") != 201:
+        raise RuntimeError("DigiDokaan web account requires an interactive login")
+    async with session.post(
+        config["web_url"] + "/user/login-new-password",
+        data={"password": config["password"], "number": "+92" + number},
+        headers=web_headers,
+        timeout=timeout,
+        ssl=_SSL_CONTEXT,
+    ) as response:
+        login_result = await response.json(content_type=None)
+    if login_result.get("code") != 200:
+        raise RuntimeError("DigiDokaan web payment login failed")
+    async with session.get(config["web_url"] + "/", timeout=timeout, ssl=_SSL_CONTEXT) as response:
+        await response.read()
+    async with session.get(config["web_url"] + "/manage/merchant-payment-ledger", timeout=timeout, ssl=_SSL_CONTEXT) as response:
+        ledger_html = await response.text()
+
+    cheques = []
+    row_pattern = re.compile(r"<tr[^>]*class=[\"'][^\"']*\bcheque\b[^\"']*[\"'][^>]*>(.*?)</tr>", re.I | re.S)
+    for row_html in row_pattern.findall(ledger_html):
+        id_match = re.search(r"merchant-ledger/([0-9a-f-]{20,})", row_html, re.I)
+        if not id_match:
+            continue
+        cells = [_plain_html(cell) for cell in re.findall(r"<td[^>]*>(.*?)</td>", row_html, re.I | re.S)]
+        cheque_no = id_match.group(1)
+        cheque = {
+            "cheque_no": cheque_no,
+            "cheque_date": cells[0] if cells else "",
+            "bank": cells[2] if len(cells) > 2 else "",
+            "amount": _money_from_text(cells[3] if len(cells) > 3 else ""),
+            "balance": _money_from_text(cells[4] if len(cells) > 4 else ""),
+            "status": "Paid",
+        }
+        async with session.post(
+            config["base_url"] + "/api/settlements/ledger_single_cheque_detail",
+            json={"phone": config["phone"], "cheque_no": cheque_no},
+            headers=api_headers,
+            timeout=timeout,
+            ssl=_SSL_CONTEXT,
+        ) as response:
+            detail = await response.json(content_type=None)
+        cheque["shipments"] = detail if response.status == 200 and detail.get("code") == 200 else {"data": []}
+        cheques.append(cheque)
+    return cheques
+
+
+async def fetch_pending_shipper_advice(session, force=False):
+    """Return pending DigiDokaan shipper-advice requests."""
+    global _shipper_advice_cache, _shipper_advice_cache_expires_at
+    if not force and _shipper_advice_cache is not None and _shipper_advice_cache_expires_at > time.monotonic():
+        return _shipper_advice_cache
+    config = configuration()
+    if not config:
+        return []
+    token = await _access_token(session, config)
+    timeout = ClientTimeout(total=20)
+    async with session.post(
+        config["base_url"] + "/api/courier/get_shipper_advice_order",
+        json={"phone": config["phone"]},
+        headers={"Accept": "application/json", "Authorization": "Bearer " + token},
+        timeout=timeout,
+        ssl=_SSL_CONTEXT,
+    ) as response:
+        body = await response.json(content_type=None)
+    rows = body.get("data") if isinstance(body, dict) else None
+    if response.status != 200 or not isinstance(rows, list):
+        raise RuntimeError("DigiDokaan shipper advice is temporarily unavailable")
+    _shipper_advice_cache = rows
+    _shipper_advice_cache_expires_at = time.monotonic() + _OPERATIONS_REFRESH_SECONDS
+    return rows
+
+
+async def submit_shipper_advice(session, tracking_number, gateway_id, advice_status, remarks):
+    """Submit a reattempt or return instruction for one pending shipment."""
+    global _shipper_advice_cache, _shipper_advice_cache_expires_at
+    normalized_tracking = "".join(ch for ch in str(tracking_number or "") if ch.isdigit())
+    normalized_status = str(advice_status or "").strip().casefold()
+    if not normalized_tracking or normalized_status not in {"reattempt", "return"}:
+        raise ValueError("Choose Reattempt or Return")
+    clean_remarks = str(remarks or "").strip()
+    if not clean_remarks:
+        raise ValueError("Remarks are required")
+    config = configuration()
+    if not config:
+        raise RuntimeError("DigiDokaan is not configured")
+    token = await _access_token(session, config)
+    timeout = ClientTimeout(total=25)
+    async with session.post(
+        config["base_url"] + "/api/courier/shipper_advice_action",
+        json={
+            "phone": config["phone"],
+            "gateway_id": str(gateway_id or config["gateway_id"]),
+            "tracking_no": normalized_tracking,
+            "shipper_advice_status": normalized_status,
+            "shipper_advice_remarks": clean_remarks,
+        },
+        headers={"Accept": "application/json", "Authorization": "Bearer " + token},
+        timeout=timeout,
+        ssl=_SSL_CONTEXT,
+    ) as response:
+        body = await response.json(content_type=None)
+    if response.status != 200 or not isinstance(body, dict) or body.get("code") != 200:
+        message = (body.get("error") or body.get("message")) if isinstance(body, dict) else ""
+        raise RuntimeError(message or "DigiDokaan did not accept the shipper advice")
+    _shipper_advice_cache = None
+    _shipper_advice_cache_expires_at = 0.0
+    return body

@@ -529,6 +529,7 @@
           </label>
           <button class="login-btn" type="submit">Unlock Portal</button>
         </form>
+        {% if passkey_available %}<button class="utility-btn" type="button" id="employeePasskeyLoginBtn">Use fingerprint / Face ID</button>{% endif %}
         <div class="login-hint">This mobile tool is meant for staff use and opens as a standalone web app after install.</div>
       </section>
     </div>
@@ -545,6 +546,7 @@
         <div class="toolbar-row">
           <button class="utility-btn" type="button" id="installBtn" hidden>Install App</button>
           <button class="utility-btn" type="button" id="notifyBtn">Enable Notifications</button>
+          <button class="utility-btn" type="button" id="employeePasskeySetupBtn">{% if passkey_available %}Add Passkey{% else %}Enable Fingerprint{% endif %}</button>
           <span class="status-pill" id="notifyStatus"><span class="dot"></span><span>Notifications off</span></span>
           <form method="post" action="/employee_portal/logout" style="margin:0 0 0 auto;">
             <button class="utility-btn" type="submit">Log Out</button>
@@ -1095,5 +1097,13 @@
       window.setInterval(() => pollForNewOrders(false), 60000);
     </script>
   {% endif %}
+  <script>
+    function epB64(value){const p=value.replace(/-/g,'+').replace(/_/g,'/');const b=atob(p+'='.repeat((4-p.length%4)%4));return Uint8Array.from(b,c=>c.charCodeAt(0));}
+    function epBytes(value){let b='';new Uint8Array(value).forEach(x=>b+=String.fromCharCode(x));return btoa(b).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+    function epCredential(c){const r=c.response,o={clientDataJSON:epBytes(r.clientDataJSON)};['attestationObject','authenticatorData','signature','userHandle'].forEach(k=>{if(r[k])o[k]=epBytes(r[k]);});if(r.getTransports)o.transports=r.getTransports();return{id:c.id,rawId:epBytes(c.rawId),type:c.type,response:o,clientExtensionResults:c.getClientExtensionResults()};}
+    async function epPasskey(path,creation){const a=await fetch(path+'/options',{method:'POST'}),o=await a.json();if(!a.ok)throw new Error(o.error||'Passkey request failed');o.challenge=epB64(o.challenge);if(creation)o.user.id=epB64(o.user.id);(o[creation?'excludeCredentials':'allowCredentials']||[]).forEach(x=>x.id=epB64(x.id));const c=creation?await navigator.credentials.create({publicKey:o}):await navigator.credentials.get({publicKey:o});const v=await fetch(path+'/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:epCredential(c),device_name:navigator.platform||'Employee phone'})}),r=await v.json();if(!v.ok)throw new Error(r.error||'Passkey verification failed');return r;}
+    document.getElementById('employeePasskeyLoginBtn')?.addEventListener('click',async()=>{try{const r=await epPasskey('/employee_portal/passkeys/login',false);location.assign(r.redirect||'/employee_portal');}catch(e){alert(e.message);}});
+    document.getElementById('employeePasskeySetupBtn')?.addEventListener('click',async()=>{try{const r=await epPasskey('/employee_portal/passkeys/register',true);alert(r.message);}catch(e){alert(e.message);}});
+  </script>
 </body>
 </html>

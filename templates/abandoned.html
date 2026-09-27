@@ -88,13 +88,59 @@
     .preview-layout { grid-template-columns:1fr; }
     .preview-customer { grid-template-columns:1fr; }
   }
-  @media (max-width: 560px) {
-    .metric-row { grid-template-columns:1fr; }
-    .checkout-head { flex-wrap:wrap; }
-    .checkout-spacer { flex-basis:100%; height:0; }
-    .preview-shot { padding:20px; }
-    .preview-img { height:360px; }
+  @media (max-width: 760px) {
+    .abandoned-page { height:100dvh; }
+    .topbar { height:auto; min-height:52px; padding:10px 12px; display:grid; grid-template-columns:1fr; gap:8px; }
+    .topbar > div[style="flex:1"] { display:none; }
+    .topbar .search-box, .topbar .search-box input { width:100% !important; min-width:0; }
+    .toolbar { padding:9px 10px; }
+    .toolbar .btn { display:none; }
+    .abandoned-scroll { padding:10px; }
+    .metric-row { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
+    .metric-card { padding:10px 11px; flex:0 0 132px; min-width:132px; }
+    .metric-label { font-size:9px; min-height:22px; }
+    .metric-value { font-size:18px; }
+    .checkout-head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:7px 8px; padding:11px; }
+    .checkout-head > div:first-child { min-width:0; }
+    .checkout-token { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .checkout-spacer { display:none; }
+    .recovery-badge, .view-state { justify-self:start; font-size:9px; padding:4px 7px; }
+    .checkout-amount { grid-column:2; grid-row:1; font-size:13px; }
+    .view-btn { grid-column:2; grid-row:2; padding:6px 11px; }
+    .checkout-body { flex-direction:column; padding:10px 11px 12px; gap:10px; }
+    .products { flex-wrap:nowrap; width:100%; max-width:100%; overflow-x:auto; }
+    .product { flex:0 0 68px; }
+    .product-img { width:68px; height:68px; }
+    .info-block { grid-template-columns:1fr; gap:6px; border-top:1px solid #eef0f5; padding-top:10px; }
+    .info-row { display:grid; grid-template-columns:72px minmax(0,1fr); font-size:11px; }
+    .info-lbl { width:auto; }
+    .preview-backdrop { padding:8px; }
+    .preview-modal { width:100%; max-height:calc(100dvh - 16px); border-radius:18px; overflow:hidden; display:flex; flex-direction:column; }
+    .preview-shot { padding:12px; overflow:auto; flex:1; }
+    .preview-layout { grid-template-columns:1fr; gap:9px; }
+    .preview-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
+    .preview-grid.single { grid-template-columns:1fr; }
+    .preview-img, .preview-grid:not(.single) .preview-img { height:118px; }
+    .preview-grid.single .preview-img { height:190px; }
+    .preview-product-title { font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .preview-title { font-size:21px; }
+    .preview-total { font-size:22px; }
+    .preview-totals { grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+    .preview-customer { grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px 10px; padding:9px; }
   }
+  body.embedded .topbar { height:auto; min-height:52px; padding:10px 12px; display:grid; grid-template-columns:1fr; gap:8px; }
+  body.embedded .topbar > div[style="flex:1"], body.embedded .toolbar .btn { display:none; }
+  body.embedded .topbar .search-box, body.embedded .topbar .search-box input { width:100% !important; min-width:0; }
+  body.embedded .abandoned-scroll { padding:9px; }
+  body.embedded .metric-row { display:flex; gap:7px; overflow-x:auto; padding-bottom:4px; }
+  body.embedded .metric-card { padding:9px 10px; flex:0 0 126px; min-width:126px; }
+  body.embedded .checkout-head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:7px; padding:10px; }
+  body.embedded .checkout-spacer { display:none; }
+  body.embedded .checkout-amount { grid-column:2; grid-row:1; }
+  body.embedded .view-btn { grid-column:2; grid-row:2; }
+  body.embedded .checkout-body { flex-direction:column; padding:9px 10px 11px; }
+  body.embedded .products { flex-wrap:nowrap; width:100%; max-width:100%; overflow-x:auto; }
+  body.embedded .info-block { grid-template-columns:1fr; width:100%; border-top:1px solid #eef0f5; padding-top:9px; }
 </style>
 
 <div class="abandoned-page">
