@@ -223,7 +223,7 @@ def normalize_status_bucket(status):
         return "Delivered"
     if "PICKED FROM SHIPPER" in upper:
         return "Picked From Shipper"
-    if upper == "BOOKED" or "CONSIGNMENT BOOKED" in upper:
+    if upper == "BOOKED" or "CONSIGNMENT BOOKED" or "Shipment - Booked" in upper:
         return "Booked"
     if upper in {"UN-BOOKED", "UNBOOKED"}:
         return "Un-Booked"
