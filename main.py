@@ -244,6 +244,93 @@ def is_return_received_order(order):
     return bool(dated_order_tag_date((order or {}).get("tags"), "Return Received"))
 
 
+RETURN_COURIER_MARKERS = (
+    "RETURN SUBMITTED",
+    "RETURN SUBMISSION",
+    "RETURN TO SHIPPER",
+    "RETURNED TO SHIPPER",
+    "RETURN TO SENDER",
+    "RETURNED TO SENDER",
+    "OUT FOR RETURN",
+    "BEING RETURN",
+    "ASSIGNED TO COURIER FOR RETURN",
+    "RETURN COMPLETED",
+    "RETURN DELIVERED",
+    "RTO COMPLETED",
+    "RTO DELIVERED",
+)
+
+FAILED_DELIVERY_MARKERS = (
+    "UNDELIVERED",
+    "DELIVERY UNSUCCESSFUL",
+    "DELIVERY FAILED",
+    "DELIVERY ATTEMPT",
+    "ATTEMPT TO DELIVER",
+    "CONSIGNEE REFUSED",
+    "CUSTOMER REFUSED",
+    "ADDRESS CLOSED",
+    "SHIPPER ADVISE REQUESTED",
+    "SHIPPER ADVICE REQUESTED",
+    "REASON VALIDATION REQUIRED",
+    "CALL NOT ATTENDED",
+    "UNTRACEABLE",
+)
+
+
+def status_contains_any(statuses, markers):
+    combined = " | ".join(normalize_courier_status_label(value).upper() for value in statuses or [] if value)
+    return any(marker in combined for marker in markers)
+
+
+def parse_courier_event_date(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = raw.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).replace(tzinfo=None).date()
+    except ValueError:
+        pass
+    for fmt in (
+        "%d/%m/%Y %I:%M %p",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%m-%Y",
+    ):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def courier_return_marked_date(tracking_number, data):
+    events = []
+    if is_leopards_tracking(tracking_number):
+        packets = (data or {}).get("packet_list") or [] if isinstance(data, dict) else []
+        for detail in ((packets[0] if packets else {}) or {}).get("Tracking Detail") or []:
+            events.append(
+                (
+                    detail.get("Status") or detail.get("Reason") or "",
+                    " ".join(str(part or "").strip() for part in (detail.get("Activity_Date"), detail.get("Activity_Time")) if str(part or "").strip()),
+                )
+            )
+    elif isinstance(data, list):
+        for detail in data:
+            events.append(
+                (
+                    detail.get("ProcessDescForPortal") or detail.get("ProcessDesc") or "",
+                    detail.get("TransactionDate") or "",
+                )
+            )
+    matching_dates = [parse_courier_event_date(raw_date) for status, raw_date in events if status_contains_any([status], RETURN_COURIER_MARKERS)]
+    matching_dates = [value for value in matching_dates if value]
+    return max(matching_dates).isoformat() if matching_dates else ""
+
+
 def is_dispatched_not_delivered_order(order):
     order = order or {}
     tags = order.get("tags") or []
@@ -271,8 +358,28 @@ def build_undelivered_order_view(orders):
             dispatched_on = created_at.date() if created_at != datetime.min else today
         order["dispatch_date"] = dispatched_on.isoformat()
         order["dispatch_age_days"] = max((today - dispatched_on).days, 0)
+        order_created = parse_date_for_sort(order.get("created_at")).date()
+        order["order_age_days"] = max((today - order_created).days, 0)
         order["return_received"] = is_return_received_order(order)
         order["return_received_date"] = dated_order_tag_date(order.get("tags"), "Return Received")
+        statuses = [order.get("status")] + [item.get("status") for item in order.get("line_items") or []]
+        return_dates = [
+            parse_courier_event_date(item.get("return_marked_at"))
+            for item in order.get("line_items") or []
+            if item.get("return_marked_at")
+        ]
+        return_dates = [value for value in return_dates if value]
+        return_marked_on = min(return_dates) if return_dates else None
+        order["return_marked_date"] = return_marked_on.isoformat() if return_marked_on else ""
+        order["return_marked_days"] = max((today - return_marked_on).days, 0) if return_marked_on else None
+        if status_contains_any(statuses, RETURN_COURIER_MARKERS) and not order["return_received"]:
+            order["followup_section"] = "return_missed"
+        elif status_contains_any(statuses, FAILED_DELIVERY_MARKERS):
+            order["followup_section"] = "failed_delivery"
+        elif order["order_age_days"] >= 5:
+            order["followup_section"] = "undelivered"
+        else:
+            continue
         rows.append(order)
     return sort_orders_newest_first(rows)
 
@@ -3326,6 +3433,9 @@ async def fetch_tracking_data(session_obj, tracking_number):
     if not tracking_number or tracking_number == "N/A":
         return {}
     if is_digidokaan_tracking(tracking_number):
+        history = await fetch_digidokaan_tracking_history(session_obj, tracking_number)
+        if history:
+            return history
         status = await fetch_digidokaan_tracking_status(session_obj, tracking_number)
         return [{"ProcessDescForPortal": status}] if status else []
     if is_leopards_tracking(tracking_number):
@@ -3426,6 +3536,7 @@ def summarize_tracking_result(tracking_number, data):
             final_status = "Booked"
         return {
             "status": normalize_courier_status_label(final_status),
+            "return_marked_at": courier_return_marked_date(tracking_number, data),
             "name": packet.get("consignment_name_eng") or "",
             "address": packet.get("consignment_address") or "",
             "phone": packet.get("consignment_phone") or "",
@@ -3438,6 +3549,7 @@ def summarize_tracking_result(tracking_number, data):
         status = normalize_courier_status_label(last.get("ProcessDescForPortal") or "Booked")
         return {
             "status": status,
+            "return_marked_at": courier_return_marked_date(tracking_number, data),
             "name": first.get("ConsigneeName") or "",
             "address": first.get("ConsigneeAddress") or "",
             "phone": first.get("ContactNo") or "",
@@ -3482,6 +3594,7 @@ async def process_line_item(session_obj, line_item, fulfillments):
                         "courier_name": courier_label_for_tracking("", tracking_number) or "Call Courier",
                         "status": summary["status"],
                         "tracking_observed": tracking_data_is_valid(tracking_number, data),
+                        "return_marked_at": summary.get("return_marked_at") or "",
                         "quantity": quantity,
                         "name": summary["name"],
                         "address": summary["address"],
@@ -5472,9 +5585,30 @@ def pending_orders_mobile():
 @app.route("/undelivered")
 def undelivered():
     undelivered_orders = build_undelivered_order_view(order_details)
+    sections = [
+        {
+            "key": "undelivered",
+            "title": "Undelivered",
+            "description": "Dispatched orders that are still not delivered 5+ days after order creation.",
+            "orders": [order for order in undelivered_orders if order.get("followup_section") == "undelivered"],
+        },
+        {
+            "key": "failed_delivery",
+            "title": "Failed Delivery",
+            "description": "Refused, unsuccessful, undelivered, or other failed courier attempts.",
+            "orders": [order for order in undelivered_orders if order.get("followup_section") == "failed_delivery"],
+        },
+        {
+            "key": "return_missed",
+            "title": "Return Missed",
+            "description": "Courier return activity without a dated Return Received tag.",
+            "orders": [order for order in undelivered_orders if order.get("followup_section") == "return_missed"],
+        },
+    ]
     return render_template(
         "undelivered.html",
         order_details=undelivered_orders,
+        sections=sections,
         return_received_count=sum(1 for order in undelivered_orders if order.get("return_received")),
     )
 

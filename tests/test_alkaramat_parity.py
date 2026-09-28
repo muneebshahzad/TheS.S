@@ -132,10 +132,50 @@ def test_undelivered_ui_has_return_filter_in_desktop_and_admin_embed(monkeypatch
     client = main.app.test_client()
     for url in ("/undelivered", "/undelivered?embedded=1"):
         html = client.get(url).get_data(as_text=True)
-        assert "Dispatched, not delivered." in html
+        assert "Delivery follow-up" in html
         assert 'id="hideReturns"' in html
         assert 'data-return="true"' in html
         assert "Return received 2026-09-28" in html
+        assert "Undelivered" in html
+        assert "Failed Delivery" in html
+        assert "Return Missed" in html
+
+
+def test_delivery_followup_sections_and_days_are_classified_from_courier_statuses():
+    base = {
+        "created_at": "2026-09-10T10:00:00",
+        "tags": ["Dispatched (2026-09-15)"],
+        "customer_details": {},
+        "total_price": 1000,
+    }
+    rows = main.build_undelivered_order_view([
+        {**base, "id": 1, "order_id": "SIMPLE", "status": "In Transit", "line_items": []},
+        {**base, "id": 2, "order_id": "FAILED", "status": "Delivery Unsuccessful", "line_items": []},
+        {**base, "id": 3, "order_id": "CALL", "status": "RETURN SUBMITTED", "line_items": [{"status": "RETURN SUBMITTED", "return_marked_at": "2026-09-25"}]},
+        {**base, "id": 4, "order_id": "LEOPARDS", "status": "Return To Sender", "line_items": [{"status": "Return To Sender", "return_marked_at": "2026-09-24"}]},
+        {**base, "id": 5, "order_id": "DIGIDOKAAN", "status": "Returned to Shipper", "line_items": [{"status": "Returned to Shipper", "return_marked_at": "2026-09-23"}]},
+    ])
+    by_id = {row["order_id"]: row for row in rows}
+    assert by_id["SIMPLE"]["followup_section"] == "undelivered"
+    assert by_id["FAILED"]["followup_section"] == "failed_delivery"
+    assert by_id["CALL"]["followup_section"] == "return_missed"
+    assert by_id["LEOPARDS"]["followup_section"] == "return_missed"
+    assert by_id["DIGIDOKAAN"]["followup_section"] == "return_missed"
+    assert by_id["CALL"]["order_age_days"] >= by_id["CALL"]["dispatch_age_days"]
+    assert by_id["CALL"]["return_marked_days"] is not None
+
+
+def test_return_courier_event_date_is_extracted_for_leopards_and_digidokaan():
+    leopards = {"packet_list": [{"Tracking Detail": [
+        {"Status": "In Transit", "Activity_Date": "23/09/2026", "Activity_Time": "09:00 AM"},
+        {"Status": "Return To Sender", "Activity_Date": "25/09/2026", "Activity_Time": "10:00 AM"},
+    ]}]}
+    digidokaan = [
+        {"ProcessDescForPortal": "In Transit", "TransactionDate": "23/09/2026 09:00 AM"},
+        {"ProcessDescForPortal": "Returned to Shipper", "TransactionDate": "26/09/2026 02:13 PM"},
+    ]
+    assert main.courier_return_marked_date("LE123", leopards) == "2026-09-25"
+    assert main.courier_return_marked_date("22312345678901", digidokaan) == "2026-09-26"
 
 class FakeDraftOrder:
     instances = []
