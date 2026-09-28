@@ -92,6 +92,10 @@ def test_pending_page_has_mobile_friendly_vendor_order_builder():
     assert "Unit cost" in source
     assert "itemSummarySearch" in source
     assert "existing.quantity = Math.max" in source
+    assert '.items-grid { display:grid' in source
+    assert 'table, tbody { display:block' in source
+    assert 'table { min-width:860px; }' not in source
+    assert 'table { min-width:920px; }' not in source
 
 class FakeDraftOrder:
     instances = []

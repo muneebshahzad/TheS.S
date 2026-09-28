@@ -5,13 +5,13 @@
 <style>
   html, body { min-height: 100%; height: auto; overflow-y: auto; }
   #app { min-height: 100vh; height: auto; overflow: visible; }
-  #main { min-height: 100vh; height: auto; overflow: visible; display: block; }
-  .pending-shell { display:flex; flex-direction:column; min-height:100vh; overflow:visible; }
+  #main { flex:1 1 0%; width:0; min-width:0; min-height:100vh; height:auto; overflow:visible; display:block; }
+  .pending-shell { width:100%; max-width:none; display:flex; flex-direction:column; min-height:100vh; overflow:visible; }
   .pending-topbar { min-height:58px; background:#fff; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; padding:8px 20px; gap:12px; flex-shrink:0; position:sticky; top:0; z-index:20; }
   .pending-title { font-size:16px; font-weight:700; color:#3a3b45; }
   .pending-scroll { flex:1 1 auto; min-height:0; overflow:visible; padding:16px; display:flex; flex-direction:column; gap:16px; }
-  .stats-grid { display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:12px; }
-  .section-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; align-items:start; }
+  .stats-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:12px; }
+  .section-grid { width:100%; display:grid; grid-template-columns:minmax(0,1.2fr) minmax(360px,1fr); gap:16px; align-items:start; }
   .item-summary-card { grid-column:1; grid-row:1; min-width:0; }
   .vendor-card { grid-column:2; grid-row:1; min-width:0; position:sticky; top:74px; }
   .summary-list, .order-list { display:flex; flex-direction:column; gap:10px; }
@@ -82,6 +82,7 @@
   .money-line strong { color:#2d2e36; }
   .empty-state { padding:34px 16px; text-align:center; color:#858796; font-size:13px; }
   @media (max-width: 900px) {
+    #main { width:0; }
     .section-grid, .order-body { grid-template-columns:1fr; }
     .vendor-card, .item-summary-card { grid-column:1; position:static; }
     .vendor-card { grid-row:1; }
@@ -497,30 +498,14 @@
 
   function buildVendorListHtml(items) {
     const safeItems = Array.isArray(items) ? items : [];
-    const midpoint = Math.ceil(safeItems.length / 2);
-    const leftItems = safeItems.slice(0, midpoint);
-    const rightItems = safeItems.slice(midpoint);
-
-    function cellGroup(item, dividerClass) {
-      if (!item) {
-        return `
-          <td class="name ${dividerClass}"></td>
-          <td class="image-cell"></td>
-          <td class="qty"></td>
-        `;
-      }
-      return `
-        <td class="name ${dividerClass}">${escapeHtml(item.title || '')}</td>
-        <td class="image-cell">${item.image ? `<img class="product-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || '')}">` : ''}</td>
-        <td class="qty">${Number(item.quantity || 0)}</td>
-      `;
-    }
-
-    const rows = Array.from({ length: Math.max(leftItems.length, rightItems.length) }, (_, index) => `
-      <tr>
-        ${cellGroup(leftItems[index], '')}
-        ${cellGroup(rightItems[index], 'divider')}
-      </tr>
+    const cards = safeItems.map((item) => `
+      <article class="item-card">
+        <div class="image-cell">${item.image ? `<img class="product-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || '')}">` : '<div class="image-placeholder">📦</div>'}</div>
+        <div class="item-copy">
+          <h2>${escapeHtml(item.title || '')}</h2>
+          <div class="qty"><span>Quantity</span><strong>${Math.max(1, Number(item.quantity || 1))}</strong></div>
+        </div>
+      </article>
     `).join('');
 
     return `<!DOCTYPE html>
@@ -538,27 +523,28 @@
     h1 { margin:0; font-size:24px; line-height:1.15; }
     .summary { margin:4px 0 0; color:var(--muted); }
     .count { flex:0 0 auto; padding:7px 11px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--muted); font-weight:700; }
-    .table-wrap { border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 10px 26px rgba(25,34,62,0.08); overflow:hidden; }
-    table { width:100%; border-collapse:collapse; table-layout:fixed; }
-    th, td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
-    th { background:var(--head); color:#30364a; font-size:12px; font-weight:800; text-transform:uppercase; }
-    tbody tr:last-child td { border-bottom:0; }
-    tbody tr:hover { background:#fafbff; }
-    .name { width:22%; font-weight:700; overflow-wrap:anywhere; }
-    .image-cell { width:18%; }
-    .qty { width:7%; font-size:18px; font-weight:800; text-align:center; }
-    .divider { border-left:3px solid var(--divider); }
-    .product-image { display:block; width:120px; height:120px; object-fit:contain; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .items-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    .item-card { min-width:0; display:grid; grid-template-columns:132px minmax(0,1fr); gap:16px; align-items:center; padding:14px; border:1px solid var(--line); border-radius:12px; background:var(--panel); box-shadow:0 8px 22px rgba(25,34,62,.06); }
+    .product-image,.image-placeholder { display:grid; place-items:center; width:132px; height:132px; object-fit:contain; border:1px solid var(--line); border-radius:10px; background:#fff; }
+    .image-placeholder { font-size:32px; background:var(--head); }
+    h2 { margin:0; font-size:17px; overflow-wrap:anywhere; }
+    .qty { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:18px; padding-top:12px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .qty strong { color:var(--text); font-size:24px; }
     @media (max-width:900px) {
-      main { width:min(100% - 16px, 760px); }
+      main { width:calc(100% - 20px); margin:10px auto 20px; }
       .header { align-items:flex-start; flex-direction:column; }
-      .table-wrap { overflow-x:auto; }
-      table { min-width:860px; }
+      .items-grid { grid-template-columns:1fr; }
+      .item-card { grid-template-columns:96px minmax(0,1fr); padding:10px; gap:12px; }
+      .product-image,.image-placeholder { width:96px; height:96px; }
+      h1 { font-size:22px; }
+      h2 { font-size:15px; }
+      .qty { margin-top:12px; padding-top:9px; }
+      .qty strong { font-size:20px; }
     }
     @media print {
       body { background:#fff; }
       main { width:100%; margin:0; }
-      .table-wrap { border:0; box-shadow:none; }
+      .item-card { box-shadow:none; break-inside:avoid; }
     }
   </style>
 </head>
@@ -567,25 +553,11 @@
     <div class="header">
       <div>
         <h1>Selected Vendor Items</h1>
-        <p class="summary">Split table view with product names, images, and quantities.</p>
+        <p class="summary">Product names, images, and order quantities.</p>
       </div>
       <div class="count">${safeItems.length} item${safeItems.length === 1 ? '' : 's'}</div>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Image</th>
-            <th>Quantity</th>
-            <th class="divider">Name</th>
-            <th>Image</th>
-            <th>Quantity</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
+    <div class="items-grid">${cards}</div>
   </main>
 </body>
 </html>`;
@@ -617,11 +589,11 @@
       const total = Math.max(0, cost * qty);
       return `
         <tr>
-          <td class="name">${escapeHtml(item.title || '')}</td>
-          <td class="image-cell">${item.image ? `<img class="product-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || '')}">` : ''}</td>
-          <td class="qty">${qty}</td>
-          <td class="money">PKR ${cost.toLocaleString('en-PK')}</td>
-          <td class="money strong">PKR ${total.toLocaleString('en-PK')}</td>
+          <td class="name" data-label="Product">${escapeHtml(item.title || '')}</td>
+          <td class="image-cell" data-label="Image">${item.image ? `<img class="product-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || '')}">` : ''}</td>
+          <td class="qty" data-label="Qty">${qty}</td>
+          <td class="money" data-label="Unit cost">PKR ${cost.toLocaleString('en-PK')}</td>
+          <td class="money strong" data-label="Total">PKR ${total.toLocaleString('en-PK')}</td>
         </tr>
       `;
     }).join('');
@@ -665,13 +637,30 @@
     .totals-row { display:flex; justify-content:space-between; gap:12px; margin-top:8px; }
     .totals-row strong { font-size:16px; }
     @media (max-width:900px) {
-      main { width:min(100% - 16px, 760px); }
+      main { width:calc(100% - 20px); margin:10px auto 20px; }
       .header { align-items:flex-start; flex-direction:column; }
       .header-side { justify-content:flex-start; }
-      .table-wrap { overflow-x:auto; }
-      table { min-width:920px; }
+      .table-wrap { border:0; background:transparent; box-shadow:none; overflow:visible; }
+      table, tbody { display:block; width:100%; }
+      thead { display:none; }
+      tr { display:grid; grid-template-columns:92px minmax(0,1fr); gap:8px 12px; width:100%; margin-bottom:12px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--panel); box-shadow:0 8px 22px rgba(25,34,62,.06); }
+      td { display:flex; align-items:center; justify-content:space-between; gap:12px; width:auto!important; min-width:0; padding:7px 0; border-bottom:1px solid var(--line); text-align:right; }
+      td::before { content:attr(data-label); flex:0 0 auto; color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; }
+      td.image-cell { grid-row:1 / span 4; display:block; padding:0; border:0; }
+      td.image-cell::before { display:none; }
+      td.name,td.qty,td.money { grid-column:2; }
+      td.name { justify-content:flex-start; padding-top:0; text-align:left; font-size:15px; }
+      td.name::before { display:none; }
+      td:last-child { border-bottom:0; padding-bottom:0; }
+      .product-image { width:92px; height:92px; }
       .totals { justify-content:stretch; }
       .totals-card { min-width:100%; }
+    }
+    @media (max-width:420px) {
+      tr { grid-template-columns:76px minmax(0,1fr); gap:7px 10px; padding:10px; }
+      .product-image { width:76px; height:76px; }
+      td { font-size:12px; }
+      .money { white-space:normal; }
     }
     @media print {
       body { background:#fff; }
