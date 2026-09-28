@@ -120,6 +120,14 @@ aghaje_inventory_item_cost_cache = {}
 tracking_summary_cache = {}
 tracking_summary_cache_loaded = False
 tracking_refresh_lock = threading.Lock()
+order_tracking_refresh_lock = threading.Lock()
+order_tracking_refresh_state = {
+    "running": False,
+    "error": "",
+    "shopify_count": 0,
+    "daraz_count": 0,
+    "updated_at": 0,
+}
 RATE_LIMIT = 2
 LAST_REQUEST_TIME = 0.0
 PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
@@ -144,6 +152,7 @@ AGHAJE_AUTO_TRACK_FRESH_SECONDS = int(os.getenv("AGHAJE_AUTO_TRACK_FRESH_SECONDS
 TRACKING_REFRESH_SYNC_DEADLINE_SECONDS = float(os.getenv("TRACKING_REFRESH_SYNC_DEADLINE_SECONDS", "16"))
 TRACKING_REFRESH_BACKGROUND_DEADLINE_SECONDS = float(os.getenv("TRACKING_REFRESH_BACKGROUND_DEADLINE_SECONDS", "90"))
 TRACKING_REFRESH_PER_SHIPMENT_TIMEOUT_SECONDS = float(os.getenv("TRACKING_REFRESH_PER_SHIPMENT_TIMEOUT_SECONDS", "8"))
+TRACKING_AUTO_REFRESH_SECONDS = max(5 * 60, int(os.getenv("TRACKING_AUTO_REFRESH_SECONDS", "3600")))
 ABANDONED_CACHE_FRESH_SECONDS = int(os.getenv("ABANDONED_CACHE_FRESH_SECONDS", "900"))
 abandoned_cache_refresh_lock = threading.Lock()
 
@@ -3715,26 +3724,113 @@ def merge_order_refresh(existing_orders, refreshed_orders):
     return sort_orders_newest_first(list(merged.values()))
 
 
+def order_cache_key(order):
+    return str((order or {}).get("id") or (order or {}).get("order_id") or "").strip()
+
+
+def reconcile_concurrent_order_changes(snapshot_orders, current_orders, refreshed_orders):
+    """Keep changes made by webhooks/order creation while a remote refresh was running."""
+    snapshot = {order_cache_key(order): order for order in snapshot_orders or [] if order_cache_key(order)}
+    current = {order_cache_key(order): order for order in current_orders or [] if order_cache_key(order)}
+    refreshed = {order_cache_key(order): order for order in refreshed_orders or [] if order_cache_key(order)}
+
+    # An order removed from the live cache during the fetch must not be resurrected by stale results.
+    for removed_key in set(snapshot) - set(current):
+        refreshed.pop(removed_key, None)
+
+    # New or replaced live entries win over a result fetched before that change completed.
+    for cache_key, current_order in current.items():
+        snapshot_order = snapshot.get(cache_key)
+        if snapshot_order is None or current_order is not snapshot_order:
+            refreshed[cache_key] = current_order
+    return sort_orders_newest_first(list(refreshed.values()))
+
+
 def reload_orders(preserve_existing_on_partial=False):
     global order_details
+    existing_snapshot = list(order_details)
     try:
         setup_shopify()
         fetched_orders = asyncio.run(get_shopify_orders())
         if fetched_orders is None:
             print("Keeping existing order cache because Shopify fetch failed.")
             return False
-        if preserve_existing_on_partial and order_details and len(fetched_orders) < len(order_details):
+        current_orders = list(order_details)
+        if preserve_existing_on_partial and existing_snapshot and len(fetched_orders) < len(existing_snapshot):
             print(
                 f"Partial Shopify refresh returned {len(fetched_orders)} orders; "
-                f"keeping {len(order_details)} cached orders and merging refreshed tracking data."
+                f"keeping {len(existing_snapshot)} cached orders and merging refreshed tracking data."
             )
-            order_details = merge_order_refresh(order_details, fetched_orders)
+            fetched_orders = merge_order_refresh(existing_snapshot, fetched_orders)
+            order_details = reconcile_concurrent_order_changes(existing_snapshot, current_orders, fetched_orders)
             return False
-        order_details = sort_orders_newest_first(fetched_orders)
+        order_details = reconcile_concurrent_order_changes(existing_snapshot, current_orders, fetched_orders)
         return True
     except Exception as error:
         print(f"Could not reload orders: {error}")
         return False
+
+
+def refresh_all_order_tracking():
+    """Refresh every order source without making the current live cache unavailable."""
+    try:
+        refreshed_all = reload_orders(preserve_existing_on_partial=True)
+        daraz_rows = refresh_daraz_cache_if_needed(force=True)
+        with order_tracking_refresh_lock:
+            order_tracking_refresh_state.update(
+                running=False,
+                error="",
+                shopify_count=len(order_details),
+                daraz_count=len(daraz_rows),
+                updated_at=int(time.time()),
+                replaced_all=bool(refreshed_all),
+            )
+        return True
+    except Exception as error:
+        print(f"Could not refresh all order tracking: {error}")
+        with order_tracking_refresh_lock:
+            order_tracking_refresh_state.update(running=False, error=str(error))
+        return False
+
+
+def start_order_tracking_refresh_background(*, thread_name="order-tracking-refresh"):
+    """Start one daemon refresh, leaving the existing datasets readable while it runs."""
+    with order_tracking_refresh_lock:
+        if order_tracking_refresh_state["running"]:
+            return False
+        order_tracking_refresh_state.update(running=True, error="")
+    try:
+        worker = threading.Thread(
+            target=refresh_all_order_tracking,
+            daemon=True,
+            name=thread_name,
+        )
+        worker.start()
+    except Exception as error:
+        with order_tracking_refresh_lock:
+            order_tracking_refresh_state.update(running=False, error=str(error))
+        raise
+    return True
+
+
+def automatic_order_tracking_refresh_loop():
+    """Run the full tracking refresh once per configured interval in a daemon thread."""
+    while True:
+        time.sleep(TRACKING_AUTO_REFRESH_SECONDS)
+        start_order_tracking_refresh_background(thread_name="scheduled-order-tracking-refresh")
+
+
+def get_order_tracking_refresh_state():
+    with order_tracking_refresh_lock:
+        state = dict(order_tracking_refresh_state)
+    state["auto_refresh_seconds"] = TRACKING_AUTO_REFRESH_SECONDS
+    state["status"] = "running" if state["running"] else ("failed" if state["error"] else "complete")
+    state["message"] = (
+        "Refreshing tracking data"
+        if state["running"]
+        else ("Tracking refresh failed" if state["error"] else "Data refreshed successfully")
+    )
+    return state
 
 
 def find_shopify_order_by_order_name(order_id):
@@ -4915,21 +5011,15 @@ def admin_notifications():
 
 @app.route("/refresh", methods=["POST"])
 def refresh_data():
-    try:
-        refreshed_all = reload_orders(preserve_existing_on_partial=True)
-        daraz_rows = refresh_daraz_cache_if_needed(force=True)
-        if request.headers.get("X-Requested-With") == "XMLHttpRequest" or request.is_json:
-            message = "Data refreshed successfully" if refreshed_all else "Tracking refreshed; existing order cache preserved"
-            return jsonify({"message": message, "daraz_count": len(daraz_rows)})
-        return render_template(
-            "track.html",
-            order_details=order_details,
-            darazOrders=daraz_rows,
-            employee_approvals=build_employee_approval_items(),
-            abandoned_summary=get_abandoned_summary_safe(),
-        )
-    except Exception as error:
-        return jsonify({"message": f"Failed to refresh data: {error}"}), 500
+    started = start_order_tracking_refresh_background(thread_name="manual-order-tracking-refresh")
+    state = get_order_tracking_refresh_state()
+    message = "Tracking refresh started" if started else "Tracking refresh is already running"
+    return jsonify({**state, "message": message}), 202
+
+
+@app.route("/refresh/status")
+def refresh_data_status():
+    return jsonify(get_order_tracking_refresh_state())
 
 
 @app.route("/abandoned")
@@ -6190,7 +6280,6 @@ def check_restart_times():
 
 def warm_runtime_caches():
     """Populate remote caches without blocking the web worker from becoming ready."""
-    reload_orders()
     try:
         refresh_abandoned_checkouts_cache_sync(force=True)
     except Exception:
@@ -6213,6 +6302,12 @@ if os.getenv("INITIALIZE_APP", "true") == "true":
         ensure_required_aghaje_webhooks()
     except Exception:
         print("Warning: could not ensure Aghaje webhooks")
+    start_order_tracking_refresh_background(thread_name="initial-order-tracking-refresh")
+    threading.Thread(
+        target=automatic_order_tracking_refresh_loop,
+        daemon=True,
+        name="automatic-order-tracking-refresh",
+    ).start()
     threading.Thread(target=warm_runtime_caches, daemon=True, name="runtime-cache-warm").start()
     threading.Thread(target=warm_daraz_cache, daemon=True, name="daraz-cache-warm").start()
 

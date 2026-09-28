@@ -1201,15 +1201,35 @@ function refreshTracking() {
   fetch('/refresh', { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
     .then(r => r.json())
     .then(d => {
+      showToast(d.message || 'Tracking refresh started.');
+      pollTrackingRefresh();
+    })
+    .catch(() => { icon.style.animation = ''; btn.disabled = false; showToast('Refresh failed'); });
+}
+
+function pollTrackingRefresh() {
+  const btn = document.getElementById('refreshTrackingBtn');
+  const icon = document.getElementById('refreshIcon');
+  fetch('/refresh/status', { cache: 'no-store' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'running') {
+        window.setTimeout(pollTrackingRefresh, 2000);
+        return;
+      }
       icon.style.animation = '';
       btn.disabled = false;
-      if (d.message === 'Data refreshed successfully') {
+      if (d.status === 'complete') {
         location.reload();
         return;
       }
-      showToast(d.message || 'Tracking refresh completed.');
+      showToast(d.message || 'Tracking refresh failed.');
     })
-    .catch(() => { icon.style.animation = ''; btn.disabled = false; showToast('Refresh failed'); });
+    .catch(() => {
+      icon.style.animation = '';
+      btn.disabled = false;
+      showToast('Could not read refresh status.');
+    });
 }
 
 // ── Dropdowns ──
