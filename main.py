@@ -221,6 +221,62 @@ def is_delivered_status(status):
     return normalized == "DELIVERED" or normalized.startswith("DELIVERED ")
 
 
+def dated_order_tag_date(tags, label):
+    pattern = re.compile(rf"^{re.escape(label)}\s*\((\d{{4}}-\d{{2}}-\d{{2}})\)$", re.IGNORECASE)
+    for tag in tags or []:
+        match = pattern.match(str(tag or "").strip())
+        if match:
+            return match.group(1)
+    return ""
+
+
+def has_order_tag(tags, label):
+    target = str(label or "").strip().lower()
+    return any(
+        str(tag or "").strip().lower() == target
+        or str(tag or "").strip().lower().startswith(f"{target} (")
+        for tag in tags or []
+    )
+
+
+def is_return_received_order(order):
+    # A plain/legacy "Return Received" tag is intentionally not enough.
+    return bool(dated_order_tag_date((order or {}).get("tags"), "Return Received"))
+
+
+def is_dispatched_not_delivered_order(order):
+    order = order or {}
+    tags = order.get("tags") or []
+    if not has_order_tag(tags, "Dispatched"):
+        return False
+    if has_order_tag(tags, "Delivered") or is_delivered_status(order.get("status")):
+        return False
+    return True
+
+
+def build_undelivered_order_view(orders):
+    today = datetime.now().date()
+    rows = []
+    for source_order in orders or []:
+        if not is_dispatched_not_delivered_order(source_order):
+            continue
+        order = dict(source_order)
+        dispatch_date = dated_order_tag_date(order.get("tags"), "Dispatched")
+        try:
+            dispatched_on = datetime.strptime(dispatch_date, "%Y-%m-%d").date() if dispatch_date else None
+        except ValueError:
+            dispatched_on = None
+        if dispatched_on is None:
+            created_at = parse_date_for_sort(order.get("created_at"))
+            dispatched_on = created_at.date() if created_at != datetime.min else today
+        order["dispatch_date"] = dispatched_on.isoformat()
+        order["dispatch_age_days"] = max((today - dispatched_on).days, 0)
+        order["return_received"] = is_return_received_order(order)
+        order["return_received_date"] = dated_order_tag_date(order.get("tags"), "Return Received")
+        rows.append(order)
+    return sort_orders_newest_first(rows)
+
+
 def normalize_status_bucket(status):
     raw = normalize_courier_status_label(status) or "Un-Booked"
     upper = raw.upper()
@@ -5415,18 +5471,11 @@ def pending_orders_mobile():
 
 @app.route("/undelivered")
 def undelivered():
-    refresh_daraz_cache_if_needed()
-    undelivered_orders = [order for order in order_details if is_undelivered_status(order.get("status"))]
-    daraz_undelivered_orders = [
-        order
-        for order in daraz_orders_cache
-        if is_undelivered_status(order.get("status"))
-        or any(is_undelivered_status(item.get("status")) for item in order.get("items_list", []))
-    ]
+    undelivered_orders = build_undelivered_order_view(order_details)
     return render_template(
         "undelivered.html",
         order_details=undelivered_orders,
-        darazOrders=daraz_undelivered_orders,
+        return_received_count=sum(1 for order in undelivered_orders if order.get("return_received")),
     )
 
 

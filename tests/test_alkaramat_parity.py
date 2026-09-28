@@ -97,6 +97,46 @@ def test_pending_page_has_mobile_friendly_vendor_order_builder():
     assert 'table { min-width:860px; }' not in source
     assert 'table { min-width:920px; }' not in source
 
+
+def test_undelivered_uses_dispatch_and_dated_return_received_tags():
+    dispatched = {
+        "id": 1,
+        "order_id": "PK1",
+        "created_at": "2026-09-20T10:00:00",
+        "status": "In Transit",
+        "tags": ["Dispatched (2026-09-21)"],
+    }
+    assert main.is_dispatched_not_delivered_order(dispatched) is True
+    assert main.is_return_received_order({**dispatched, "tags": dispatched["tags"] + ["Return Received"]}) is False
+    returned = {**dispatched, "tags": dispatched["tags"] + ["Return Received (2026-09-28)"]}
+    assert main.is_return_received_order(returned) is True
+    assert main.build_undelivered_order_view([returned])[0]["return_received"] is True
+
+    assert main.is_dispatched_not_delivered_order({**dispatched, "tags": []}) is False
+    assert main.is_dispatched_not_delivered_order({**dispatched, "tags": dispatched["tags"] + ["Delivered (2026-09-29)"]}) is False
+    assert main.is_dispatched_not_delivered_order({**dispatched, "status": "Delivered"}) is False
+
+
+def test_undelivered_ui_has_return_filter_in_desktop_and_admin_embed(monkeypatch):
+    order = {
+        "id": 1,
+        "order_id": "PK1",
+        "created_at": "2026-09-20T10:00:00",
+        "status": "In Transit",
+        "tags": ["Dispatched (2026-09-21)", "Return Received (2026-09-28)"],
+        "customer_details": {},
+        "line_items": [],
+        "total_price": 1000,
+    }
+    monkeypatch.setattr(main, "order_details", [order])
+    client = main.app.test_client()
+    for url in ("/undelivered", "/undelivered?embedded=1"):
+        html = client.get(url).get_data(as_text=True)
+        assert "Dispatched, not delivered." in html
+        assert 'id="hideReturns"' in html
+        assert 'data-return="true"' in html
+        assert "Return received 2026-09-28" in html
+
 class FakeDraftOrder:
     instances = []
     def __init__(self):

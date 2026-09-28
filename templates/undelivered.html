@@ -1,190 +1,222 @@
 {% extends 'base.html' %}
-{% block title %}The Sleek Space – Undelivered Orders{% endblock %}
+{% block title %}The Sleek Space – Dispatched Orders{% endblock %}
 
 {% block content %}
 <style>
-  .stats-grid4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 20px; }
-  .undelivered-card { background: #fff; border-radius: 10px; overflow: hidden; border: 1px solid #e3e6f0; box-shadow: 0 1px 4px rgba(0,0,0,0.04); transition: border-color 0.18s, box-shadow 0.18s; }
-  .uc-header { padding: 10px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
-  .uc-chevron { color: #858796; transition: transform 0.2s; flex-shrink: 0; }
-  .uc-chevron.open { transform: rotate(90deg); }
-  .uc-body { border-top: 1px solid #e3e6f0; padding: 10px 12px 12px 36px; display: none; }
-  .uc-body.open { display: block; }
-  .pri-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 99px; font-size: 10px; font-weight: 700; flex-shrink: 0; }
-  .pri-dot { width: 5px; height: 5px; border-radius: 50%; }
-  @media (max-width: 767px) { .stats-grid4 { grid-template-columns: repeat(2,1fr); } .hide-mob { display: none !important; } }
+  #main { min-width:0; }
+  .ud-page { height:100%; min-width:0; overflow:auto; background:#f5f7f4; color:#19342e; }
+  .ud-shell { width:min(1500px,100%); margin:0 auto; padding:24px; }
+  .ud-hero { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; margin-bottom:18px; }
+  .ud-eyebrow { color:#315b4d; font-size:10px; font-weight:800; letter-spacing:.18em; text-transform:uppercase; }
+  .ud-title { margin:6px 0 5px; font-size:clamp(25px,3vw,40px); line-height:1.05; color:#19342e; }
+  .ud-subtitle { max-width:720px; color:#62716b; font-size:13px; line-height:1.55; }
+  .ud-live { flex:0 0 auto; border:1px solid #cadbce; border-radius:999px; background:#edf4ee; padding:8px 13px; color:#315b4d; font-size:11px; font-weight:700; }
+  .ud-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:14px; }
+  .ud-stat { min-width:0; padding:16px; border:1px solid #d8e1db; border-radius:14px; background:#fff; }
+  .ud-stat span { display:block; color:#62716b; font-size:11px; }
+  .ud-stat strong { display:block; margin-top:8px; color:#19342e; font-size:24px; line-height:1; }
+  .ud-stat.return strong { color:#9a6711; }
+  .ud-stat.attention strong { color:#a43b36; }
+  .ud-controls { display:grid; grid-template-columns:minmax(220px,1fr) 180px auto; gap:10px; align-items:center; padding:14px; border:1px solid #d8e1db; border-radius:14px; background:#fff; margin-bottom:14px; }
+  .ud-search,.ud-select { width:100%; height:42px; border:1px solid #d8e1db; border-radius:9px; background:#fff; padding:0 12px; color:#19342e; font:12px 'DM Sans',sans-serif; outline:none; }
+  .ud-search:focus,.ud-select:focus { border-color:#6f9888; box-shadow:0 0 0 3px rgba(49,91,77,.1); }
+  .ud-toggle { min-height:42px; display:flex; align-items:center; gap:9px; padding:0 12px; border:1px solid #d8e1db; border-radius:9px; color:#315b4d; font-size:12px; font-weight:700; white-space:nowrap; cursor:pointer; }
+  .ud-toggle input { width:17px; height:17px; accent-color:#315b4d; }
+  .ud-panel { border:1px solid #d8e1db; border-radius:14px; background:#fff; overflow:hidden; }
+  .ud-panel-head { display:flex; align-items:center; gap:9px; padding:15px 17px; border-bottom:1px solid #e4ebe6; }
+  .ud-panel-head h2 { margin:0; font-size:15px; }
+  .ud-count { min-width:25px; padding:2px 8px; border-radius:999px; background:#edf4ee; color:#315b4d; font-size:11px; font-weight:800; text-align:center; }
+  .ud-list { display:flex; flex-direction:column; gap:10px; padding:12px; }
+  .ud-card { border:1px solid #dfe6e1; border-radius:12px; background:#fff; overflow:hidden; transition:.15s ease; }
+  .ud-card:hover { border-color:#a9bfb4; box-shadow:0 7px 20px rgba(25,52,46,.07); }
+  .ud-card.return-received { background:#fffdf7; border-color:#ead8ad; }
+  .ud-card-main { display:grid; grid-template-columns:auto minmax(180px,1.1fr) minmax(150px,.75fr) minmax(180px,1fr) auto; gap:14px; align-items:center; padding:14px; }
+  .ud-age { width:62px; text-align:center; }
+  .ud-age strong { display:block; font-size:24px; line-height:1; color:#315b4d; }
+  .ud-age span { color:#7d8984; font-size:9px; font-weight:700; text-transform:uppercase; }
+  .ud-age.late strong { color:#a43b36; }
+  .ud-order-link { color:#315b4d; font-size:14px; font-weight:800; text-decoration:none; }
+  .ud-order-link:hover { text-decoration:underline; }
+  .ud-meta { margin-top:4px; color:#7d8984; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ud-pill-row { display:flex; gap:5px; flex-wrap:wrap; margin-top:7px; }
+  .ud-pill { display:inline-flex; align-items:center; gap:4px; padding:4px 8px; border-radius:999px; background:#edf1ef; color:#40564e; font-size:10px; font-weight:750; }
+  .ud-pill.return { background:#fff0cd; color:#855b11; }
+  .ud-pill.attention { background:#fde9e7; color:#a43b36; }
+  .ud-customer strong,.ud-shipment strong { display:block; color:#293c36; font-size:12px; }
+  .ud-customer span,.ud-shipment span { display:block; margin-top:3px; color:#7d8984; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ud-value { text-align:right; white-space:nowrap; }
+  .ud-value strong { display:block; font-size:15px; }
+  .ud-value span { color:#7d8984; font-size:9px; }
+  .ud-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; margin-top:8px; }
+  .ud-action { min-height:32px; border:1px solid #d8e1db; border-radius:8px; background:#fff; padding:6px 9px; color:#315b4d; font:700 10px 'DM Sans',sans-serif; cursor:pointer; text-decoration:none; }
+  .ud-action.primary { border-color:#315b4d; background:#315b4d; color:#fff; }
+  .ud-details { display:none; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:8px; padding:0 14px 14px 90px; }
+  .ud-card.open .ud-details { display:grid; }
+  .ud-item { display:grid; grid-template-columns:42px minmax(0,1fr) auto; gap:9px; align-items:center; padding:8px; border:1px solid #e4ebe6; border-radius:9px; background:#f8faf8; }
+  .ud-item img,.ud-image-empty { width:42px; height:42px; border-radius:7px; object-fit:cover; background:#e9eeeb; display:grid; place-items:center; font-size:10px; color:#7d8984; }
+  .ud-item strong { display:block; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ud-item span { display:block; margin-top:2px; color:#7d8984; font-size:10px; }
+  .ud-empty { display:none; padding:54px 20px; text-align:center; color:#62716b; }
+  .ud-empty strong { display:block; color:#19342e; font-size:16px; margin-bottom:4px; }
+  @media (max-width:1050px) {
+    .ud-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .ud-card-main { grid-template-columns:auto minmax(0,1fr) minmax(150px,.7fr) auto; }
+    .ud-shipment { display:none; }
+  }
+  @media (max-width:700px) {
+    .ud-shell { padding:14px 12px 80px; }
+    .ud-hero { display:block; }
+    .ud-live { display:inline-block; margin-top:12px; }
+    .ud-stats { gap:8px; }
+    .ud-stat { padding:13px; }
+    .ud-stat strong { font-size:20px; }
+    .ud-controls { grid-template-columns:1fr; padding:10px; }
+    .ud-card-main { grid-template-columns:50px minmax(0,1fr); gap:10px; padding:12px; }
+    .ud-age { width:50px; grid-row:1 / span 2; }
+    .ud-age strong { font-size:21px; }
+    .ud-customer { grid-column:2; }
+    .ud-value { grid-column:1 / -1; display:flex; align-items:center; justify-content:space-between; padding-top:9px; border-top:1px solid #e4ebe6; text-align:left; }
+    .ud-actions { margin:0; }
+    .ud-details { padding:0 12px 12px; grid-template-columns:1fr; }
+  }
 </style>
 
-<div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
-  <!-- Topbar -->
-  <div class="topbar" style="flex-wrap:wrap;gap:6px;height:auto;min-height:52px;padding:8px 16px;">
-    <span class="topbar-title">Undelivered Orders</span>
-    <span id="highCount" style="background:#fce8e6;color:#e74a3b;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;"></span>
-    <div style="flex:1"></div>
-    <div style="display:flex;gap:4px;flex-wrap:wrap;">
-      <button class="pri-filter-btn" data-pri="all" onclick="setPri(this)" style="padding:4px 10px;border-radius:8px;border:none;cursor:pointer;font-size:11px;font-weight:500;background:#4e73df;color:#fff;font-family:'DM Sans',sans-serif;">All</button>
-      <button class="pri-filter-btn" data-pri="high" onclick="setPri(this)" style="padding:4px 10px;border-radius:8px;border:none;cursor:pointer;font-size:11px;font-weight:500;background:#f8f9fc;color:#858796;font-family:'DM Sans',sans-serif;">🔴 High</button>
-      <button class="pri-filter-btn" data-pri="medium" onclick="setPri(this)" style="padding:4px 10px;border-radius:8px;border:none;cursor:pointer;font-size:11px;font-weight:500;background:#f8f9fc;color:#858796;font-family:'DM Sans',sans-serif;">🟡 Medium</button>
-      <button class="pri-filter-btn" data-pri="low" onclick="setPri(this)" style="padding:4px 10px;border-radius:8px;border:none;cursor:pointer;font-size:11px;font-weight:500;background:#f8f9fc;color:#858796;font-family:'DM Sans',sans-serif;">🔵 Low</button>
-    </div>
-  </div>
-
-  <div style="flex:1;overflow:auto;padding:16px;">
-    <!-- Stats -->
-    <div class="stats-grid4">
-      <div class="stat-card"><div class="stat-icon" style="background:rgba(78,115,223,0.1)">🚚</div><div><div class="stat-label">Total Undelivered</div><div class="stat-value" style="color:#4e73df" id="statAll">0</div></div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:rgba(231,74,59,0.1)">🔴</div><div><div class="stat-label">High Priority</div><div class="stat-value" style="color:#e74a3b" id="statHigh">0</div></div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:rgba(246,194,62,0.1)">🟡</div><div><div class="stat-label">Medium Priority</div><div class="stat-value" style="color:#f6c23e" id="statMed">0</div></div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:rgba(54,185,204,0.1)">🔵</div><div><div class="stat-label">Low Priority</div><div class="stat-value" style="color:#36b9cc" id="statLow">0</div></div></div>
-    </div>
-
-    <div class="section-card">
-      <div class="section-header">
-        <span style="font-size:14px;font-weight:700;color:#3a3b45;">Orders</span>
-        <span class="section-count" id="visibleCount">0</span>
+<div class="ud-page">
+  <main class="ud-shell">
+    <section class="ud-hero">
+      <div>
+        <div class="ud-eyebrow">Fulfilment control</div>
+        <h1 class="ud-title">Dispatched, not delivered.</h1>
+        <p class="ud-subtitle">Every Shopify order tagged as dispatched that has not been marked Delivered. Return Received is recognized only from a dated <strong>Return Received (DATE)</strong> tag.</p>
       </div>
-      <div style="padding:8px 10px;display:flex;flex-direction:column;gap:6px;" id="undeliveredList">
+      <div class="ud-live">Live order state</div>
+    </section>
+
+    <section class="ud-stats">
+      <div class="ud-stat"><span>Dispatched, not delivered</span><strong id="statTotal">{{ order_details|length }}</strong></div>
+      <div class="ud-stat"><span>Visible action queue</span><strong id="statVisible">0</strong></div>
+      <div class="ud-stat attention"><span>Over 7 days</span><strong id="statAttention">{{ order_details|selectattr('dispatch_age_days','ge',8)|list|length }}</strong></div>
+      <div class="ud-stat return"><span>Return received</span><strong>{{ return_received_count }}</strong></div>
+    </section>
+
+    <section class="ud-controls" aria-label="Undelivered order filters">
+      <input id="udSearch" class="ud-search" type="search" placeholder="Search order, customer, city, tracking or status…" aria-label="Search dispatched orders">
+      <select id="udAge" class="ud-select" aria-label="Filter by days since dispatch">
+        <option value="all">Any dispatch age</option>
+        <option value="0-3">0–3 days</option>
+        <option value="4-7">4–7 days</option>
+        <option value="8+">8+ days</option>
+      </select>
+      <label class="ud-toggle"><input id="hideReturns" type="checkbox" checked> Hide Return Received</label>
+    </section>
+
+    <section class="ud-panel">
+      <div class="ud-panel-head"><h2>Orders requiring delivery follow-up</h2><span class="ud-count" id="visibleCount">0</span></div>
+      <div class="ud-list" id="undeliveredList">
         {% for order in order_details %}
-          {% set items  = order.line_items or [] %}
-          {% set item0  = items[0] if items else {} %}
-          {% set phone  = item0.get('phone') or order.customer_details.get('phone','') %}
-          {% set name   = item0.get('name')  or order.customer_details.get('name','') %}
-          {% set city   = item0.get('city')  or order.customer_details.get('city','') %}
-          {% set addr   = order.customer_details.get('address','') %}
-
-        <div class="undelivered-card" data-created="{{ order.created_at }}" data-status="{{ order.status }}">
-          <div class="uc-header" onclick="toggleCard(this)">
-            <svg class="uc-chevron" width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <span class="pri-badge js-pri-badge" style="background:#e8f8fb;color:#0a5c6e;"><span class="pri-dot" style="background:#36b9cc;"></span>Low</span>
-            <span class="js-days" style="font-size:20px;font-weight:800;color:#36b9cc;line-height:1;flex-shrink:0;">0<span style="font-size:9px;font-weight:500;color:#858796;"> d</span></span>
-            <div class="tb-avatar" data-name="{{ name }}" style="width:26px;height:26px;font-size:10px;"></div>
-            <div style="min-width:0;flex:1;">
-              <div style="font-size:12px;font-weight:600;color:#3a3b45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ name or '—' }}</div>
-              <div style="font-size:11px;color:#858796;">{{ city or '—' }} · 🛍 Shopify</div>
-            </div>
-            <div class="hide-mob" style="display:flex;flex-wrap:wrap;gap:3px;">
-              {% for tag in (order.tags or []) %}<span class="tag-badge" style="{{ tag_style(tag) }}">{{ tag }}</span>{% endfor %}
-            </div>
-            {{ status_badge(order.status) }}
-            <span class="hide-mob" style="font-size:13px;font-weight:700;color:#3a3b45;flex-shrink:0;">{{ order.total_price|float|int|format_number }} <span style="font-size:9px;color:#858796;">PKR</span></span>
-            <div style="display:flex;gap:4px;flex-shrink:0;" onclick="event.stopPropagation()">
-              {% if phone %}
-              <a href="tel:{{ phone }}" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1.5px solid #e3e6f0;color:#4e73df;text-decoration:none;font-size:11px;">📞</a>
-              <div class="tb-dd">
-                <button data-dd-trigger style="width:28px;height:28px;border-radius:6px;border:1.5px solid #e3e6f0;background:none;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;">💬</button>
-                <div class="tb-dd-menu">
-                  {% set wa = 'https://wa.me/' ~ phone|replace('+','') %}
-                  <a class="tb-dd-item" href="{{ wa }}?text={{ ('Hello ' ~ name ~ ', Our courier attempted delivery of order#' ~ order.order_id ~ ' from TheSleekSpace.com but the address was closed. Please let us know when to re-arrange delivery.')|urlencode }}" target="_blank">🏠 Address Closed</a>
-                  <a class="tb-dd-item" href="{{ wa }}?text={{ ('Hello ' ~ name ~ ', Logistics attempted delivery of order#' ~ order.order_id ~ ' but you refused. Let us know if you\'re still interested.')|urlencode }}" target="_blank">🚫 Refused Message</a>
-                </div>
+          {% set items = order.line_items or [] %}
+          {% set item0 = items[0] if items else {} %}
+          {% set customer = order.customer_details or {} %}
+          {% set phone = item0.get('phone') or customer.get('phone','') %}
+          {% set name = item0.get('name') or customer.get('name','') or 'Customer' %}
+          {% set city = item0.get('city') or customer.get('city','') %}
+          {% set tracking = item0.get('tracking_number') or '' %}
+        <article class="ud-card{% if order.return_received %} return-received{% endif %}"
+          data-return="{{ 'true' if order.return_received else 'false' }}"
+          data-age="{{ order.dispatch_age_days }}"
+          data-value="{{ order.total_price|float }}"
+          data-search="{{ order.order_id }} {{ name }} {{ city }} {{ phone }} {{ order.status }} {% for item in items %}{{ item.product_title }} {{ item.tracking_number }} {{ item.status }} {% endfor %}">
+          <div class="ud-card-main">
+            <div class="ud-age{% if order.dispatch_age_days >= 8 %} late{% endif %}"><strong>{{ order.dispatch_age_days }}</strong><span>days</span></div>
+            <div>
+              <a class="ud-order-link" href="{{ order.order_link or '#' }}" target="_blank">#{{ order.order_id }}</a>
+              <div class="ud-meta">Dispatched {{ order.dispatch_date }} · {{ order.status or 'Status pending' }}</div>
+              <div class="ud-pill-row">
+                {% if order.return_received %}<span class="ud-pill return">Return received {{ order.return_received_date }}</span>{% endif %}
+                {% if order.dispatch_age_days >= 8 %}<span class="ud-pill attention">Needs attention</span>{% endif %}
+                <span class="ud-pill">{{ items|length }} item{{ '' if items|length == 1 else 's' }}</span>
               </div>
-              {% endif %}
-              <div class="tb-dd">
-                <button data-dd-trigger class="btn btn-primary" style="font-size:11px;padding:5px 10px;">Mark ▾</button>
-                <div class="tb-dd-menu">
-                  <button class="tb-dd-item" onclick="markOrder('{{ order.id }}','Delivered')">✅ Delivered</button>
-                  <button class="tb-dd-item danger" onclick="markOrder('{{ order.id }}','Returned')">↩ Returned</button>
-                  <button class="tb-dd-item danger" onclick="markOrder('{{ order.id }}','Cancelled')">✕ Cancelled</button>
-                  <button class="tb-dd-item" onclick="markOrder('{{ order.id }}','Customer Wants to Receive Parcel')">📦 Wants to Receive</button>
-                </div>
+            </div>
+            <div class="ud-customer"><strong>{{ name }}</strong><span>{{ city or 'City unavailable' }}{% if phone %} · {{ phone }}{% endif %}</span></div>
+            <div class="ud-shipment"><strong>{{ tracking or 'Tracking unavailable' }}</strong><span>{{ item0.get('status') or order.status or 'Awaiting courier update' }}</span></div>
+            <div class="ud-value">
+              <div><strong>PKR {{ order.total_price|float|int|format_number }}</strong><span>ORDER VALUE</span></div>
+              <div class="ud-actions">
+                {% if tracking and tracking != 'N/A' %}<a class="ud-action" href="/track/{{ tracking }}" target="_blank">Track</a>{% endif %}
+                <button class="ud-action" type="button" onclick="toggleUndeliveredCard(this)">Details</button>
+                <button class="ud-action primary" type="button" onclick="markUndeliveredOrder(event,this,'{{ order.id }}','Delivered')">Delivered</button>
               </div>
             </div>
           </div>
-          <div class="uc-body">
-            {% if addr %}
-            <div style="font-size:11px;color:#858796;margin-bottom:8px;display:flex;align-items:flex-start;gap:4px;">
-              📍 <span>{{ addr }}</span>
-              {% if phone %}<span style="margin-left:8px;font-family:'DM Mono',monospace;font-size:10px;color:#4e73df;background:#dde4fb;padding:1px 6px;border-radius:4px;">{{ phone }}</span>{% endif %}
+          <div class="ud-details">
+            {% for item in items %}
+            <div class="ud-item">
+              {% if item.image_src and item.image_src != 'None' %}<img src="{{ item.image_src }}" alt="">{% else %}<div class="ud-image-empty">IMG</div>{% endif %}
+              <div><strong>{{ item.product_title }}</strong><span>Qty {{ item.quantity }} · {{ item.tracking_number or 'No tracking' }}</span></div>
+              {{ status_badge(item.status) }}
             </div>
-            {% endif %}
-            <div style="display:flex;flex-direction:column;gap:6px;">
-              {% for item in items %}
-              <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f8f9fc;border-radius:7px;border:1px solid #e3e6f0;">
-                <div style="width:36px;height:36px;border-radius:5px;flex-shrink:0;background:#e3e6f0;display:flex;align-items:center;justify-content:center;font-size:9px;color:#858796;overflow:hidden;">
-                  {% if item.image_src and item.image_src != 'None' %}<img src="{{ item.image_src }}" style="width:100%;height:100%;object-fit:cover;">{% else %}IMG{% endif %}
-                </div>
-                <div style="flex:1;min-width:0;">
-                  <div style="font-size:12px;font-weight:600;color:#3a3b45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ item.product_title }}</div>
-                  <div style="font-size:11px;color:#858796;">Qty: <strong>{{ item.quantity }}</strong></div>
-                </div>
-                {% if item.tracking_number and item.tracking_number != 'N/A' %}
-                <span style="font-family:'DM Mono',monospace;font-size:11px;color:#4e73df;background:#dde4fb;padding:2px 8px;border-radius:5px;flex-shrink:0;">{{ item.tracking_number }}</span>
-                {% endif %}
-                {{ status_badge(item.status) }}
-              </div>
-              {% endfor %}
-            </div>
+            {% endfor %}
           </div>
-        </div>
+        </article>
         {% endfor %}
-
-        <div id="emptyMsg" style="display:none;text-align:center;padding:40px 0;color:#858796;font-size:13px;">No orders in this priority range.</div>
+        <div class="ud-empty" id="emptyState"><strong>No matching dispatched orders</strong>Try changing the search, age, or Return Received filter.</div>
       </div>
-    </div>
-  </div>
+    </section>
+  </main>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-const PRI_CONFIG = {
-  high:   { bg:'#fce8e6', text:'#8b1a10', dot:'#e74a3b', label:'High'   },
-  medium: { bg:'#fef8e4', text:'#7a5c00', dot:'#f6c23e', label:'Medium' },
-  low:    { bg:'#e8f8fb', text:'#0a5c6e', dot:'#36b9cc', label:'Low'    },
-};
-function getPri(created, status) {
-  const days = Math.floor((Date.now() - new Date(created)) / 86400000);
-  const s = (status||'').toLowerCase();
-  if (days > 15 || s.includes('return') || s.includes('refus')) return 'high';
-  if (days > 7) return 'medium';
-  return 'low';
-}
-function toggleCard(h) {
-  const body = h.nextElementSibling;
-  h.querySelector('.uc-chevron').classList.toggle('open');
-  body.classList.toggle('open');
-}
-let curPri = 'all';
-function setPri(btn) {
-  document.querySelectorAll('.pri-filter-btn').forEach(b => { b.style.background='#f8f9fc'; b.style.color='#858796'; });
-  btn.style.background = '#4e73df'; btn.style.color = '#fff';
-  curPri = btn.dataset.pri; applyFilter();
-}
-function applyFilter() {
-  let v = 0;
-  document.querySelectorAll('#undeliveredList .undelivered-card').forEach(c => {
-    const show = curPri === 'all' || c.dataset.pri === curPri;
-    c.style.display = show ? '' : 'none'; if (show) v++;
+function applyUndeliveredFilters() {
+  const query = (document.getElementById('udSearch').value || '').trim().toLowerCase();
+  const ageFilter = document.getElementById('udAge').value;
+  const hideReturns = document.getElementById('hideReturns').checked;
+  let visible = 0;
+  document.querySelectorAll('#undeliveredList .ud-card').forEach(card => {
+    const age = Number(card.dataset.age || 0);
+    const ageMatches = ageFilter === 'all'
+      || (ageFilter === '0-3' && age <= 3)
+      || (ageFilter === '4-7' && age >= 4 && age <= 7)
+      || (ageFilter === '8+' && age >= 8);
+    const matches = (!query || card.dataset.search.toLowerCase().includes(query))
+      && ageMatches
+      && !(hideReturns && card.dataset.return === 'true');
+    card.hidden = !matches;
+    if (matches) visible += 1;
   });
-  document.getElementById('visibleCount').textContent = v;
-  document.getElementById('emptyMsg').style.display = v === 0 ? 'block' : 'none';
+  document.getElementById('visibleCount').textContent = visible;
+  document.getElementById('statVisible').textContent = visible;
+  document.getElementById('emptyState').style.display = visible ? 'none' : 'block';
 }
-document.addEventListener('DOMContentLoaded', function() {
-  let counts = {all:0,high:0,medium:0,low:0};
-  document.querySelectorAll('#undeliveredList .undelivered-card').forEach(card => {
-    const pri = getPri(card.dataset.created, card.dataset.status);
-    card.dataset.pri = pri; counts.all++; counts[pri]++;
-    const days = Math.max(0, Math.floor((Date.now()-new Date(card.dataset.created))/86400000));
-    const pc = PRI_CONFIG[pri];
-    const dEl = card.querySelector('.js-days');
-    const bEl = card.querySelector('.js-pri-badge');
-    if (dEl) { dEl.style.color = pc.dot; dEl.innerHTML = days+'<span style="font-size:9px;font-weight:500;color:#858796;"> d</span>'; }
-    if (bEl) { bEl.style.background=pc.bg; bEl.style.color=pc.text; bEl.innerHTML=`<span class="pri-dot" style="background:${pc.dot}"></span>${pc.label}`; }
-    card.addEventListener('mouseenter',()=>card.style.borderColor=pc.dot+'55');
-    card.addEventListener('mouseleave',()=>card.style.borderColor='#e3e6f0');
+
+function toggleUndeliveredCard(button) {
+  button.closest('.ud-card').classList.toggle('open');
+}
+
+function markUndeliveredOrder(event, button, id, tag) {
+  event.stopPropagation();
+  button.disabled = true;
+  fetch('/apply_tag', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({order_id:id,tag})
+  }).then(response => response.json()).then(data => {
+    if (!data.success) throw new Error(data.error || 'Could not update order');
+    button.closest('.ud-card').remove();
+    applyUndeliveredFilters();
+    showToast('Order marked Delivered');
+  }).catch(error => {
+    button.disabled = false;
+    showToast(error.message || 'Request failed');
   });
-  document.getElementById('statAll').textContent  = counts.all;
-  document.getElementById('statHigh').textContent = counts.high;
-  document.getElementById('statMed').textContent  = counts.medium;
-  document.getElementById('statLow').textContent  = counts.low;
-  document.getElementById('visibleCount').textContent = counts.all;
-  document.getElementById('highCount').textContent = counts.high + ' high';
-  applyFilter(); initAvatars();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('udSearch').addEventListener('input', applyUndeliveredFilters);
+  document.getElementById('udAge').addEventListener('change', applyUndeliveredFilters);
+  document.getElementById('hideReturns').addEventListener('change', applyUndeliveredFilters);
+  applyUndeliveredFilters();
 });
-function markOrder(id, tag) {
-  fetch('/apply_tag',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:id,tag})})
-    .then(r=>r.json()).then(d=>showToast(d.success?`Marked as "${tag}"`:'Failed'))
-    .catch(()=>showToast('Request failed'));
-}
 </script>
 {% endblock %}
