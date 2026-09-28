@@ -112,7 +112,8 @@ def test_undelivered_uses_dispatch_and_dated_return_received_tags():
     assert main.is_return_received_order(returned) is True
     assert main.build_undelivered_order_view([returned])[0]["return_received"] is True
 
-    assert main.is_dispatched_not_delivered_order({**dispatched, "tags": []}) is False
+    assert main.is_dispatched_not_delivered_order({**dispatched, "tags": []}) is True
+    assert main.is_dispatched_not_delivered_order({**dispatched, "tags": [], "status": "Booked"}) is False
     assert main.is_dispatched_not_delivered_order({**dispatched, "tags": dispatched["tags"] + ["Delivered (2026-09-29)"]}) is False
     assert main.is_dispatched_not_delivered_order({**dispatched, "status": "Delivered"}) is False
 
@@ -154,6 +155,7 @@ def test_delivery_followup_sections_and_days_are_classified_from_courier_statuse
         {**base, "id": 3, "order_id": "CALL", "status": "RETURN SUBMITTED", "line_items": [{"status": "RETURN SUBMITTED", "return_marked_at": "2026-09-25"}]},
         {**base, "id": 4, "order_id": "LEOPARDS", "status": "Return To Sender", "line_items": [{"status": "Return To Sender", "return_marked_at": "2026-09-24"}]},
         {**base, "id": 5, "order_id": "DIGIDOKAAN", "status": "Returned to Shipper", "line_items": [{"status": "Returned to Shipper", "return_marked_at": "2026-09-23"}]},
+        {**base, "id": 6, "order_id": "COURIER-DISPATCH", "status": "Dispatched to ISLAMABAD", "tags": [], "line_items": [{"status": "Dispatched to ISLAMABAD", "dispatched_at": "2026-09-18"}]},
     ])
     by_id = {row["order_id"]: row for row in rows}
     assert by_id["SIMPLE"]["followup_section"] == "undelivered"
@@ -161,6 +163,8 @@ def test_delivery_followup_sections_and_days_are_classified_from_courier_statuse
     assert by_id["CALL"]["followup_section"] == "return_missed"
     assert by_id["LEOPARDS"]["followup_section"] == "return_missed"
     assert by_id["DIGIDOKAAN"]["followup_section"] == "return_missed"
+    assert by_id["COURIER-DISPATCH"]["followup_section"] == "undelivered"
+    assert by_id["COURIER-DISPATCH"]["dispatch_date"] == "2026-09-18"
     assert by_id["CALL"]["order_age_days"] >= by_id["CALL"]["dispatch_age_days"]
     assert by_id["CALL"]["return_marked_days"] is not None
 
@@ -176,6 +180,8 @@ def test_return_courier_event_date_is_extracted_for_leopards_and_digidokaan():
     ]
     assert main.courier_return_marked_date("LE123", leopards) == "2026-09-25"
     assert main.courier_return_marked_date("22312345678901", digidokaan) == "2026-09-26"
+    assert main.courier_dispatched_date("LE123", leopards) == "2026-09-23"
+    assert main.courier_dispatched_date("22312345678901", digidokaan) == "2026-09-23"
 
 class FakeDraftOrder:
     instances = []

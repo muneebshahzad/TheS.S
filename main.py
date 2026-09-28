@@ -260,6 +260,18 @@ RETURN_COURIER_MARKERS = (
     "RTO DELIVERED",
 )
 
+DISPATCH_COURIER_MARKERS = (
+    "DISPATCHED",
+    "RIDER PICKED",
+    "PICKED FROM SHIPPER",
+    "PICKED UP",
+    "ARRIVED AT ORIGIN",
+    "IN TRANSIT",
+    "MOVED TO DESTINATION",
+    "ARRIVED AT DESTINATION",
+    "OUT FOR DELIVERY",
+)
+
 FAILED_DELIVERY_MARKERS = (
     "UNDELIVERED",
     "DELIVERY UNSUCCESSFUL",
@@ -307,7 +319,7 @@ def parse_courier_event_date(value):
     return None
 
 
-def courier_return_marked_date(tracking_number, data):
+def courier_tracking_events(tracking_number, data):
     events = []
     if is_leopards_tracking(tracking_number):
         packets = (data or {}).get("packet_list") or [] if isinstance(data, dict) else []
@@ -326,15 +338,42 @@ def courier_return_marked_date(tracking_number, data):
                     detail.get("TransactionDate") or "",
                 )
             )
-    matching_dates = [parse_courier_event_date(raw_date) for status, raw_date in events if status_contains_any([status], RETURN_COURIER_MARKERS)]
+    return events
+
+
+def courier_event_marked_date(tracking_number, data, markers, first=False):
+    events = courier_tracking_events(tracking_number, data)
+    matching_dates = [parse_courier_event_date(raw_date) for status, raw_date in events if status_contains_any([status], markers)]
     matching_dates = [value for value in matching_dates if value]
-    return max(matching_dates).isoformat() if matching_dates else ""
+    if not matching_dates:
+        return ""
+    return (min(matching_dates) if first else max(matching_dates)).isoformat()
+
+
+def courier_return_marked_date(tracking_number, data):
+    return courier_event_marked_date(tracking_number, data, RETURN_COURIER_MARKERS)
+
+
+def courier_dispatched_date(tracking_number, data):
+    return courier_event_marked_date(tracking_number, data, DISPATCH_COURIER_MARKERS, first=True)
+
+
+def order_has_dispatched_shipment(order):
+    order = order or {}
+    if has_order_tag(order.get("tags") or [], "Dispatched"):
+        return True
+    statuses = [order.get("status")]
+    for item in order.get("line_items") or []:
+        statuses.append(item.get("status"))
+        if item.get("dispatched_at"):
+            return True
+    return status_contains_any(statuses, DISPATCH_COURIER_MARKERS + FAILED_DELIVERY_MARKERS + RETURN_COURIER_MARKERS)
 
 
 def is_dispatched_not_delivered_order(order):
     order = order or {}
     tags = order.get("tags") or []
-    if not has_order_tag(tags, "Dispatched"):
+    if not order_has_dispatched_shipment(order):
         return False
     if has_order_tag(tags, "Delivered") or is_delivered_status(order.get("status")):
         return False
@@ -349,6 +388,15 @@ def build_undelivered_order_view(orders):
             continue
         order = dict(source_order)
         dispatch_date = dated_order_tag_date(order.get("tags"), "Dispatched")
+        if not dispatch_date:
+            courier_dispatch_dates = [
+                parse_courier_event_date(item.get("dispatched_at"))
+                for item in order.get("line_items") or []
+                if item.get("dispatched_at")
+            ]
+            courier_dispatch_dates = [value for value in courier_dispatch_dates if value]
+            if courier_dispatch_dates:
+                dispatch_date = min(courier_dispatch_dates).isoformat()
         try:
             dispatched_on = datetime.strptime(dispatch_date, "%Y-%m-%d").date() if dispatch_date else None
         except ValueError:
@@ -3537,6 +3585,7 @@ def summarize_tracking_result(tracking_number, data):
         return {
             "status": normalize_courier_status_label(final_status),
             "return_marked_at": courier_return_marked_date(tracking_number, data),
+            "dispatched_at": courier_dispatched_date(tracking_number, data),
             "name": packet.get("consignment_name_eng") or "",
             "address": packet.get("consignment_address") or "",
             "phone": packet.get("consignment_phone") or "",
@@ -3550,6 +3599,7 @@ def summarize_tracking_result(tracking_number, data):
         return {
             "status": status,
             "return_marked_at": courier_return_marked_date(tracking_number, data),
+            "dispatched_at": courier_dispatched_date(tracking_number, data),
             "name": first.get("ConsigneeName") or "",
             "address": first.get("ConsigneeAddress") or "",
             "phone": first.get("ContactNo") or "",
@@ -3595,6 +3645,7 @@ async def process_line_item(session_obj, line_item, fulfillments):
                         "status": summary["status"],
                         "tracking_observed": tracking_data_is_valid(tracking_number, data),
                         "return_marked_at": summary.get("return_marked_at") or "",
+                        "dispatched_at": summary.get("dispatched_at") or "",
                         "quantity": quantity,
                         "name": summary["name"],
                         "address": summary["address"],
@@ -3724,6 +3775,8 @@ async def process_order(session_obj, order):
                     "courier_name": info.get("courier_name", ""),
                     "status": info["status"],
                     "tracking_observed": info.get("tracking_observed", False),
+                    "return_marked_at": info.get("return_marked_at", ""),
+                    "dispatched_at": info.get("dispatched_at", ""),
                     "name": info.get("name", ""),
                     "address": info.get("address", ""),
                     "city": info.get("city", ""),
