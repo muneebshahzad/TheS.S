@@ -142,6 +142,11 @@ def test_undelivered_ui_has_two_sections_contact_workflow_and_folded_returns(mon
         assert "Contacted" in html
         assert ">View</a>" in html
         assert "Lamp" in html
+        assert "LE123" in html
+        assert 'id="udSort"' in html
+        assert "Latest first" in html
+        assert "Oldest first" in html
+        assert "sortUndeliveredCards" in html
         assert 'data-section="return_missed"' in html
         assert 'data-section="return_missed" open' not in html
 
