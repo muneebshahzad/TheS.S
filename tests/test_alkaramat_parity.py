@@ -110,36 +110,40 @@ def test_undelivered_uses_dispatch_and_dated_return_received_tags():
     assert main.is_return_received_order({**dispatched, "tags": dispatched["tags"] + ["Return Received"]}) is False
     returned = {**dispatched, "tags": dispatched["tags"] + ["Return Received (2026-09-28)"]}
     assert main.is_return_received_order(returned) is True
-    assert main.build_undelivered_order_view([returned])[0]["return_received"] is True
+    assert main.build_undelivered_order_view([returned]) == []
 
     assert main.is_dispatched_not_delivered_order({**dispatched, "tags": []}) is True
     assert main.is_dispatched_not_delivered_order({**dispatched, "tags": [], "status": "Booked"}) is False
     assert main.is_dispatched_not_delivered_order({**dispatched, "tags": dispatched["tags"] + ["Delivered (2026-09-29)"]}) is False
     assert main.is_dispatched_not_delivered_order({**dispatched, "status": "Delivered"}) is False
+    assert main.is_dispatched_not_delivered_order({**dispatched, "cancelled_at": "2026-09-29T10:00:00"}) is False
 
 
-def test_undelivered_ui_has_return_filter_in_desktop_and_admin_embed(monkeypatch):
+def test_undelivered_ui_has_two_sections_contact_workflow_and_folded_returns(monkeypatch):
     order = {
         "id": 1,
         "order_id": "PK1",
         "created_at": "2026-09-20T10:00:00",
-        "status": "In Transit",
-        "tags": ["Dispatched (2026-09-21)", "Return Received (2026-09-28)"],
+        "status": "Delivery Unsuccessful",
+        "tags": ["Dispatched (2026-09-21)"],
         "customer_details": {},
-        "line_items": [],
+        "line_items": [{"product_title": "Lamp", "tracking_number": "LE123", "status": "Delivery Unsuccessful", "image_src": "https://example.com/lamp.jpg"}],
         "total_price": 1000,
     }
     monkeypatch.setattr(main, "order_details", [order])
+    monkeypatch.setattr(main, "load_delivery_followup_contacts", lambda _ids: {})
     client = main.app.test_client()
     for url in ("/undelivered", "/undelivered?embedded=1"):
         html = client.get(url).get_data(as_text=True)
         assert "Delivery follow-up" in html
-        assert 'id="hideReturns"' in html
-        assert 'data-return="true"' in html
-        assert "Return received 2026-09-28" in html
+        assert 'id="hideReturns"' not in html
         assert "Undelivered" in html
-        assert "Failed Delivery" in html
         assert "Return Missed" in html
+        assert "Contacted" in html
+        assert ">View</a>" in html
+        assert "Lamp" in html
+        assert 'data-section="return_missed"' in html
+        assert 'data-section="return_missed" open' not in html
 
 
 def test_delivery_followup_sections_and_days_are_classified_from_courier_statuses():
@@ -159,8 +163,10 @@ def test_delivery_followup_sections_and_days_are_classified_from_courier_statuse
     ])
     by_id = {row["order_id"]: row for row in rows}
     assert by_id["SIMPLE"]["followup_section"] == "undelivered"
-    assert by_id["FAILED"]["followup_section"] == "failed_delivery"
+    assert by_id["FAILED"]["followup_section"] == "undelivered"
+    assert by_id["FAILED"]["needs_attention"] is True
     assert by_id["CALL"]["followup_section"] == "return_missed"
+    assert by_id["CALL"]["needs_attention"] is True
     assert by_id["LEOPARDS"]["followup_section"] == "return_missed"
     assert by_id["DIGIDOKAAN"]["followup_section"] == "return_missed"
     assert by_id["COURIER-DISPATCH"]["followup_section"] == "undelivered"
@@ -182,6 +188,23 @@ def test_return_courier_event_date_is_extracted_for_leopards_and_digidokaan():
     assert main.courier_return_marked_date("22312345678901", digidokaan) == "2026-09-26"
     assert main.courier_dispatched_date("LE123", leopards) == "2026-09-23"
     assert main.courier_dispatched_date("22312345678901", digidokaan) == "2026-09-23"
+
+
+def test_delivery_contact_endpoint_validates_and_saves_history(monkeypatch):
+    monkeypatch.setattr(main, "add_delivery_followup_contact", lambda order_id, outcome, remarks: {
+        "id": 9, "shopify_order_id": order_id, "outcome": outcome,
+        "remarks": remarks, "created_at": "2026-09-29T10:30:00+05:00",
+    })
+    client = main.app.test_client()
+    invalid = client.post("/undelivered/contact", json={"order_id": "1", "outcome": "Unknown"})
+    assert invalid.status_code == 400
+    saved = client.post("/undelivered/contact", json={
+        "order_id": "1",
+        "outcome": "WhatsApp - Awaiting Reply",
+        "remarks": "Customer messaged",
+    })
+    assert saved.status_code == 200
+    assert saved.get_json()["contact"]["remarks"] == "Customer messaged"
 
 class FakeDraftOrder:
     instances = []

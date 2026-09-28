@@ -106,6 +106,24 @@ def _ensure_employee_passkeys_table(cur):
     )
 
 
+def _ensure_delivery_followup_contacts_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS delivery_followup_contacts (
+            id BIGSERIAL PRIMARY KEY,
+            shopify_order_id TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            remarks TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS delivery_followup_contacts_order_idx "
+        "ON delivery_followup_contacts (shopify_order_id, created_at DESC)"
+    )
+
+
 def get_conn():
     url = (
         os.getenv("DATABASE_URL", "")
@@ -160,6 +178,7 @@ def init_db():
                 _ensure_aghaje_order_item_cost_overrides_table(cur)
                 _ensure_admin_passkeys_table(cur)
                 _ensure_employee_passkeys_table(cur)
+                _ensure_delivery_followup_contacts_table(cur)
             conn.commit()
         _set_last_db_error("")
         print("DB initialized.")
@@ -327,6 +346,55 @@ def save_employee_passkey(credential_id, public_key, sign_count, device_name):
 
 def update_employee_passkey_usage(credential_id, sign_count):
     return _update_passkey_usage("employee_passkeys", _ensure_employee_passkeys_table, credential_id, sign_count)
+
+
+def load_delivery_followup_contacts(order_ids=None):
+    try:
+        normalized_ids = [str(value) for value in (order_ids or []) if value is not None]
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                _ensure_delivery_followup_contacts_table(cur)
+                if normalized_ids:
+                    cur.execute(
+                        """SELECT id, shopify_order_id, outcome, remarks, created_at
+                           FROM delivery_followup_contacts
+                           WHERE shopify_order_id = ANY(%s)
+                           ORDER BY created_at DESC, id DESC""",
+                        (normalized_ids,),
+                    )
+                else:
+                    return {}
+                grouped = {}
+                for row in cur.fetchall():
+                    grouped.setdefault(row["shopify_order_id"], []).append(dict(row))
+            conn.commit()
+        _set_last_db_error("")
+        return grouped
+    except Exception as error:
+        _set_last_db_error(str(error))
+        print(f"DB load delivery follow-up contacts error: {error}")
+        return {}
+
+
+def add_delivery_followup_contact(order_id: str, outcome: str, remarks: str = ""):
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                _ensure_delivery_followup_contacts_table(cur)
+                cur.execute(
+                    """INSERT INTO delivery_followup_contacts (shopify_order_id, outcome, remarks)
+                       VALUES (%s, %s, %s)
+                       RETURNING id, shopify_order_id, outcome, remarks, created_at""",
+                    (str(order_id), outcome, remarks),
+                )
+                row = dict(cur.fetchone())
+            conn.commit()
+        _set_last_db_error("")
+        return row
+    except Exception as error:
+        _set_last_db_error(str(error))
+        print(f"DB add delivery follow-up contact error: {error}")
+        return None
 
 
 def load_aghaje_order_overrides() -> dict:

@@ -30,11 +30,13 @@ from flask import (
 from markupsafe import Markup
 
 from db import (
+    add_delivery_followup_contact,
     delete_order_status,
     get_app_setting,
     init_db,
     load_admin_passkeys,
     load_employee_passkeys,
+    load_delivery_followup_contacts,
     load_aghaje_item_cost_overrides,
     load_aghaje_order_item_cost_overrides,
     load_aghaje_order_overrides,
@@ -288,6 +290,15 @@ FAILED_DELIVERY_MARKERS = (
     "UNTRACEABLE",
 )
 
+DELIVERY_CONTACT_OUTCOMES = (
+    "WhatsApp - Awaiting Reply",
+    "WhatsApp - Customer Interested / Fake Status",
+    "WhatsApp - Cancelled",
+    "Call - No Response",
+    "Call - Customer Interested / Fake Status",
+    "Call - Cancelled",
+)
+
 
 def status_contains_any(statuses, markers):
     combined = " | ".join(normalize_courier_status_label(value).upper() for value in statuses or [] if value)
@@ -375,6 +386,8 @@ def is_dispatched_not_delivered_order(order):
     tags = order.get("tags") or []
     if not order_has_dispatched_shipment(order):
         return False
+    if order.get("cancelled_at") or has_order_tag(tags, "Cancelled"):
+        return False
     if has_order_tag(tags, "Delivered") or is_delivered_status(order.get("status")):
         return False
     return True
@@ -410,6 +423,8 @@ def build_undelivered_order_view(orders):
         order["order_age_days"] = max((today - order_created).days, 0)
         order["return_received"] = is_return_received_order(order)
         order["return_received_date"] = dated_order_tag_date(order.get("tags"), "Return Received")
+        if order["return_received"]:
+            continue
         statuses = [order.get("status")] + [item.get("status") for item in order.get("line_items") or []]
         return_dates = [
             parse_courier_event_date(item.get("return_marked_at"))
@@ -420,11 +435,12 @@ def build_undelivered_order_view(orders):
         return_marked_on = min(return_dates) if return_dates else None
         order["return_marked_date"] = return_marked_on.isoformat() if return_marked_on else ""
         order["return_marked_days"] = max((today - return_marked_on).days, 0) if return_marked_on else None
-        if status_contains_any(statuses, RETURN_COURIER_MARKERS) and not order["return_received"]:
+        order["needs_attention"] = status_contains_any(statuses, FAILED_DELIVERY_MARKERS + RETURN_COURIER_MARKERS)
+        if status_contains_any(statuses, RETURN_COURIER_MARKERS):
             order["followup_section"] = "return_missed"
-        elif status_contains_any(statuses, FAILED_DELIVERY_MARKERS):
-            order["followup_section"] = "failed_delivery"
         elif order["order_age_days"] >= 5:
+            order["followup_section"] = "undelivered"
+        elif order["needs_attention"]:
             order["followup_section"] = "undelivered"
         else:
             continue
@@ -5638,32 +5654,55 @@ def pending_orders_mobile():
 @app.route("/undelivered")
 def undelivered():
     undelivered_orders = build_undelivered_order_view(order_details)
+    contact_history = load_delivery_followup_contacts([order.get("id") for order in undelivered_orders])
+    for order in undelivered_orders:
+        order["contact_history"] = contact_history.get(str(order.get("id")), [])
+        order["latest_contact"] = order["contact_history"][0] if order["contact_history"] else None
+    return_orders = [order for order in undelivered_orders if order.get("followup_section") == "return_missed"]
     sections = [
         {
             "key": "undelivered",
             "title": "Undelivered",
-            "description": "Dispatched orders that are still not delivered 5+ days after order creation.",
+            "description": "Dispatched orders still awaiting delivery; failed attempts are highlighted red.",
             "orders": [order for order in undelivered_orders if order.get("followup_section") == "undelivered"],
-        },
-        {
-            "key": "failed_delivery",
-            "title": "Failed Delivery",
-            "description": "Refused, unsuccessful, undelivered, or other failed courier attempts.",
-            "orders": [order for order in undelivered_orders if order.get("followup_section") == "failed_delivery"],
         },
         {
             "key": "return_missed",
             "title": "Return Missed",
             "description": "Courier return activity without a dated Return Received tag.",
-            "orders": [order for order in undelivered_orders if order.get("followup_section") == "return_missed"],
+            "orders": return_orders,
+            "return_marked_count": sum(1 for order in return_orders if order.get("return_marked_date")),
         },
     ]
     return render_template(
         "undelivered.html",
         order_details=undelivered_orders,
         sections=sections,
-        return_received_count=sum(1 for order in undelivered_orders if order.get("return_received")),
+        contact_outcomes=DELIVERY_CONTACT_OUTCOMES,
     )
+
+
+@app.route("/undelivered/contact", methods=["POST"])
+def save_undelivered_contact():
+    data = request.get_json(silent=True) or {}
+    order_id = str(data.get("order_id") or "").strip()
+    outcome = str(data.get("outcome") or "").strip()
+    remarks = str(data.get("remarks") or "").strip()[:1000]
+    if not order_id or outcome not in DELIVERY_CONTACT_OUTCOMES:
+        return jsonify({"success": False, "error": "Select a valid contact outcome."}), 400
+    record = add_delivery_followup_contact(order_id, outcome, remarks)
+    if not record:
+        return jsonify({"success": False, "error": "Could not save the contact record."}), 500
+    created_at = record.get("created_at")
+    return jsonify({
+        "success": True,
+        "contact": {
+            "id": record.get("id"),
+            "outcome": record.get("outcome"),
+            "remarks": record.get("remarks") or "",
+            "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at or ""),
+        },
+    })
 
 
 @app.route("/shopify/protected-data/status")

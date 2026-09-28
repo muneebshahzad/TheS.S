@@ -1,234 +1,93 @@
 {% extends 'base.html' %}
-{% block title %}The Sleek Space – Dispatched Orders{% endblock %}
+{% block title %}The Sleek Space – Delivery Follow-up{% endblock %}
 
 {% block content %}
 <style>
-  #main { min-width:0; }
-  .ud-page { height:100%; min-width:0; overflow:auto; background:#f5f7f4; color:#19342e; }
-  .ud-shell { width:min(1500px,100%); margin:0 auto; padding:18px 24px 30px; }
-  .ud-hero { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:14px; }
-  .ud-title { margin:0; font-size:20px; line-height:1.2; color:#19342e; }
-  .ud-subtitle { margin-top:3px; color:#62716b; font-size:11px; line-height:1.4; }
-  .ud-live { flex:0 0 auto; border:1px solid #cadbce; border-radius:999px; background:#edf4ee; padding:8px 13px; color:#315b4d; font-size:11px; font-weight:700; }
-  .ud-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:14px; }
-  .ud-stat { min-width:0; padding:16px; border:1px solid #d8e1db; border-radius:14px; background:#fff; }
-  .ud-stat span { display:block; color:#62716b; font-size:11px; }
-  .ud-stat strong { display:block; margin-top:8px; color:#19342e; font-size:24px; line-height:1; }
-  .ud-stat.return strong { color:#9a6711; }
-  .ud-stat.attention strong { color:#a43b36; }
-  .ud-controls { display:grid; grid-template-columns:minmax(220px,1fr) 180px auto; gap:10px; align-items:center; padding:14px; border:1px solid #d8e1db; border-radius:14px; background:#fff; margin-bottom:14px; }
-  .ud-search,.ud-select { width:100%; height:42px; border:1px solid #d8e1db; border-radius:9px; background:#fff; padding:0 12px; color:#19342e; font:12px 'DM Sans',sans-serif; outline:none; }
-  .ud-search:focus,.ud-select:focus { border-color:#6f9888; box-shadow:0 0 0 3px rgba(49,91,77,.1); }
-  .ud-toggle { min-height:42px; display:flex; align-items:center; gap:9px; padding:0 12px; border:1px solid #d8e1db; border-radius:9px; color:#315b4d; font-size:12px; font-weight:700; white-space:nowrap; cursor:pointer; }
-  .ud-toggle input { width:17px; height:17px; accent-color:#315b4d; }
-  .ud-panel { border:1px solid #d8e1db; border-radius:14px; background:#fff; overflow:hidden; margin-bottom:14px; }
-  .ud-panel-head { display:flex; align-items:center; gap:9px; padding:13px 17px; border-bottom:1px solid #e4ebe6; }
-  .ud-panel-head h2 { margin:0; font-size:14px; }
-  .ud-panel-copy { flex:1; min-width:0; }
-  .ud-panel-copy p { margin:2px 0 0; color:#7d8984; font-size:10px; }
-  .ud-count { min-width:25px; padding:2px 8px; border-radius:999px; background:#edf4ee; color:#315b4d; font-size:11px; font-weight:800; text-align:center; }
-  .ud-list { display:flex; flex-direction:column; gap:10px; padding:12px; }
-  .ud-card { border:1px solid #dfe6e1; border-radius:12px; background:#fff; overflow:hidden; transition:.15s ease; }
-  .ud-card:hover { border-color:#a9bfb4; box-shadow:0 7px 20px rgba(25,52,46,.07); }
-  .ud-card.return-received { background:#fffdf7; border-color:#ead8ad; }
-  .ud-card-main { display:grid; grid-template-columns:minmax(260px,1.25fr) minmax(150px,.7fr) minmax(180px,.9fr) auto; gap:14px; align-items:center; padding:14px; }
-  .ud-timers { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
-  .ud-timer { min-width:92px; padding:6px 8px; border:1px solid #dfe6e1; border-radius:8px; background:#f8faf8; }
-  .ud-timer span { display:block; color:#7d8984; font-size:8px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
-  .ud-timer strong { display:block; margin-top:2px; color:#315b4d; font-size:15px; }
-  .ud-timer.return strong { color:#a43b36; }
-  .ud-order-link { color:#315b4d; font-size:14px; font-weight:800; text-decoration:none; }
-  .ud-order-link:hover { text-decoration:underline; }
-  .ud-meta { margin-top:4px; color:#7d8984; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .ud-pill-row { display:flex; gap:5px; flex-wrap:wrap; margin-top:7px; }
-  .ud-pill { display:inline-flex; align-items:center; gap:4px; padding:4px 8px; border-radius:999px; background:#edf1ef; color:#40564e; font-size:10px; font-weight:750; }
-  .ud-pill.return { background:#fff0cd; color:#855b11; }
-  .ud-pill.attention { background:#fde9e7; color:#a43b36; }
-  .ud-customer strong,.ud-shipment strong { display:block; color:#293c36; font-size:12px; }
-  .ud-customer span,.ud-shipment span { display:block; margin-top:3px; color:#7d8984; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .ud-value { text-align:right; white-space:nowrap; }
-  .ud-value strong { display:block; font-size:15px; }
-  .ud-value span { color:#7d8984; font-size:9px; }
-  .ud-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; margin-top:8px; }
-  .ud-action { min-height:32px; border:1px solid #d8e1db; border-radius:8px; background:#fff; padding:6px 9px; color:#315b4d; font:700 10px 'DM Sans',sans-serif; cursor:pointer; text-decoration:none; }
-  .ud-action.primary { border-color:#315b4d; background:#315b4d; color:#fff; }
-  .ud-details { display:none; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:8px; padding:0 14px 14px; }
-  .ud-card.open .ud-details { display:grid; }
-  .ud-item { display:grid; grid-template-columns:42px minmax(0,1fr) auto; gap:9px; align-items:center; padding:8px; border:1px solid #e4ebe6; border-radius:9px; background:#f8faf8; }
-  .ud-item img,.ud-image-empty { width:42px; height:42px; border-radius:7px; object-fit:cover; background:#e9eeeb; display:grid; place-items:center; font-size:10px; color:#7d8984; }
-  .ud-item strong { display:block; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .ud-item span { display:block; margin-top:2px; color:#7d8984; font-size:10px; }
-  .ud-empty { display:none; padding:54px 20px; text-align:center; color:#62716b; }
-  .ud-empty strong { display:block; color:#19342e; font-size:16px; margin-bottom:4px; }
-  @media (max-width:1050px) {
-    .ud-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
-    .ud-card-main { grid-template-columns:minmax(0,1fr) minmax(150px,.7fr) auto; }
-    .ud-shipment { display:none; }
-  }
-  @media (max-width:700px) {
-    .ud-shell { padding:14px 12px 80px; }
-    .ud-hero { align-items:flex-start; }
-    .ud-stats { gap:8px; }
-    .ud-stat { padding:13px; }
-    .ud-stat strong { font-size:20px; }
-    .ud-controls { grid-template-columns:1fr; padding:10px; }
-    .ud-card-main { grid-template-columns:minmax(0,1fr); gap:10px; padding:12px; }
-    .ud-customer { grid-column:1; }
-    .ud-value { grid-column:1; display:flex; align-items:center; justify-content:space-between; padding-top:9px; border-top:1px solid #e4ebe6; text-align:left; }
-    .ud-actions { margin:0; }
-    .ud-details { padding:0 12px 12px; grid-template-columns:1fr; }
-  }
+  #main{min-width:0}.ud-page{height:100%;min-width:0;overflow:auto;background:#f5f7f4;color:#19342e}.ud-page *{box-sizing:border-box}.ud-shell{width:min(1500px,100%);margin:auto;padding:16px 22px 32px}
+  .ud-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.ud-title{margin:0;font-size:19px;line-height:1.2}.ud-live{border:1px solid #cadbce;border-radius:999px;background:#edf4ee;padding:7px 11px;color:#315b4d;font-size:10px;font-weight:800}
+  .ud-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px}.ud-stat{padding:13px 15px;border:1px solid #d8e1db;border-radius:12px;background:#fff}.ud-stat span{font-size:10px;color:#6d7c76}.ud-stat strong{display:block;margin-top:4px;font-size:22px}.ud-stat.return strong{color:#a43b36}
+  .ud-controls{display:grid;grid-template-columns:minmax(220px,1fr) 180px;gap:9px;padding:10px;border:1px solid #d8e1db;border-radius:12px;background:#fff;margin-bottom:12px}.ud-input{width:100%;height:40px;border:1px solid #d8e1db;border-radius:8px;background:#fff;padding:0 11px;color:#19342e;font:12px 'DM Sans',sans-serif;outline:none}.ud-input:focus{border-color:#6f9888;box-shadow:0 0 0 3px rgba(49,91,77,.1)}
+  .ud-panel{display:block;border:1px solid #d8e1db;border-radius:13px;background:#fff;overflow:hidden;margin-bottom:12px}.ud-panel>summary{list-style:none;display:flex;align-items:center;gap:12px;padding:12px 15px;cursor:pointer;border-bottom:1px solid transparent}.ud-panel>summary::-webkit-details-marker{display:none}.ud-panel[open]>summary{border-bottom-color:#e4ebe6}.ud-chevron{font-size:12px;color:#7d8984;transition:transform .15s}.ud-panel[open] .ud-chevron{transform:rotate(90deg)}.ud-panel-title{flex:1;min-width:0}.ud-panel-title h2{display:inline;margin:0;font-size:14px}.ud-panel-title p{display:inline;margin-left:8px;color:#7d8984;font-size:10px}.ud-counterbar{display:flex;gap:7px;flex-wrap:wrap}.ud-counter{padding:4px 9px;border-radius:999px;background:#edf4ee;color:#315b4d;font-size:10px;font-weight:800}.ud-counter.red{background:#fde9e7;color:#a43b36}
+  .ud-list{display:flex;flex-direction:column;gap:9px;padding:10px}.ud-card{border:1px solid #dfe6e1;border-radius:11px;background:#fff;overflow:hidden}.ud-card.attention{border-left:4px solid #d74c45}.ud-card-main{display:grid;grid-template-columns:minmax(270px,1.2fr) minmax(220px,1fr) minmax(155px,.65fr) auto;gap:13px;align-items:center;padding:12px}.ud-card.attention .ud-status{color:#a43b36;font-weight:800}
+  .ud-order{display:flex;align-items:center;gap:9px;min-width:0}.ud-thumb{width:58px;height:58px;flex:0 0 58px;border-radius:9px;background:#edf1ef;object-fit:cover}.ud-thumb-empty{display:grid;place-items:center;color:#7d8984;font-size:18px}.ud-order-copy{min-width:0}.ud-order-link{color:#315b4d;font-size:14px;font-weight:850;text-decoration:none}.ud-product{margin-top:3px;font-size:11px;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ud-product-more{color:#7d8984;font-weight:500}.ud-status{margin-top:3px;color:#6d7c76;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ud-timers{display:flex;gap:6px;flex-wrap:wrap}.ud-timer{min-width:90px;padding:6px 8px;border:1px solid #dfe6e1;border-radius:8px;background:#f8faf8}.ud-timer span{display:block;color:#7d8984;font-size:8px;font-weight:800;text-transform:uppercase}.ud-timer strong{display:block;margin-top:1px;font-size:14px}.ud-timer.return strong{color:#a43b36}
+  .ud-person strong{display:block;font-size:11px}.ud-person span{display:block;margin-top:3px;color:#7d8984;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ud-contact-last{margin-top:5px;padding:4px 7px;border-radius:7px;background:#f3f6f4;font-size:9px;color:#52635c}.ud-contact-last b{color:#315b4d}
+  .ud-side{text-align:right;white-space:nowrap}.ud-value{font-size:14px;font-weight:850}.ud-value-label{display:block;color:#7d8984;font-size:8px}.ud-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:7px}.ud-action{min-height:32px;border:1px solid #cad8d0;border-radius:8px;background:#fff;padding:6px 10px;color:#315b4d;font:800 10px 'DM Sans',sans-serif;cursor:pointer;text-decoration:none}.ud-action.contact{border-color:#315b4d;background:#315b4d;color:#fff}.ud-action[aria-disabled=true]{opacity:.45;pointer-events:none}
+  .ud-history{border-top:1px solid #edf1ee;padding:8px 12px;background:#fafbfa;font-size:10px;color:#64736d}.ud-history summary{cursor:pointer;font-weight:800;color:#315b4d}.ud-history-row{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(220px,1fr) auto;gap:10px;padding-top:7px}.ud-history-row span:last-child{color:#7d8984;text-align:right}.ud-empty{display:none;padding:34px 18px;text-align:center;color:#6d7c76;font-size:11px}
+  .ud-dialog{width:min(440px,calc(100% - 24px));border:0;border-radius:15px;padding:0;box-shadow:0 22px 70px rgba(15,34,28,.28)}.ud-dialog::backdrop{background:rgba(20,34,30,.5)}.ud-dialog-head{display:flex;align-items:center;justify-content:space-between;padding:15px 17px;border-bottom:1px solid #e4ebe6}.ud-dialog-head h3{margin:0;font-size:15px}.ud-close{border:0;background:none;font-size:22px;cursor:pointer;color:#6d7c76}.ud-form{padding:15px 17px}.ud-options{display:grid;gap:7px}.ud-option{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid #dfe6e1;border-radius:9px;font-size:11px;cursor:pointer}.ud-option:has(input:checked){border-color:#315b4d;background:#edf4ee}.ud-option input{accent-color:#315b4d}.ud-remarks{width:100%;min-height:75px;margin-top:11px;resize:vertical;border:1px solid #d8e1db;border-radius:9px;padding:9px;font:11px 'DM Sans',sans-serif}.ud-save{width:100%;margin-top:11px;border:0;border-radius:9px;background:#315b4d;color:#fff;padding:11px;font:800 11px 'DM Sans',sans-serif;cursor:pointer}
+  @media(max-width:1200px){.ud-card-main{grid-template-columns:minmax(0,1fr) auto}.ud-timers{grid-column:1}.ud-person{display:none}.ud-side{grid-column:2;grid-row:1/3;align-self:center}}
+  @media(max-width:700px){.ud-shell{padding:12px 10px 78px}.ud-stats{gap:7px}.ud-stat{padding:11px}.ud-controls{grid-template-columns:1fr}.ud-panel>summary{align-items:flex-start;flex-wrap:wrap}.ud-panel-title p{display:block;margin:2px 0 0}.ud-counterbar{width:100%;padding-left:24px}.ud-card-main{grid-template-columns:1fr;gap:10px;padding:10px}.ud-timers,.ud-person,.ud-side{grid-column:1;grid-row:auto}.ud-person{display:block}.ud-side{text-align:left;padding-top:8px;border-top:1px solid #e4ebe6}.ud-actions{justify-content:flex-start}.ud-history-row{grid-template-columns:1fr;gap:2px}.ud-history-row span:last-child{text-align:left}.ud-thumb{width:54px;height:54px;flex-basis:54px}}
 </style>
 
-<div class="ud-page">
-  <main class="ud-shell">
-    <section class="ud-hero">
-      <div>
-        <h1 class="ud-title">Delivery follow-up</h1>
-        <p class="ud-subtitle">Dispatched Shopify orders not yet marked Delivered.</p>
-      </div>
-      <div class="ud-live">Live order state</div>
-    </section>
+<div class="ud-page"><main class="ud-shell">
+  <div class="ud-top"><h1 class="ud-title">Delivery follow-up</h1><span class="ud-live">Hourly tracking</span></div>
+  <div class="ud-stats">
+    <div class="ud-stat"><span>Undelivered</span><strong>{{ sections[0].orders|length }}</strong></div>
+    <div class="ud-stat return"><span>Return Missed</span><strong>{{ sections[1].orders|length }}</strong></div>
+  </div>
+  <div class="ud-controls">
+    <input id="udSearch" class="ud-input" type="search" placeholder="Search order, customer, product, city, tracking or status…">
+    <select id="udAge" class="ud-input"><option value="all">Any dispatch age</option><option value="0-3">0–3 days</option><option value="4-7">4–7 days</option><option value="8+">8+ days</option></select>
+  </div>
 
-    <section class="ud-stats">
-      <div class="ud-stat"><span>Undelivered 5+ days</span><strong>{{ sections[0].orders|length }}</strong></div>
-      <div class="ud-stat attention"><span>Failed delivery</span><strong>{{ sections[1].orders|length }}</strong></div>
-      <div class="ud-stat attention"><span>Return missed</span><strong>{{ sections[2].orders|length }}</strong></div>
-      <div class="ud-stat return"><span>Return received</span><strong>{{ return_received_count }}</strong></div>
-    </section>
-
-    <section class="ud-controls" aria-label="Undelivered order filters">
-      <input id="udSearch" class="ud-search" type="search" placeholder="Search order, customer, city, tracking or status…" aria-label="Search dispatched orders">
-      <select id="udAge" class="ud-select" aria-label="Filter by days since dispatch">
-        <option value="all">Any dispatch age</option>
-        <option value="0-3">0–3 days</option>
-        <option value="4-7">4–7 days</option>
-        <option value="8+">8+ days</option>
-      </select>
-      <label class="ud-toggle"><input id="hideReturns" type="checkbox" checked> Hide Return Received</label>
-    </section>
-
-    <div id="undeliveredList">
-      {% for section in sections %}
-      <section class="ud-panel ud-section" data-section="{{ section.key }}">
-        <div class="ud-panel-head">
-          <div class="ud-panel-copy"><h2>{{ section.title }}</h2><p>{{ section.description }}</p></div>
-          <span class="ud-count js-section-count">{{ section.orders|length }}</span>
+  <div id="undeliveredList">
+  {% for section in sections %}
+    <details class="ud-panel ud-section" data-section="{{ section.key }}" {% if section.key == 'undelivered' %}open{% endif %}>
+      <summary>
+        <span class="ud-chevron">▶</span>
+        <div class="ud-panel-title"><h2>{{ section.title }}</h2><p>{{ section.description }}</p></div>
+        <div class="ud-counterbar">
+          <span class="ud-counter{% if section.key == 'return_missed' %} red{% endif %}">{{ section.title }} <b class="js-section-count">{{ section.orders|length }}</b></span>
+          {% if section.key == 'return_missed' %}<span class="ud-counter red">Return Marked <b class="js-return-count">{{ section.return_marked_count }}</b></span>{% endif %}
         </div>
-        <div class="ud-list">
-        {% for order in section.orders %}
-          {% set items = order.line_items or [] %}
-          {% set item0 = items[0] if items else {} %}
-          {% set customer = order.customer_details or {} %}
-          {% set phone = item0.get('phone') or customer.get('phone','') %}
-          {% set name = item0.get('name') or customer.get('name','') or 'Customer' %}
-          {% set city = item0.get('city') or customer.get('city','') %}
-          {% set tracking = item0.get('tracking_number') or '' %}
-        <article class="ud-card{% if order.return_received %} return-received{% endif %}"
-          data-return="{{ 'true' if order.return_received else 'false' }}"
-          data-age="{{ order.dispatch_age_days }}"
-          data-section="{{ section.key }}"
-          data-value="{{ order.total_price|float }}"
-          data-search="{{ order.order_id }} {{ name }} {{ city }} {{ phone }} {{ order.status }} {% for item in items %}{{ item.product_title }} {{ item.tracking_number }} {{ item.status }} {% endfor %}">
+      </summary>
+      <div class="ud-list">
+      {% for order in section.orders %}
+        {% set items = order.line_items or [] %}{% set item0 = items[0] if items else {} %}{% set customer = order.customer_details or {} %}
+        {% set phone = item0.get('phone') or customer.get('phone','') %}{% set name = item0.get('name') or customer.get('name','') or 'Customer' %}{% set city = item0.get('city') or customer.get('city','') %}{% set tracking = item0.get('tracking_number') or '' %}
+        <article class="ud-card{% if order.needs_attention %} attention{% endif %}" data-age="{{ order.dispatch_age_days }}" data-section="{{ section.key }}" data-return-marked="{{ 'true' if order.return_marked_date else 'false' }}" data-search="{{ order.order_id }} {{ name }} {{ city }} {{ phone }} {{ order.status }} {% for item in items %}{{ item.product_title }} {{ item.tracking_number }} {{ item.status }} {% endfor %}">
           <div class="ud-card-main">
-            <div>
-              <a class="ud-order-link" href="{{ order.order_link or '#' }}" target="_blank">#{{ order.order_id }}</a>
-              <div class="ud-meta">{{ order.status or 'Status pending' }}</div>
-              <div class="ud-timers">
-                <div class="ud-timer"><span>Order since</span><strong>{{ order.order_age_days }}d</strong></div>
-                <div class="ud-timer"><span>Dispatched since</span><strong>{{ order.dispatch_age_days }}d</strong></div>
-                {% if section.key == 'return_missed' %}<div class="ud-timer return"><span>Courier return</span><strong>{% if order.return_marked_days is not none %}{{ order.return_marked_days }}d{% else %}—{% endif %}</strong></div>{% endif %}
-              </div>
-              <div class="ud-pill-row">
-                {% if order.return_received %}<span class="ud-pill return">Return received {{ order.return_received_date }}</span>{% endif %}
-                {% if order.dispatch_age_days >= 8 %}<span class="ud-pill attention">Needs attention</span>{% endif %}
-                <span class="ud-pill">{{ items|length }} item{{ '' if items|length == 1 else 's' }}</span>
+            <div class="ud-order">
+              {% if item0.get('image_src') and item0.get('image_src') != 'None' %}<img class="ud-thumb" src="{{ item0.get('image_src') }}" alt="">{% else %}<div class="ud-thumb ud-thumb-empty">📦</div>{% endif %}
+              <div class="ud-order-copy">
+                <a class="ud-order-link" href="{{ order.order_link or '#' }}" target="_blank">#{{ order.order_id }}</a>
+                <div class="ud-product">{{ item0.get('product_title') or 'Product unavailable' }}{% if items|length > 1 %}<span class="ud-product-more"> +{{ items|length - 1 }} more</span>{% endif %}</div>
+                <div class="ud-status">{{ item0.get('status') or order.status or 'Awaiting courier update' }}</div>
               </div>
             </div>
-            <div class="ud-customer"><strong>{{ name }}</strong><span>{{ city or 'City unavailable' }}{% if phone %} · {{ phone }}{% endif %}</span></div>
-            <div class="ud-shipment"><strong>{{ tracking or 'Tracking unavailable' }}</strong><span>{{ item0.get('status') or order.status or 'Awaiting courier update' }}</span></div>
-            <div class="ud-value">
-              <div><strong>PKR {{ order.total_price|float|int|format_number }}</strong><span>ORDER VALUE</span></div>
-              <div class="ud-actions">
-                {% if tracking and tracking != 'N/A' %}<a class="ud-action" href="/track/{{ tracking }}" target="_blank">Track</a>{% endif %}
-                <button class="ud-action" type="button" onclick="toggleUndeliveredCard(this)">Details</button>
-                <button class="ud-action primary" type="button" onclick="markUndeliveredOrder(event,this,'{{ order.id }}','Delivered')">Delivered</button>
-              </div>
+            <div class="ud-timers">
+              <div class="ud-timer"><span>Order since</span><strong>{{ order.order_age_days }}d</strong></div>
+              <div class="ud-timer"><span>Dispatched since</span><strong>{{ order.dispatch_age_days }}d</strong></div>
+              {% if section.key == 'return_missed' %}<div class="ud-timer return"><span>Courier return</span><strong>{% if order.return_marked_days is not none %}{{ order.return_marked_days }}d{% else %}—{% endif %}</strong></div>{% endif %}
             </div>
+            <div class="ud-person"><strong>{{ name }}</strong><span>{{ city or 'City unavailable' }}{% if phone %} · {{ phone }}{% endif %}</span>{% if order.latest_contact %}<div class="ud-contact-last"><b>Contacted:</b> {{ order.latest_contact.outcome }} · {{ order.latest_contact.created_at.strftime('%d %b, %I:%M %p') if order.latest_contact.created_at.strftime is defined else order.latest_contact.created_at }}</div>{% endif %}</div>
+            <div class="ud-side"><div class="ud-value">PKR {{ order.total_price|float|int|format_number }}<span class="ud-value-label">ORDER VALUE</span></div><div class="ud-actions">
+              {% if tracking and tracking != 'N/A' %}<a class="ud-action" href="/track/{{ tracking }}" target="_blank">View</a>{% else %}<span class="ud-action" aria-disabled="true">View</span>{% endif %}
+              <button class="ud-action contact" type="button" data-order-id="{{ order.id }}" data-order-label="#{{ order.order_id }}" onclick="openContactDialog(this)">Contacted</button>
+            </div></div>
           </div>
-          <div class="ud-details">
-            {% for item in items %}
-            <div class="ud-item">
-              {% if item.image_src and item.image_src != 'None' %}<img src="{{ item.image_src }}" alt="">{% else %}<div class="ud-image-empty">IMG</div>{% endif %}
-              <div><strong>{{ item.product_title }}</strong><span>Qty {{ item.quantity }} · {{ item.tracking_number or 'No tracking' }}</span></div>
-              {{ status_badge(item.status) }}
-            </div>
-            {% endfor %}
-          </div>
+          {% if order.contact_history %}<details class="ud-history"><summary>Contact history ({{ order.contact_history|length }})</summary>{% for contact in order.contact_history %}<div class="ud-history-row"><b>{{ contact.outcome }}</b><span>{{ contact.remarks or 'No additional remarks' }}</span><span>{{ contact.created_at.strftime('%d %b %Y, %I:%M %p') if contact.created_at.strftime is defined else contact.created_at }}</span></div>{% endfor %}</details>{% endif %}
         </article>
-        {% endfor %}
-        <div class="ud-empty js-section-empty"><strong>No matching orders</strong>No orders in this section match the current filters.</div>
-        </div>
-      </section>
       {% endfor %}
-    </div>
-  </main>
-</div>
+        <div class="ud-empty js-section-empty">No matching orders.</div>
+      </div>
+    </details>
+  {% endfor %}
+  </div>
+</main></div>
+
+<dialog id="contactDialog" class="ud-dialog"><div class="ud-dialog-head"><h3>Contacted <span id="contactOrderLabel"></span></h3><button class="ud-close" type="button" onclick="closeContactDialog()">×</button></div><form id="contactForm" class="ud-form">
+  <input id="contactOrderId" type="hidden"><div class="ud-options">{% for outcome in contact_outcomes %}<label class="ud-option"><input type="radio" name="outcome" value="{{ outcome }}" required><span>{{ outcome }}</span></label>{% endfor %}</div>
+  <textarea id="contactRemarks" class="ud-remarks" maxlength="1000" placeholder="Optional remarks…"></textarea><button id="contactSave" class="ud-save" type="submit">Save contact record</button>
+</form></dialog>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-function applyUndeliveredFilters() {
-  const query = (document.getElementById('udSearch').value || '').trim().toLowerCase();
-  const ageFilter = document.getElementById('udAge').value;
-  const hideReturns = document.getElementById('hideReturns').checked;
-  let visible = 0;
-  document.querySelectorAll('#undeliveredList .ud-card').forEach(card => {
-    const age = Number(card.dataset.age || 0);
-    const ageMatches = ageFilter === 'all'
-      || (ageFilter === '0-3' && age <= 3)
-      || (ageFilter === '4-7' && age >= 4 && age <= 7)
-      || (ageFilter === '8+' && age >= 8);
-    const matches = (!query || card.dataset.search.toLowerCase().includes(query))
-      && ageMatches
-      && !(hideReturns && card.dataset.return === 'true');
-    card.hidden = !matches;
-    if (matches) visible += 1;
-  });
-  document.querySelectorAll('.ud-section').forEach(section => {
-    const sectionVisible = [...section.querySelectorAll('.ud-card')].filter(card => !card.hidden).length;
-    section.querySelector('.js-section-count').textContent = sectionVisible;
-    section.querySelector('.js-section-empty').style.display = sectionVisible ? 'none' : 'block';
-  });
-}
-
-function toggleUndeliveredCard(button) {
-  button.closest('.ud-card').classList.toggle('open');
-}
-
-function markUndeliveredOrder(event, button, id, tag) {
-  event.stopPropagation();
-  button.disabled = true;
-  fetch('/apply_tag', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({order_id:id,tag})
-  }).then(response => response.json()).then(data => {
-    if (!data.success) throw new Error(data.error || 'Could not update order');
-    button.closest('.ud-card').remove();
-    applyUndeliveredFilters();
-    showToast('Order marked Delivered');
-  }).catch(error => {
-    button.disabled = false;
-    showToast(error.message || 'Request failed');
-  });
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('udSearch').addEventListener('input', applyUndeliveredFilters);
-  document.getElementById('udAge').addEventListener('change', applyUndeliveredFilters);
-  document.getElementById('hideReturns').addEventListener('change', applyUndeliveredFilters);
-  applyUndeliveredFilters();
-});
+function applyUndeliveredFilters(){const q=(document.getElementById('udSearch').value||'').trim().toLowerCase();const f=document.getElementById('udAge').value;document.querySelectorAll('#undeliveredList .ud-card').forEach(c=>{const a=Number(c.dataset.age||0);const age=f==='all'||(f==='0-3'&&a<=3)||(f==='4-7'&&a>=4&&a<=7)||(f==='8+'&&a>=8);c.hidden=!(age&&(!q||c.dataset.search.toLowerCase().includes(q)))});document.querySelectorAll('.ud-section').forEach(s=>{const cards=[...s.querySelectorAll('.ud-card')].filter(c=>!c.hidden);s.querySelector('.js-section-count').textContent=cards.length;const r=s.querySelector('.js-return-count');if(r)r.textContent=cards.filter(c=>c.dataset.returnMarked==='true').length;s.querySelector('.js-section-empty').style.display=cards.length?'none':'block'})}
+function openContactDialog(button){const d=document.getElementById('contactDialog');document.getElementById('contactOrderId').value=button.dataset.orderId;document.getElementById('contactOrderLabel').textContent=button.dataset.orderLabel;document.getElementById('contactForm').reset();d.showModal()}
+function closeContactDialog(){document.getElementById('contactDialog').close()}
+document.getElementById('contactForm').addEventListener('submit',async event=>{event.preventDefault();const selected=document.querySelector('input[name="outcome"]:checked');if(!selected)return;const save=document.getElementById('contactSave');save.disabled=true;try{const response=await fetch('/undelivered/contact',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:document.getElementById('contactOrderId').value,outcome:selected.value,remarks:document.getElementById('contactRemarks').value})});const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Could not save contact record');closeContactDialog();showToast('Contact record saved');window.location.reload()}catch(error){showToast(error.message||'Request failed')}finally{save.disabled=false}});
+document.addEventListener('DOMContentLoaded',()=>{document.getElementById('udSearch').addEventListener('input',applyUndeliveredFilters);document.getElementById('udAge').addEventListener('change',applyUndeliveredFilters);applyUndeliveredFilters()});
 </script>
 {% endblock %}
