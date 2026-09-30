@@ -103,7 +103,9 @@ def _payment_record(order, detail_body):
     net_cod = _money(tracking.get("total_cod_amount"))
     if not net_cod and order_amount:
         net_cod = max(round(order_amount - delivery_charges - other_charges - reserve_amount, 2), 0)
-    amount_paid = _money(tracking.get("amount_paid"))
+    # DigiDokaan uses negative values here for charges on unpaid shipments.
+    # They are not payments received and must not inflate outstanding COD.
+    amount_paid = max(_money(tracking.get("amount_paid")), 0)
     settlement_id = str(tracking.get("settlement_id") or "").strip()
     raw_payment_status = str(detail.get("payment_status") or "").strip()
     final_returns = (

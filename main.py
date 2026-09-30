@@ -6178,16 +6178,24 @@ def employee_portal_report():
 
 def load_digidokaan_payments_sync(force=False):
     async def run():
-        timeout = aiohttp.ClientTimeout(total=45)
+        timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as session_obj:
-            try:
-                return await fetch_digidokaan_payments(session_obj, force=force)
-            except Exception as error:
-                # Some DigiDokaan accounts expose shipment payment details but
-                # not every settlement-ledger endpoint. Keep the payments page
-                # useful by falling back to the order-level COD feed.
-                print(f"Official DigiDokaan settlement ledger unavailable; using shipment ledger: {error}")
-                return await fetch_digidokaan_payment_records(session_obj, force=force)
+            settlement_result, shipment_result = await asyncio.gather(
+                fetch_digidokaan_payments(session_obj, force=force),
+                fetch_digidokaan_payment_records(session_obj, force=force),
+                return_exceptions=True,
+            )
+            shipment_records = shipment_result if isinstance(shipment_result, list) else []
+            if isinstance(settlement_result, dict):
+                return {**settlement_result, "records": shipment_records}
+            if shipment_records:
+                print(f"Official DigiDokaan settlement ledger unavailable; using shipment ledger: {settlement_result}")
+                return shipment_records
+            if isinstance(settlement_result, Exception):
+                raise settlement_result
+            if isinstance(shipment_result, Exception):
+                raise shipment_result
+            return []
 
     return asyncio.run(run())
 
@@ -6214,6 +6222,54 @@ def _is_digidokaan_delivered_status(value):
     if any(marker in status for marker in ("unsuccess", "failed", "undeliver", "return", "cancel")):
         return False
     return status == "delivered" or status.endswith(" - delivered") or status.startswith("delivered ")
+
+
+def merge_shopify_digidokaan_payment_records(payments, shopify_orders):
+    """Fill gaps in DigiDokaan's capped search response from tracked Shopify orders."""
+    if not isinstance(payments, dict):
+        return payments
+    records = [dict(row) for row in payments.get("records", []) if isinstance(row, dict)]
+    known_tracking = {
+        str(row.get("tracking_number") or "").strip()
+        for row in records
+        if str(row.get("tracking_number") or "").strip()
+    }
+    for order in shopify_orders or []:
+        grouped_items = {}
+        for item in order.get("line_items") or []:
+            tracking = str(item.get("tracking_number") or "").strip()
+            if not is_digidokaan_tracking(tracking):
+                continue
+            grouped_items.setdefault(tracking, []).append(item)
+        for tracking, items in grouped_items.items():
+            if tracking in known_tracking:
+                continue
+            if len(grouped_items) == 1:
+                order_amount = parse_money(order.get("total_price"), 0)
+            else:
+                order_amount = round(sum(parse_money(item.get("line_total"), 0) for item in items), 2)
+            status = aggregate_order_status(items)
+            records.append({
+                "order_id": str(order.get("order_id") or "").lstrip("#"),
+                "digidokaan_order_id": "",
+                "tracking_number": tracking,
+                "created_at": str(order.get("created_at") or ""),
+                "shipment_status": status,
+                "payment_mode": "COD",
+                "payment_status": "Pending settlement" if _is_digidokaan_delivered_status(status) else "Awaiting delivery",
+                "raw_payment_status": "",
+                "order_amount": order_amount,
+                "delivery_charges": 0,
+                "other_charges": 0,
+                "reserve_amount": 0,
+                "net_cod": order_amount,
+                "amount_paid": 0,
+                "outstanding": order_amount,
+                "settlement_id": "",
+                "inventory_source": "shopify_fallback",
+            })
+            known_tracking.add(tracking)
+    return {**payments, "records": records}
 
 
 def build_digidokaan_payment_dashboard(payments):
@@ -6329,26 +6385,94 @@ def build_digidokaan_payment_dashboard(payments):
         })
         shipments.append(group)
 
-    total_deductions = round(
-        sum(parse_money(ledger.get(key), 0) for key in ("total_delivery_charges", "total_sales_tax", "total_income_tax"))
-        if any(ledger.get(key) is not None for key in ("total_delivery_charges", "total_sales_tax", "total_income_tax"))
-        else sum(row["deductions"] for row in shipments), 2,
-    )
+    # Settlement endpoints contain accounting entries only, not the complete
+    # shipment inventory. Merge the live order-level feed so active/booked
+    # shipments retain their actual COD instead of appearing as zero/negative.
+    shipment_records = [dict(row) for row in payments.get("records", []) if isinstance(row, dict)]
+    indexed_shipments = {}
+    for shipment in shipments:
+        for value in (shipment.get("tracking_no"), shipment.get("order_no"), shipment.get("reference")):
+            if value:
+                indexed_shipments[str(value).strip().casefold()] = shipment
+
+    for record in shipment_records:
+        tracking = str(record.get("tracking_number") or "").strip()
+        order_no = str(record.get("order_id") or "").strip()
+        reference = str(record.get("digidokaan_order_id") or "").strip()
+        shipment = next(
+            (indexed_shipments.get(value.casefold()) for value in (tracking, order_no, reference) if value and indexed_shipments.get(value.casefold())),
+            None,
+        )
+        order_amount = parse_money(record.get("order_amount"), 0)
+        record_deductions = round(sum(
+            parse_money(record.get(field), 0)
+            for field in ("delivery_charges", "other_charges", "reserve_amount")
+        ), 2)
+        record_net = parse_money(record.get("net_cod"), max(order_amount - record_deductions, 0))
+        record_payment_status = str(record.get("payment_status") or "").strip()
+        display_payment_status = {
+            "Settled": "Paid",
+            "Pending settlement": "Not paid",
+            "Partially paid": "Not paid",
+            "Awaiting delivery": "Awaiting delivery",
+            "Not payable": "Not payable",
+        }.get(record_payment_status, "Not paid")
+        if shipment is None:
+            shipment = {
+                "order_no": order_no,
+                "reference": reference,
+                "tracking_no": tracking,
+                "order_date": str(record.get("created_at") or ""),
+                "order_status": str(record.get("shipment_status") or ""),
+                "price": order_amount,
+                "cod": order_amount,
+                "deductions": record_deductions,
+                "net": record_net,
+                "entry_types": str(record.get("payment_mode") or "COD"),
+                "cheque_no": str(record.get("settlement_id") or ""),
+                "cheque_status": record_payment_status if record.get("settlement_id") else "",
+                "payment_status": display_payment_status,
+            }
+            shipments.append(shipment)
+        else:
+            shipment.update({
+                "order_no": order_no or shipment.get("order_no"),
+                "reference": reference or shipment.get("reference"),
+                "tracking_no": tracking or shipment.get("tracking_no"),
+                "order_date": str(record.get("created_at") or shipment.get("order_date") or ""),
+                "order_status": str(record.get("shipment_status") or shipment.get("order_status") or ""),
+                "price": order_amount or shipment.get("price", 0),
+                "cod": order_amount or shipment.get("cod", 0),
+                "deductions": record_deductions or shipment.get("deductions", 0),
+                "net": record_net or shipment.get("net", 0),
+            })
+            if display_payment_status == "Paid" or shipment.get("payment_status") not in {"Paid", "Pending cheque"}:
+                shipment["payment_status"] = display_payment_status
+            if record.get("settlement_id") and not shipment.get("cheque_no"):
+                shipment["cheque_no"] = str(record.get("settlement_id"))
+                shipment["cheque_status"] = record_payment_status
+        for value in (tracking, order_no, reference):
+            if value:
+                indexed_shipments[value.casefold()] = shipment
+
+    shipments.sort(key=lambda row: str(row.get("order_date") or ""), reverse=True)
+    total_deductions = round(sum(row["deductions"] for row in shipments), 2)
     paid_shipments = [row for row in shipments if row["payment_status"] == "Paid"]
     unpaid_shipments = [row for row in shipments if row["payment_status"] != "Paid"]
     delivered_shipments = [row for row in shipments if _is_digidokaan_delivered_status(row.get("order_status"))]
     deducted_shipments = [row for row in shipments if row["deductions"] > 0]
     cheque_total = round(sum(parse_money(row.get("amount") or row.get("cheque_amount"), 0) for row in cheque_rows), 2)
-    received = cheque_total if cheque_rows else parse_money(ledger.get("total_paid"), parse_money(balance.get("payment_received"), sum(max(row["net"], 0) for row in paid_shipments)))
+    record_received = round(sum(parse_money(row.get("amount_paid"), 0) for row in shipment_records), 2)
+    received = max(cheque_total, record_received, parse_money(ledger.get("total_paid"), 0), parse_money(balance.get("payment_received"), 0))
     outstanding = parse_money(ledger.get("total_balance"), sum(max(row["net"], 0) for row in unpaid_shipments))
     gross_shipments = [row for row in shipments if row.get("price", 0) > 0 or row.get("cod", 0) > 0]
     gross_cod = round(sum(row.get("price", 0) or row.get("cod", 0) for row in gross_shipments), 2)
     ready_shipments = [row for row in delivered_shipments if row["payment_status"] != "Paid"]
     cards = [
-        {"label": "Gross COD", "value": gross_cod, "count": len(gross_shipments), "note": "dispatched shipments"},
+        {"label": "Gross COD", "value": gross_cod, "count": len(gross_shipments), "note": "DigiDokaan shipments"},
         {"label": "Total shipments", "value": len(shipments), "count": len(shipments), "note": f"PKR {gross_cod:,.2f} combined gross COD", "count_primary": True},
         {"label": "Payment received", "value": received, "count": len(paid_shipments), "note": "shipments explicitly linked to paid cheques"},
-        {"label": "Outstanding payment", "value": outstanding, "count": len(unpaid_shipments), "note": "shipments not confirmed paid"},
+        {"label": "Outstanding payment", "value": outstanding, "count": len(ready_shipments), "note": "delivered shipments awaiting settlement"},
         {"label": "Ready for payout", "value": parse_money(balance.get("deliver_orders_payments"), 0), "count": len(ready_shipments), "note": "delivered shipments not yet paid"},
         {"label": "Courier deductions", "value": total_deductions, "count": len(deducted_shipments), "note": "shipments with recorded deductions"},
         {"label": "Effective deduction", "value": total_deductions / gross_cod * 100 if gross_cod else 0, "count": len(deducted_shipments), "note": "percent of gross COD", "percent": True},
@@ -6421,6 +6545,7 @@ def payments():
         return redirect("/admin_portal?next=/payments")
     try:
         payment_payload = load_digidokaan_payments_sync()
+        payment_payload = merge_shopify_digidokaan_payment_records(payment_payload, order_details)
         payment_dashboard = (
             build_digidokaan_payment_dashboard(payment_payload)
             if isinstance(payment_payload, dict)
@@ -6444,6 +6569,7 @@ def payments_data():
         return jsonify(error="Authentication required"), 401
     try:
         payment_payload = load_digidokaan_payments_sync(force=request.args.get("refresh") == "1")
+        payment_payload = merge_shopify_digidokaan_payment_records(payment_payload, order_details)
         if isinstance(payment_payload, list):
             response = jsonify(
                 dashboard=build_legacy_digidokaan_payment_dashboard(payment_payload),

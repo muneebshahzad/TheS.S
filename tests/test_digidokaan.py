@@ -157,6 +157,20 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
         self.assertEqual(returned["payment_status"], "Not payable")
         self.assertEqual(settled["payment_status"], "Settled")
 
+    def test_negative_amount_paid_is_a_charge_not_a_payment(self):
+        record = digidokaan._payment_record(
+            {"order_id": "1", "tracking_no": "2231", "price": "10000"},
+            {"data": {
+                "order_detail": {"amount": "10000", "payment_status": "0"},
+                "tracking_response": {
+                    "data": [{"status": "Shipment - In Transit"}],
+                    "delivery_charges": "307", "total_cod_amount": "9693", "amount_paid": "-307",
+                },
+            }},
+        )
+        self.assertEqual(record["amount_paid"], 0)
+        self.assertEqual(record["outstanding"], 9693)
+
     def test_payment_summary_does_not_treat_active_shipments_as_due(self):
         records = [
             {"order_amount": 10000, "delivery_charges": 500, "other_charges": 0, "reserve_amount": 0, "net_cod": 9500, "amount_paid": 0, "outstanding": 9500, "payment_status": "Awaiting delivery"},
@@ -288,3 +302,52 @@ def test_legacy_payment_feed_populates_alkaramat_dashboard_without_treating_fail
     assert cards["Delivered COD"]["count"] == 1
     assert cards["Ready for payout"]["value"] == 9700.0
     assert len(dashboard["shipments"]) == 2
+
+
+def test_official_payment_dashboard_uses_live_shipments_as_inventory():
+    import main
+
+    payments = {
+        "balance": {"deliver_orders_payments": 950},
+        "ledger": {"total_balance": 950, "data": [
+            {"tracking_no": "T1", "order_no": "O1", "payment_type": "COD", "amount": 1000},
+        ]},
+        "cheques": [],
+        "records": [
+            {"order_id": "O1", "digidokaan_order_id": "D1", "tracking_number": "T1", "created_at": "2026-09-29", "shipment_status": "Delivered", "payment_status": "Pending settlement", "payment_mode": "COD", "order_amount": 1000, "delivery_charges": 50, "other_charges": 0, "reserve_amount": 0, "net_cod": 950, "amount_paid": 0},
+            {"order_id": "O2", "digidokaan_order_id": "D2", "tracking_number": "T2", "created_at": "2026-09-30", "shipment_status": "In Transit", "payment_status": "Awaiting delivery", "payment_mode": "COD", "order_amount": 2000, "delivery_charges": 100, "other_charges": 0, "reserve_amount": 0, "net_cod": 1900, "amount_paid": 0},
+        ],
+    }
+    dashboard = main.build_digidokaan_payment_dashboard(payments)
+    cards = {card["label"]: card for card in dashboard["cards"]}
+    rows = {row["tracking_no"]: row for row in dashboard["shipments"]}
+
+    assert len(rows) == 2
+    assert cards["Gross COD"]["value"] == 3000
+    assert cards["Total shipments"]["value"] == 2
+    assert cards["Courier deductions"]["value"] == 150
+    assert rows["T2"]["cod"] == 2000
+    assert rows["T2"]["net"] == 1900
+    assert rows["T2"]["payment_status"] == "Awaiting delivery"
+
+
+def test_shopify_tracking_fills_capped_digidokaan_inventory_without_duplicates():
+    import main
+
+    payload = {"records": [{"tracking_number": "22300000000001", "order_amount": 1000}]}
+    orders = [{
+        "order_id": "PK1",
+        "created_at": "2026-09-30T10:00:00",
+        "total_price": 3000,
+        "line_items": [
+            {"tracking_number": "22300000000001", "status": "In Transit", "line_total": 1000},
+            {"tracking_number": "22300000000002", "status": "Booked", "line_total": 2000},
+        ],
+    }]
+
+    merged = main.merge_shopify_digidokaan_payment_records(payload, orders)
+    records = {row["tracking_number"]: row for row in merged["records"]}
+    assert len(records) == 2
+    assert records["22300000000001"]["order_amount"] == 1000
+    assert records["22300000000002"]["order_amount"] == 2000
+    assert records["22300000000002"]["inventory_source"] == "shopify_fallback"
