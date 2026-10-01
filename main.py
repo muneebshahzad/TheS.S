@@ -5088,11 +5088,54 @@ def enrich_shipper_advice_orders(advice_rows, shopify_orders):
     return enriched
 
 
+SHIPPER_ADVICE_ACK_SETTING = "digidokaan_shipper_advice_acknowledged"
+SHIPPER_ADVICE_ACK_TTL_SECONDS = 24 * 60 * 60
+
+
+def load_acknowledged_shipper_advice(now=None):
+    """Return recently submitted tracking numbers while DigiDokaan's pending feed catches up."""
+    current = float(now if now is not None else time.time())
+    try:
+        saved = json.loads(get_app_setting(SHIPPER_ADVICE_ACK_SETTING, "{}") or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        saved = {}
+    if not isinstance(saved, dict):
+        saved = {}
+    active = {}
+    for tracking, submitted_at in saved.items():
+        normalized = "".join(character for character in str(tracking or "") if character.isdigit())
+        try:
+            timestamp = float(submitted_at)
+        except (TypeError, ValueError):
+            continue
+        if normalized and 0 <= current - timestamp < SHIPPER_ADVICE_ACK_TTL_SECONDS:
+            active[normalized] = timestamp
+    if active != saved:
+        set_app_setting(SHIPPER_ADVICE_ACK_SETTING, json.dumps(active, separators=(",", ":")))
+    return active
+
+
+def acknowledge_shipper_advice(tracking_number, now=None):
+    tracking = "".join(character for character in str(tracking_number or "") if character.isdigit())
+    if not tracking:
+        return False
+    acknowledged = load_acknowledged_shipper_advice(now=now)
+    acknowledged[tracking] = float(now if now is not None else time.time())
+    return set_app_setting(SHIPPER_ADVICE_ACK_SETTING, json.dumps(acknowledged, separators=(",", ":")))
+
+
 def load_shipper_advice_sync(force=False):
     async def run():
         async with aiohttp.ClientSession() as client:
             return await fetch_pending_shipper_advice(client, force=force)
-    return enrich_shipper_advice_orders(asyncio.run(run()), order_details)
+    rows = asyncio.run(run())
+    acknowledged = load_acknowledged_shipper_advice()
+    visible_rows = [
+        row for row in rows
+        if "".join(character for character in str(row.get("tracking_no") or "") if character.isdigit())
+        not in acknowledged
+    ]
+    return enrich_shipper_advice_orders(visible_rows, order_details)
 
 
 @app.route("/send-email", methods=["POST"])
@@ -5214,6 +5257,7 @@ def post_shipper_advice():
 
     try:
         result = asyncio.run(submit())
+        acknowledge_shipper_advice(tracking_number)
         return jsonify({"success": True, "message": result.get("msg") or result.get("message") or "Shipper advice submitted successfully."})
     except ValueError as error:
         return jsonify({"success": False, "error": str(error)}), 409

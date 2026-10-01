@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -35,6 +36,34 @@ def test_submit_shipper_advice_uses_validated_payload(monkeypatch):
     asyncio.run(digidokaan.submit_shipper_advice(session, "223 17467960795", 5, "Reattempt", "Try tomorrow"))
     assert session.payload["tracking_no"] == "22317467960795"
     assert session.payload["shipper_advice_status"] == "reattempt"
+
+
+def test_submitted_shipper_advice_stays_hidden_while_provider_feed_is_stale(monkeypatch):
+    saved = {}
+    monkeypatch.setattr(main, "get_app_setting", lambda _key, default="": json.dumps(saved) if saved else default)
+    monkeypatch.setattr(main, "set_app_setting", lambda _key, value: saved.update(json.loads(value)) or True)
+    monkeypatch.setattr(main, "order_details", [])
+
+    async def stale_pending(_client, force=False):
+        return [
+            {"tracking_no": "223 17467960795", "external_reference_no": "PK1"},
+            {"tracking_no": "22317467960796", "external_reference_no": "PK2"},
+        ]
+
+    monkeypatch.setattr(main, "fetch_pending_shipper_advice", stale_pending)
+    assert main.acknowledge_shipper_advice("223 17467960795", now=1000)
+    monkeypatch.setattr(main.time, "time", lambda: 1001)
+    visible = main.load_shipper_advice_sync(force=True)
+    assert [row["tracking_no"] for row in visible] == ["22317467960796"]
+
+
+def test_shipper_advice_acknowledgement_expires(monkeypatch):
+    saved = {"22317467960795": 1000}
+    monkeypatch.setattr(main, "get_app_setting", lambda _key, default="": json.dumps(saved))
+    monkeypatch.setattr(main, "set_app_setting", lambda _key, value: True)
+    assert main.load_acknowledged_shipper_advice(
+        now=1000 + main.SHIPPER_ADVICE_ACK_TTL_SECONDS + 1
+    ) == {}
 
 
 def test_payment_ledger_merges_entries_and_requires_explicit_paid_cheque():
