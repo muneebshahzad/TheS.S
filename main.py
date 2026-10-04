@@ -3758,11 +3758,13 @@ async def process_order(session_obj, order):
         if tracking_info_list is None:
             continue
         variant_name = ""
+        product_type = ""
         image_src = "https://cdn.shopify.com/s/files/1/0936/0949/2789/files/7.png?v=1741033934"
         if getattr(line_item, "product_id", None):
             try:
                 product = shopify.Product.find(getattr(line_item, "product_id", None))
                 if product:
+                    product_type = getattr(product, "product_type", "") or ""
                     image_src, variant_name, inventory_item_id = get_variant_image_and_title(product, line_item)
                 else:
                     inventory_item_id = None
@@ -3786,6 +3788,7 @@ async def process_order(session_obj, order):
                     "fulfillment_status": getattr(line_item, "fulfillment_status", None),
                     "image_src": image_src,
                     "product_title": product_title,
+                    "product_type": product_type,
                     "product_id": getattr(line_item, "product_id", None),
                     "variant_id": getattr(line_item, "variant_id", None),
                     "inventory_item_id": inventory_item_id,
@@ -4754,6 +4757,7 @@ def get_active_shopify_products(limit=250):
                         "inventory_item_id": getattr(variant, "inventory_item_id", None),
                         "title": display_title,
                         "product_title": getattr(product, "title", ""),
+                        "product_type": getattr(product, "product_type", "") or "",
                         "variant_title": variant_title,
                         "price": float(getattr(variant, "price", 0) or 0),
                         "cost": 0,
@@ -4812,7 +4816,8 @@ def build_product_cost_rows(limit=250):
 
 def is_tickbags_product(item):
     title = re.sub(r"[^a-z0-9]+", " ", str((item or {}).get("product_title") or "").lower()).strip()
-    return "bean bag" in title or "beanbag" in title
+    product_type = str((item or {}).get("product_type") or "").strip().lower()
+    return product_type == "bean bag" or "bean bag" in title or "beanbag" in title
 
 
 def tickbags_invoice_period(eligible_date):
@@ -4924,6 +4929,8 @@ def backfill_tickbags_invoice(period=None):
             dated_order_tag_date(tags, "Delivered in Lahore Approved")
             or dated_order_tag_date(tags, "Delivered in Lahore")
         )
+        if not lahore_date and has_order_tag(tags, "Delivered in Lahore"):
+            lahore_date = parse_courier_event_date(getattr(order, "created_at", ""))
         eligible_date = dispatch_date or lahore_date
         if not eligible_date or not (period["period_start"] <= eligible_date <= period["period_end"]):
             continue
@@ -4937,11 +4944,11 @@ def backfill_tickbags_invoice(period=None):
             base_title = getattr(item, "title", "") or "Product"
             variant_title = getattr(item, "variant_title", "") or ""
             product_name = base_title if variant_title in {"", "Default Title"} else f"{base_title} - {variant_title}"
-            if not is_tickbags_product({"product_title": product_name}):
-                continue
             variant_id = str(getattr(item, "variant_id", "") or "")
             product_id = str(getattr(item, "product_id", "") or "")
             product = by_variant.get(variant_id) or by_product.get(product_id) or {}
+            if not is_tickbags_product({"product_title": product_name, "product_type": product.get("product_type")}):
+                continue
             quantity = max(parse_int(getattr(item, "quantity", 1), 1), 1)
             lines.append({
                 "line_key": f"tickbags:{getattr(order, 'id', '')}:{variant_id or product_id or product_name}:{position}",
