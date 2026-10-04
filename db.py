@@ -156,6 +156,8 @@ def _ensure_vendor_invoices_tables(cur):
             variant_id TEXT,
             product_name TEXT NOT NULL,
             image_url TEXT NOT NULL DEFAULT '',
+            courier TEXT NOT NULL DEFAULT '',
+            tracking_number TEXT NOT NULL DEFAULT '',
             unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
             quantity INTEGER NOT NULL DEFAULT 1,
             order_status TEXT NOT NULL DEFAULT '',
@@ -165,6 +167,8 @@ def _ensure_vendor_invoices_tables(cur):
         )
         """
     )
+    cur.execute("ALTER TABLE vendor_invoice_lines ADD COLUMN IF NOT EXISTS courier TEXT NOT NULL DEFAULT ''")
+    cur.execute("ALTER TABLE vendor_invoice_lines ADD COLUMN IF NOT EXISTS tracking_number TEXT NOT NULL DEFAULT ''")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS vendor_invoice_refunds (
@@ -488,18 +492,20 @@ def sync_vendor_invoice(invoice, lines):
                         cur.execute(
                             """INSERT INTO vendor_invoice_lines
                                (invoice_id, line_key, shopify_order_id, order_number, eligible_date,
-                                product_id, variant_id, product_name, image_url, unit_cost, quantity,
-                                order_status, is_returned)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                               product_id, variant_id, product_name, image_url, courier, tracking_number,
+                               unit_cost, quantity, order_status, is_returned)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                                ON CONFLICT (line_key) DO UPDATE SET
                                  product_name=EXCLUDED.product_name, image_url=EXCLUDED.image_url,
                                  unit_cost=CASE WHEN vendor_invoice_lines.unit_cost = 0 OR EXCLUDED.unit_cost > 0
                                                 THEN EXCLUDED.unit_cost ELSE vendor_invoice_lines.unit_cost END,
+                                 courier=EXCLUDED.courier, tracking_number=EXCLUDED.tracking_number,
                                  quantity=EXCLUDED.quantity, order_status=EXCLUDED.order_status,
                                  is_returned=(vendor_invoice_lines.is_returned OR EXCLUDED.is_returned), updated_at=NOW()""",
                             (saved["id"], line["line_key"], line["shopify_order_id"], line["order_number"],
                              line["eligible_date"], line.get("product_id"), line.get("variant_id"),
-                             line["product_name"], line.get("image_url", ""), line.get("unit_cost", 0),
+                             line["product_name"], line.get("image_url", ""), line.get("courier", ""),
+                             line.get("tracking_number", ""), line.get("unit_cost", 0),
                              line.get("quantity", 1), line.get("order_status", ""), bool(line.get("is_returned"))),
                         )
             conn.commit()
@@ -509,6 +515,28 @@ def sync_vendor_invoice(invoice, lines):
         _set_last_db_error(str(error))
         print(f"DB sync vendor invoice error: {error}")
         return None
+
+
+def prune_vendor_invoice_lines(invoice, line_keys):
+    """Remove obsolete source lines from a draft invoice after an authoritative backfill."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                _ensure_vendor_invoices_tables(cur)
+                cur.execute(
+                    """DELETE FROM vendor_invoice_lines l
+                       USING vendor_invoices i
+                       WHERE l.invoice_id=i.id AND i.vendor=%s AND i.period_start=%s AND i.period_end=%s
+                         AND i.status!='Paid' AND NOT (l.line_key = ANY(%s))
+                         AND NOT EXISTS (SELECT 1 FROM vendor_invoice_refunds r WHERE r.source_line_id=l.id)""",
+                    (invoice["vendor"], invoice["period_start"], invoice["period_end"], list(line_keys) or ["__none__"]),
+                )
+                deleted = cur.rowcount
+            conn.commit()
+        return deleted
+    except Exception as error:
+        _set_last_db_error(str(error))
+        return 0
 
 
 def load_vendor_invoices(vendor="Tick Bags"):

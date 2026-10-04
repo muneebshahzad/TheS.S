@@ -48,6 +48,7 @@ from db import (
     save_admin_passkey,
     save_employee_passkey,
     mark_vendor_invoice_paid,
+    prune_vendor_invoice_lines,
     set_app_setting,
     sync_vendor_invoice,
     update_vendor_invoice_line_cost,
@@ -4862,12 +4863,7 @@ def tickbags_line_eligible_date(order, item):
     if tracking and tracking not in {"N/A", "0"} and dispatch_date:
         return dispatch_date
 
-    lahore_date = (
-        dated_order_tag_date(order.get("tags"), "Delivered in Lahore Approved")
-        or dated_order_tag_date(order.get("tags"), "Delivered in Lahore")
-    )
-    if not lahore_date and has_order_tag(order.get("tags"), "Delivered in Lahore"):
-        lahore_date = str(order.get("created_at") or "")[:10]
+    lahore_date = dated_order_tag_date(order.get("tags"), "Delivered in Lahore Approved")
     return parse_courier_event_date(lahore_date)
 
 
@@ -4882,6 +4878,7 @@ def build_tickbags_invoice_source(orders, today=None):
             eligible_date = tickbags_line_eligible_date(order, item)
             if not eligible_date or eligible_date > today:
                 continue
+            tracking = str(item.get("tracking_number") or "").strip()
             period = tickbags_invoice_period(eligible_date)
             period_key = (period["period_start"], period["period_end"])
             grouped.setdefault(period_key, {"invoice": period, "lines": []})
@@ -4896,6 +4893,8 @@ def build_tickbags_invoice_source(orders, today=None):
                 "variant_id": str(item.get("variant_id") or ""),
                 "product_name": item.get("product_title") or "Bean bag",
                 "image_url": item.get("image_src") or "",
+                "courier": item.get("courier_name") or courier_label_for_tracking("", item.get("tracking_number")) or "",
+                "tracking_number": tracking if tracking not in {"", "N/A", "0"} else "",
                 "unit_cost": parse_money(item.get("unit_cost"), 0),
                 "quantity": quantity,
                 "order_status": normalize_courier_status_label(item.get("status") or order.get("status") or ""),
@@ -4940,12 +4939,7 @@ def backfill_tickbags_invoice(period=None):
             ]
             fulfillment_dates = [value for value in fulfillment_dates if value]
             dispatch_date = min(fulfillment_dates) if fulfillment_dates else None
-        lahore_date = parse_courier_event_date(
-            dated_order_tag_date(tags, "Delivered in Lahore Approved")
-            or dated_order_tag_date(tags, "Delivered in Lahore")
-        )
-        if not lahore_date and has_order_tag(tags, "Delivered in Lahore"):
-            lahore_date = parse_courier_event_date(getattr(order, "created_at", ""))
+        lahore_date = parse_courier_event_date(dated_order_tag_date(tags, "Delivered in Lahore Approved"))
         eligible_date = dispatch_date or lahore_date
         if not eligible_date or not (period["period_start"] <= eligible_date <= period["period_end"]):
             continue
@@ -4965,6 +4959,8 @@ def backfill_tickbags_invoice(period=None):
             if not tagged_beanbag and not is_tickbags_product({"product_title": product_name, "product_type": product.get("product_type")}):
                 continue
             quantity = max(parse_int(getattr(item, "quantity", 1), 1), 1)
+            fulfillment = next((row for row in (getattr(order, "fulfillments", []) or []) if str(getattr(row, "tracking_number", "") or "").strip()), None)
+            tracking_number = str(getattr(fulfillment, "tracking_number", "") or "").strip() if fulfillment else ""
             lines.append({
                 "line_key": f"tickbags:{getattr(order, 'id', '')}:{variant_id or product_id or product_name}:{position}",
                 "shopify_order_id": str(getattr(order, "id", "") or ""),
@@ -4974,13 +4970,41 @@ def backfill_tickbags_invoice(period=None):
                 "variant_id": variant_id,
                 "product_name": product_name,
                 "image_url": product.get("image") or "",
+                "courier": courier_label_for_tracking("", tracking_number) or "",
+                "tracking_number": tracking_number,
                 "unit_cost": parse_money(product.get("cost"), 0),
                 "quantity": quantity,
                 "order_status": order_status,
                 "is_returned": returned,
             })
     sync_vendor_invoice(period, lines)
+    prune_vendor_invoice_lines(period, [line["line_key"] for line in lines])
     return len(lines)
+
+
+def build_tickbags_pending_lahore_orders(orders=None):
+    pending = []
+    statuses = load_order_statuses()
+    for order in orders if orders is not None else order_details:
+        tags = order.get("tags") or []
+        if not has_order_tag(tags, "BeanBag") or has_order_tag(tags, "Delivered in Lahore Approved"):
+            continue
+        if order.get("cancelled_at") or str(order.get("status") or "").lower() in {"cancelled", "returned", "delivered"}:
+            continue
+        customer = order.get("customer_details") or {}
+        city = str(customer.get("city") or next((item.get("city") for item in order.get("line_items") or [] if item.get("city")), "") or "").strip()
+        if "lahore" not in city.lower():
+            continue
+        items = [item for item in order.get("line_items") or [] if is_tickbags_product(item) or has_order_tag(tags, "BeanBag")]
+        if not items or any(str(item.get("tracking_number") or "").strip() not in {"", "N/A", "0"} for item in items):
+            continue
+        key = f"{order.get('order_id')}:N/A"
+        pending.append({
+            "order_id": order.get("order_id"), "city": city, "customer_name": customer.get("name") or "",
+            "created_at": order.get("created_at"), "total_price": order.get("total_price", 0),
+            "items": items, "awaiting_approval": statuses.get(key) == "Delivered in Lahore",
+        })
+    return sorted(pending, key=lambda row: parse_date_for_sort(row.get("created_at")), reverse=True)
 
 
 def ensure_tickbags_invoices():
@@ -5759,6 +5783,7 @@ def tickbags_invoices():
         invoices=invoices,
         current_invoice_id=current_invoice.get("id") if current_invoice else None,
         current_balance=current_balance,
+        pending_lahore_orders=build_tickbags_pending_lahore_orders(),
     )
 
 
@@ -6349,6 +6374,10 @@ def approve_employee_status():
         warnings = []
         if requested_status == "Delivered in Lahore":
             warnings = approve_shopify_delivery(order)
+            local_tags = list(matching_order.get("tags") or [])
+            local_tags.append(f"Delivered in Lahore Approved ({datetime.now(PAKISTAN_TIMEZONE).date().isoformat()})")
+            matching_order["tags"] = local_tags
+            sync_tickbags_invoices([matching_order], today=datetime.now(PAKISTAN_TIMEZONE).date())
             order_details[:] = [existing_order for existing_order in order_details if existing_order.get("id") != matching_order.get("id")]
         else:
             warnings = approve_shopify_cancellation(order)

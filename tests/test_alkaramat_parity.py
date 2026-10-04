@@ -302,6 +302,34 @@ def test_tickbags_tag_includes_custom_products_and_adjustments_reduce_balance():
     assert invoice["payable"] == 5000
 
 
+def test_tickbags_fulfilled_without_tracking_requires_lahore_approval():
+    base = {
+        "id": 5, "order_id": "PK5", "tags": ["BeanBag", "Delivered in Lahore"],
+        "status": "Fulfilled", "created_at": "2026-10-06T10:00:00+05:00",
+        "line_items": [{"product_title": "Custom beanbag", "tracking_number": "N/A", "quantity": 1}],
+    }
+    assert all(not batch["lines"] for batch in main.build_tickbags_invoice_source([base], today=date(2026, 10, 8)))
+    approved = {**base, "tags": ["BeanBag", "Delivered in Lahore Approved (2026-10-08)"]}
+    lines = [line for batch in main.build_tickbags_invoice_source([approved], today=date(2026, 10, 8)) for line in batch["lines"]]
+    assert len(lines) == 1
+    assert lines[0]["tracking_number"] == ""
+
+
+def test_tickbags_pending_lahore_orders_excludes_tracked_orders(monkeypatch):
+    monkeypatch.setattr(main, "load_order_statuses", lambda: {})
+    orders = [{
+        "id": 6, "order_id": "PK6", "tags": ["BeanBag"], "status": "Pending",
+        "customer_details": {"name": "Customer", "city": "Lahore"},
+        "line_items": [{"product_title": "Custom product", "tracking_number": "N/A", "quantity": 1}],
+    }, {
+        "id": 7, "order_id": "PK7", "tags": ["BeanBag"], "status": "In Transit",
+        "customer_details": {"name": "Customer", "city": "Lahore"},
+        "line_items": [{"product_title": "Custom product", "tracking_number": "223123", "quantity": 1}],
+    }]
+    pending = main.build_tickbags_pending_lahore_orders(orders)
+    assert [row["order_id"] for row in pending] == ["PK6"]
+
+
 def test_tickbags_invoice_template_has_required_ledger_controls():
     source = (Path(__file__).resolve().parents[1] / "templates" / "tickbags_invoices.html").read_text()
     for label in ("Products total", "Refunds", "Payable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current outstanding balance", "Record partial payment"):
