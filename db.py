@@ -483,7 +483,7 @@ def sync_vendor_invoice(invoice, lines):
                                  unit_cost=CASE WHEN vendor_invoice_lines.unit_cost = 0 OR EXCLUDED.unit_cost > 0
                                                 THEN EXCLUDED.unit_cost ELSE vendor_invoice_lines.unit_cost END,
                                  quantity=EXCLUDED.quantity, order_status=EXCLUDED.order_status,
-                                 is_returned=EXCLUDED.is_returned, updated_at=NOW()""",
+                                 is_returned=(vendor_invoice_lines.is_returned OR EXCLUDED.is_returned), updated_at=NOW()""",
                             (saved["id"], line["line_key"], line["shopify_order_id"], line["order_number"],
                              line["eligible_date"], line.get("product_id"), line.get("variant_id"),
                              line["product_name"], line.get("image_url", ""), line.get("unit_cost", 0),
