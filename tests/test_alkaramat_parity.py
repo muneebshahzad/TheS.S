@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import date
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -286,6 +287,25 @@ def test_tickbags_invoice_template_has_required_ledger_controls():
     source = (Path(__file__).resolve().parents[1] / "templates" / "tickbags_invoices.html").read_text()
     for label in ("Products total", "Refunds", "Payable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice"):
         assert label in source
+
+
+def test_tickbags_legacy_backfill_uses_fulfillment_date_without_dispatch_tag(monkeypatch):
+    order = SimpleNamespace(
+        id=10, name="PK10", tags="", cancelled_at=None, fulfillment_status="fulfilled",
+        created_at="2026-09-20T10:00:00+00:00",
+        fulfillments=[SimpleNamespace(tracking_number="223123", status="success", created_at="2026-09-25T12:00:00+00:00", updated_at="")],
+        line_items=[SimpleNamespace(title="Football Seat", variant_title="Red", variant_id=44, product_id=4, quantity=2)],
+    )
+    captured = {}
+    monkeypatch.setattr(main, "setup_shopify", lambda: None)
+    monkeypatch.setattr(main, "fetch_all_shopify_orders", lambda *_args: [order])
+    monkeypatch.setattr(main, "get_active_shopify_products", lambda **_kwargs: [{
+        "variant_id": 44, "product_id": 4, "product_type": "bean bag", "cost": 1500, "image": "seat.jpg",
+    }])
+    monkeypatch.setattr(main, "sync_vendor_invoice", lambda invoice, lines: captured.update(invoice=invoice, lines=lines))
+    assert main.backfill_tickbags_invoice(main.tickbags_invoice_period(date(2026, 10, 4))) == 1
+    assert captured["lines"][0]["eligible_date"] == date(2026, 9, 25)
+    assert captured["lines"][0]["unit_cost"] == 1500
 
 class FakeDraftOrder:
     instances = []

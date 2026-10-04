@@ -4925,6 +4925,15 @@ def backfill_tickbags_invoice(period=None):
     for order in raw_orders:
         tags = [tag.strip() for tag in str(getattr(order, "tags", "") or "").split(",") if tag.strip()]
         dispatch_date = parse_courier_event_date(dated_order_tag_date(tags, "Dispatched"))
+        if not dispatch_date:
+            fulfillment_dates = [
+                parse_courier_event_date(getattr(fulfillment, "created_at", "") or getattr(fulfillment, "updated_at", ""))
+                for fulfillment in (getattr(order, "fulfillments", []) or [])
+                if str(getattr(fulfillment, "tracking_number", "") or "").strip()
+                and str(getattr(fulfillment, "status", "") or "").lower() != "cancelled"
+            ]
+            fulfillment_dates = [value for value in fulfillment_dates if value]
+            dispatch_date = min(fulfillment_dates) if fulfillment_dates else None
         lahore_date = parse_courier_event_date(
             dated_order_tag_date(tags, "Delivered in Lahore Approved")
             or dated_order_tag_date(tags, "Delivered in Lahore")
