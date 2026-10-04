@@ -177,8 +177,21 @@ def _ensure_vendor_invoices_tables(cur):
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vendor_invoice_adjustments (
+            id BIGSERIAL PRIMARY KEY,
+            invoice_id BIGINT NOT NULL REFERENCES vendor_invoices(id) ON DELETE CASCADE,
+            amount NUMERIC(12,2) NOT NULL,
+            method TEXT NOT NULL DEFAULT '',
+            comments TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
     cur.execute("CREATE INDEX IF NOT EXISTS vendor_invoice_lines_invoice_idx ON vendor_invoice_lines (invoice_id, eligible_date, id)")
     cur.execute("CREATE INDEX IF NOT EXISTS vendor_invoice_refunds_invoice_idx ON vendor_invoice_refunds (invoice_id, id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS vendor_invoice_adjustments_invoice_idx ON vendor_invoice_adjustments (invoice_id, id)")
 
 
 def get_conn():
@@ -522,12 +535,55 @@ def load_vendor_invoices(vendor="Tick Bags"):
                         (invoice["id"],),
                     )
                     invoice["refunds"] = [dict(row) for row in cur.fetchall()]
+                    cur.execute("SELECT * FROM vendor_invoice_adjustments WHERE invoice_id=%s ORDER BY created_at, id", (invoice["id"],))
+                    invoice["adjustments"] = [dict(row) for row in cur.fetchall()]
         _set_last_db_error("")
         return invoices
     except Exception as error:
         _set_last_db_error(str(error))
         print(f"DB load vendor invoices error: {error}")
         return []
+
+
+def update_vendor_invoice_line_cost(line_id, unit_cost):
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                _ensure_vendor_invoices_tables(cur)
+                cur.execute(
+                    """UPDATE vendor_invoice_lines l SET unit_cost=%s, updated_at=NOW()
+                       FROM vendor_invoices i WHERE l.id=%s AND i.id=l.invoice_id AND i.status!='Paid'
+                       RETURNING l.*""",
+                    (unit_cost, int(line_id)),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return dict(row) if row else None
+    except Exception as error:
+        _set_last_db_error(str(error))
+        return None
+
+
+def add_vendor_invoice_adjustment(invoice_id, amount, method, comments=""):
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                _ensure_vendor_invoices_tables(cur)
+                cur.execute("SELECT status FROM vendor_invoices WHERE id=%s", (int(invoice_id),))
+                invoice = cur.fetchone()
+                if not invoice or invoice["status"] == "Paid":
+                    return None
+                cur.execute(
+                    """INSERT INTO vendor_invoice_adjustments (invoice_id, amount, method, comments)
+                       VALUES (%s,%s,%s,%s) RETURNING *""",
+                    (int(invoice_id), amount, method, comments),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return dict(row) if row else None
+    except Exception as error:
+        _set_last_db_error(str(error))
+        return None
 
 
 def mark_vendor_invoice_paid(invoice_id, payment_method, comments=""):

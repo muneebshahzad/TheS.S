@@ -283,9 +283,28 @@ def test_tickbags_return_is_highlighted_and_totals_include_current_refund():
     assert invoice["payable"] == 0
 
 
+def test_tickbags_tag_includes_custom_products_and_adjustments_reduce_balance():
+    orders = [{
+        "id": 4, "order_id": "PK4", "tags": ["BeanBag", "Dispatched (2026-10-06)"],
+        "status": "In Transit", "line_items": [{
+            "product_title": "Custom product", "variant_id": 15, "tracking_number": "2234",
+            "quantity": 2, "unit_cost": 5000, "status": "In Transit",
+        }],
+    }]
+    line = main.build_tickbags_invoice_source(orders, today=date(2026, 10, 8))[0]["lines"][0]
+    assert line["product_name"] == "Custom product"
+    invoice = main.present_tickbags_invoices([{
+        "id": 2, "status": "Draft", "lines": [{**line, "id": 10}], "refunds": [],
+        "adjustments": [{"amount": 5000}],
+    }])[0]
+    assert invoice["products_total"] == 10000
+    assert invoice["adjustments_total"] == 5000
+    assert invoice["payable"] == 5000
+
+
 def test_tickbags_invoice_template_has_required_ledger_controls():
     source = (Path(__file__).resolve().parents[1] / "templates" / "tickbags_invoices.html").read_text()
-    for label in ("Products total", "Refunds", "Payable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice"):
+    for label in ("Products total", "Refunds", "Payable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current outstanding balance", "Record partial payment"):
         assert label in source
 
 

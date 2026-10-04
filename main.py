@@ -32,6 +32,7 @@ from markupsafe import Markup
 
 from db import (
     add_delivery_followup_contact,
+    add_vendor_invoice_adjustment,
     add_vendor_invoice_refund,
     delete_order_status,
     get_app_setting,
@@ -49,6 +50,7 @@ from db import (
     mark_vendor_invoice_paid,
     set_app_setting,
     sync_vendor_invoice,
+    update_vendor_invoice_line_cost,
     upsert_aghaje_item_cost_override,
     upsert_aghaje_order_item_cost_override,
     upsert_aghaje_order_override,
@@ -4873,8 +4875,9 @@ def build_tickbags_invoice_source(orders, today=None):
     today = today or datetime.now(PAKISTAN_TIMEZONE).date()
     grouped = {}
     for order in orders or []:
+        tagged_beanbag = has_order_tag(order.get("tags"), "BeanBag")
         for position, item in enumerate(order.get("line_items") or []):
-            if not is_tickbags_product(item):
+            if not tagged_beanbag and not is_tickbags_product(item):
                 continue
             eligible_date = tickbags_line_eligible_date(order, item)
             if not eligible_date or eligible_date > today:
@@ -4926,6 +4929,7 @@ def backfill_tickbags_invoice(period=None):
     lines = []
     for order in raw_orders:
         tags = [tag.strip() for tag in str(getattr(order, "tags", "") or "").split(",") if tag.strip()]
+        tagged_beanbag = has_order_tag(tags, "BeanBag")
         dispatch_date = parse_courier_event_date(dated_order_tag_date(tags, "Dispatched"))
         if not dispatch_date:
             fulfillment_dates = [
@@ -4958,7 +4962,7 @@ def backfill_tickbags_invoice(period=None):
             variant_id = str(getattr(item, "variant_id", "") or "")
             product_id = str(getattr(item, "product_id", "") or "")
             product = by_variant.get(variant_id) or by_product.get(product_id) or {}
-            if not is_tickbags_product({"product_title": product_name, "product_type": product.get("product_type")}):
+            if not tagged_beanbag and not is_tickbags_product({"product_title": product_name, "product_type": product.get("product_type")}):
                 continue
             quantity = max(parse_int(getattr(item, "quantity", 1), 1), 1)
             lines.append({
@@ -5025,6 +5029,7 @@ def present_tickbags_invoices(invoices):
         lines = invoice.get("lines") or []
         products_total = round(sum(parse_money(line.get("unit_cost")) * int(line.get("quantity") or 0) for line in lines), 2)
         refunds = round(sum(parse_money(row.get("amount")) for row in invoice.get("refunds") or []), 2)
+        adjustments = round(sum(parse_money(row.get("amount")) for row in invoice.get("adjustments") or []), 2)
         missing_costs = sum(1 for line in lines if parse_money(line.get("unit_cost")) <= 0)
         summary = {}
         for line in lines:
@@ -5038,7 +5043,8 @@ def present_tickbags_invoices(invoices):
         payload = dict(invoice)
         payload.update({
             "summary": list(summary.values()), "products_total": products_total,
-            "refunds_total": refunds, "payable": round(products_total - refunds, 2),
+            "refunds_total": refunds, "adjustments_total": adjustments,
+            "payable": max(round(products_total - refunds - adjustments, 2), 0),
             "missing_costs": missing_costs,
         })
         presented.append(payload)
@@ -5747,10 +5753,12 @@ def product_costs():
 def tickbags_invoices():
     invoices = present_tickbags_invoices(ensure_tickbags_invoices())
     current_invoice = next((invoice for invoice in invoices if invoice.get("status") != "Paid"), None)
+    current_balance = round(sum(invoice.get("payable", 0) for invoice in invoices if invoice.get("status") != "Paid"), 2)
     return render_template(
         "tickbags_invoices.html",
         invoices=invoices,
         current_invoice_id=current_invoice.get("id") if current_invoice else None,
+        current_balance=current_balance,
     )
 
 
@@ -5788,6 +5796,32 @@ def refund_tickbags_invoice_line():
     if not saved:
         return jsonify({"success": False, "error": "Charge could not be reversed."}), 500
     return jsonify({"success": True, "refund": saved, "invoice_id": current["id"]})
+
+
+@app.route("/tickbags-invoices/line-cost", methods=["POST"])
+def save_tickbags_line_cost():
+    data = request.get_json(silent=True) or {}
+    cost = parse_money(data.get("unit_cost"), -1)
+    if cost < 0:
+        return jsonify({"success": False, "error": "Enter a valid cost."}), 400
+    saved = update_vendor_invoice_line_cost(data.get("line_id"), cost)
+    if not saved:
+        return jsonify({"success": False, "error": "Cost could not be updated. Paid invoices are locked."}), 400
+    return jsonify({"success": True, "line": saved})
+
+
+@app.route("/tickbags-invoices/<int:invoice_id>/adjustment", methods=["POST"])
+def add_tickbags_adjustment(invoice_id):
+    data = request.get_json(silent=True) or {}
+    amount = parse_money(data.get("amount"), 0)
+    method = str(data.get("method") or "").strip()
+    comments = str(data.get("comments") or "").strip()
+    if amount <= 0 or method not in {"Adjusted in Payments", "Received in Bank", "Other payment"}:
+        return jsonify({"success": False, "error": "Enter an amount and payment method."}), 400
+    saved = add_vendor_invoice_adjustment(invoice_id, amount, method, comments)
+    if not saved:
+        return jsonify({"success": False, "error": "Adjustment could not be saved."}), 400
+    return jsonify({"success": True, "adjustment": saved})
 
 
 @app.route("/product-costs/update", methods=["POST"])
