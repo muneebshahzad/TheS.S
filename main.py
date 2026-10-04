@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from urllib.parse import quote, urlencode, urlparse
+from zoneinfo import ZoneInfo
 
 import aiohttp
 import requests
@@ -140,6 +141,7 @@ PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
 TICKBAGS_VENDOR = "Tick Bags"
 TICKBAGS_LEGACY_END = datetime(2026, 10, 4).date()
 TICKBAGS_WEEKLY_SYNC_SETTING_KEY = "tickbags_last_weekly_sync_v1"
+PAKISTAN_TIMEZONE = ZoneInfo("Asia/Karachi")
 AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY = "aghaje_net_payment_received_v1"
 TRACKING_SUMMARY_CACHE_SETTING_KEY = "tracking_summary_cache_v1"
 ABANDONED_VIEWED_SETTING_KEY = "abandoned_checkout_viewed_v1"
@@ -4868,7 +4870,7 @@ def tickbags_line_eligible_date(order, item):
 
 
 def build_tickbags_invoice_source(orders, today=None):
-    today = today or datetime.now().date()
+    today = today or datetime.now(PAKISTAN_TIMEZONE).date()
     grouped = {}
     for order in orders or []:
         for position, item in enumerate(order.get("line_items") or []):
@@ -5000,7 +5002,7 @@ def ensure_tickbags_invoices():
 
 
 def run_tickbags_sunday_invoice_if_due(today=None):
-    today = today or datetime.now().date()
+    today = today or datetime.now(PAKISTAN_TIMEZONE).date()
     if today.weekday() != 6 or get_app_setting(TICKBAGS_WEEKLY_SYNC_SETTING_KEY, "") == today.isoformat():
         return False
     backfill_tickbags_invoice(tickbags_invoice_period(today))
