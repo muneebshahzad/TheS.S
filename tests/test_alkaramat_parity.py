@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -239,6 +240,52 @@ def test_delivery_contact_endpoint_validates_and_saves_history(monkeypatch):
     })
     assert saved.status_code == 200
     assert saved.get_json()["contact"]["remarks"] == "Customer messaged"
+
+
+def test_tickbags_invoice_groups_dispatched_and_lahore_beanbags_by_week():
+    orders = [
+        {
+            "id": 1, "order_id": "PK1", "tags": ["Dispatched (2026-10-03)"], "status": "In Transit",
+            "line_items": [
+                {"product_title": "Cocoon Bean Bag Sofa", "variant_id": 11, "tracking_number": "2231", "quantity": 2, "unit_cost": 3000, "status": "In Transit"},
+                {"product_title": "Table Lamp", "variant_id": 12, "tracking_number": "2232", "quantity": 1, "unit_cost": 1000, "status": "In Transit"},
+            ],
+        },
+        {
+            "id": 2, "order_id": "PK2", "tags": ["Delivered in Lahore Approved (2026-10-06)"], "status": "Delivered",
+            "line_items": [{"product_title": "Football Beanbag", "variant_id": 13, "tracking_number": "N/A", "quantity": 1, "unit_cost": 2500, "status": "Delivered"}],
+        },
+    ]
+    batches = main.build_tickbags_invoice_source(orders, today=date(2026, 10, 6))
+    by_end = {batch["invoice"]["period_end"]: batch for batch in batches}
+    assert by_end[date(2026, 10, 4)]["invoice"]["name"] == "Till 4 Oct'2026"
+    assert [line["product_name"] for line in by_end[date(2026, 10, 4)]["lines"]] == ["Cocoon Bean Bag Sofa"]
+    assert by_end[date(2026, 10, 11)]["lines"][0]["order_number"] == "PK2"
+
+
+def test_tickbags_return_is_highlighted_and_totals_include_current_refund():
+    orders = [{
+        "id": 3, "order_id": "PK3", "tags": ["Dispatched (2026-10-06)", "Return Received (2026-10-08)"],
+        "status": "Returned to Shipper", "line_items": [{
+            "product_title": "Classic Bean Bag", "variant_id": 14, "tracking_number": "2233",
+            "quantity": 2, "unit_cost": 2000, "status": "Returned to Shipper",
+        }],
+    }]
+    line = main.build_tickbags_invoice_source(orders, today=date(2026, 10, 8))[0]["lines"][0]
+    assert line["is_returned"] is True
+    invoice = main.present_tickbags_invoices([{
+        "id": 1, "status": "Draft", "lines": [{**line, "id": 9}],
+        "refunds": [{"amount": 4000}],
+    }])[0]
+    assert invoice["products_total"] == 4000
+    assert invoice["refunds_total"] == 4000
+    assert invoice["payable"] == 0
+
+
+def test_tickbags_invoice_template_has_required_ledger_controls():
+    source = (Path(__file__).resolve().parents[1] / "templates" / "tickbags_invoices.html").read_text()
+    for label in ("Products total", "Refunds", "Payable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice"):
+        assert label in source
 
 class FakeDraftOrder:
     instances = []

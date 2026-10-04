@@ -31,19 +31,23 @@ from markupsafe import Markup
 
 from db import (
     add_delivery_followup_contact,
+    add_vendor_invoice_refund,
     delete_order_status,
     get_app_setting,
     init_db,
     load_admin_passkeys,
     load_employee_passkeys,
     load_delivery_followup_contacts,
+    load_vendor_invoices,
     load_aghaje_item_cost_overrides,
     load_aghaje_order_item_cost_overrides,
     load_aghaje_order_overrides,
     load_order_statuses,
     save_admin_passkey,
     save_employee_passkey,
+    mark_vendor_invoice_paid,
     set_app_setting,
+    sync_vendor_invoice,
     upsert_aghaje_item_cost_override,
     upsert_aghaje_order_item_cost_override,
     upsert_aghaje_order_override,
@@ -133,6 +137,9 @@ order_tracking_refresh_state = {
 RATE_LIMIT = 2
 LAST_REQUEST_TIME = 0.0
 PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
+TICKBAGS_VENDOR = "Tick Bags"
+TICKBAGS_LEGACY_END = datetime(2026, 10, 4).date()
+TICKBAGS_WEEKLY_SYNC_SETTING_KEY = "tickbags_last_weekly_sync_v1"
 AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY = "aghaje_net_payment_received_v1"
 TRACKING_SUMMARY_CACHE_SETTING_KEY = "tracking_summary_cache_v1"
 ABANDONED_VIEWED_SETTING_KEY = "abandoned_checkout_viewed_v1"
@@ -4014,6 +4021,10 @@ def refresh_all_order_tracking():
     try:
         refreshed_all = reload_orders(preserve_existing_on_partial=True)
         daraz_rows = refresh_daraz_cache_if_needed(force=True)
+        try:
+            sync_tickbags_invoices(order_details)
+        except Exception as error:
+            print(f"Could not sync Tick Bags invoices: {error}")
         with order_tracking_refresh_lock:
             order_tracking_refresh_state.update(
                 running=False,
@@ -4799,6 +4810,223 @@ def build_product_cost_rows(limit=250):
     return sorted(rows, key=lambda row: str(row.get("title", "")).lower())
 
 
+def is_tickbags_product(item):
+    title = re.sub(r"[^a-z0-9]+", " ", str((item or {}).get("product_title") or "").lower()).strip()
+    return "bean bag" in title or "beanbag" in title
+
+
+def tickbags_invoice_period(eligible_date):
+    day = eligible_date if hasattr(eligible_date, "year") else parse_courier_event_date(eligible_date)
+    if not day:
+        return None
+    if day <= TICKBAGS_LEGACY_END:
+        return {
+            "vendor": TICKBAGS_VENDOR,
+            "name": "Till 4 Oct'2026",
+            "period_start": datetime(2000, 1, 1).date(),
+            "period_end": TICKBAGS_LEGACY_END,
+        }
+    monday = day - timedelta(days=day.weekday())
+    sunday = monday + timedelta(days=6)
+    return {
+        "vendor": TICKBAGS_VENDOR,
+        "name": f"{monday.strftime('%d %b %Y')} – {sunday.strftime('%d %b %Y')}",
+        "period_start": monday,
+        "period_end": sunday,
+    }
+
+
+def tickbags_order_is_returned(order, item):
+    statuses = [order.get("status"), item.get("status")]
+    return bool(
+        order.get("cancelled_at")
+        or is_return_received_order(order)
+        or status_contains_any(statuses, RETURN_COURIER_MARKERS)
+    )
+
+
+def tickbags_line_eligible_date(order, item):
+    tracking = str(item.get("tracking_number") or "").strip()
+    dispatch_date = parse_courier_event_date(item.get("dispatched_at"))
+    if not dispatch_date:
+        dispatch_date = parse_courier_event_date(dated_order_tag_date(order.get("tags"), "Dispatched"))
+    if tracking and tracking not in {"N/A", "0"} and dispatch_date:
+        return dispatch_date
+
+    lahore_date = (
+        dated_order_tag_date(order.get("tags"), "Delivered in Lahore Approved")
+        or dated_order_tag_date(order.get("tags"), "Delivered in Lahore")
+    )
+    if not lahore_date and has_order_tag(order.get("tags"), "Delivered in Lahore"):
+        lahore_date = str(order.get("created_at") or "")[:10]
+    return parse_courier_event_date(lahore_date)
+
+
+def build_tickbags_invoice_source(orders, today=None):
+    today = today or datetime.now().date()
+    grouped = {}
+    for order in orders or []:
+        for position, item in enumerate(order.get("line_items") or []):
+            if not is_tickbags_product(item):
+                continue
+            eligible_date = tickbags_line_eligible_date(order, item)
+            if not eligible_date or eligible_date > today:
+                continue
+            period = tickbags_invoice_period(eligible_date)
+            period_key = (period["period_start"], period["period_end"])
+            grouped.setdefault(period_key, {"invoice": period, "lines": []})
+            product_identity = item.get("variant_id") or item.get("product_id") or item.get("product_title")
+            quantity = max(parse_int(item.get("quantity"), 1), 1)
+            grouped[period_key]["lines"].append({
+                "line_key": f"tickbags:{order.get('id') or order.get('order_id')}:{product_identity}:{position}",
+                "shopify_order_id": str(order.get("id") or ""),
+                "order_number": str(order.get("order_id") or ""),
+                "eligible_date": eligible_date,
+                "product_id": str(item.get("product_id") or ""),
+                "variant_id": str(item.get("variant_id") or ""),
+                "product_name": item.get("product_title") or "Bean bag",
+                "image_url": item.get("image_src") or "",
+                "unit_cost": parse_money(item.get("unit_cost"), 0),
+                "quantity": quantity,
+                "order_status": normalize_courier_status_label(item.get("status") or order.get("status") or ""),
+                "is_returned": tickbags_order_is_returned(order, item),
+            })
+    current_period = tickbags_invoice_period(today)
+    grouped.setdefault(
+        (current_period["period_start"], current_period["period_end"]),
+        {"invoice": current_period, "lines": []},
+    )
+    return list(grouped.values())
+
+
+def sync_tickbags_invoices(orders=None, today=None):
+    enriched_orders = enrich_orders_with_shopify_costs(list(orders if orders is not None else order_details))
+    for batch in build_tickbags_invoice_source(enriched_orders, today=today):
+        if batch["invoice"]["period_end"] <= TICKBAGS_LEGACY_END:
+            continue
+        sync_vendor_invoice(batch["invoice"], batch["lines"])
+    return load_vendor_invoices(TICKBAGS_VENDOR)
+
+
+def backfill_tickbags_invoice(period=None):
+    """Backfill an invoice from all Shopify orders, including closed/cancelled orders."""
+    period = period or tickbags_invoice_period(TICKBAGS_LEGACY_END)
+    setup_shopify()
+    raw_orders = fetch_all_shopify_orders(get_shopify_created_at_min(), "any") or []
+    catalog = get_active_shopify_products(limit=250)
+    by_variant = {str(row.get("variant_id") or ""): row for row in catalog if row.get("variant_id")}
+    by_product = {str(row.get("product_id") or ""): row for row in catalog if row.get("product_id")}
+    lines = []
+    for order in raw_orders:
+        tags = [tag.strip() for tag in str(getattr(order, "tags", "") or "").split(",") if tag.strip()]
+        dispatch_date = parse_courier_event_date(dated_order_tag_date(tags, "Dispatched"))
+        lahore_date = parse_courier_event_date(
+            dated_order_tag_date(tags, "Delivered in Lahore Approved")
+            or dated_order_tag_date(tags, "Delivered in Lahore")
+        )
+        eligible_date = dispatch_date or lahore_date
+        if not eligible_date or not (period["period_start"] <= eligible_date <= period["period_end"]):
+            continue
+        returned = bool(
+            getattr(order, "cancelled_at", None)
+            or dated_order_tag_date(tags, "Return Received")
+            or has_order_tag(tags, "Returned")
+        )
+        order_status = "Returned" if returned else ((getattr(order, "fulfillment_status", "") or "Dispatched").title())
+        for position, item in enumerate(getattr(order, "line_items", []) or []):
+            base_title = getattr(item, "title", "") or "Product"
+            variant_title = getattr(item, "variant_title", "") or ""
+            product_name = base_title if variant_title in {"", "Default Title"} else f"{base_title} - {variant_title}"
+            if not is_tickbags_product({"product_title": product_name}):
+                continue
+            variant_id = str(getattr(item, "variant_id", "") or "")
+            product_id = str(getattr(item, "product_id", "") or "")
+            product = by_variant.get(variant_id) or by_product.get(product_id) or {}
+            quantity = max(parse_int(getattr(item, "quantity", 1), 1), 1)
+            lines.append({
+                "line_key": f"tickbags:{getattr(order, 'id', '')}:{variant_id or product_id or product_name}:{position}",
+                "shopify_order_id": str(getattr(order, "id", "") or ""),
+                "order_number": str(getattr(order, "name", "") or ""),
+                "eligible_date": eligible_date,
+                "product_id": product_id,
+                "variant_id": variant_id,
+                "product_name": product_name,
+                "image_url": product.get("image") or "",
+                "unit_cost": parse_money(product.get("cost"), 0),
+                "quantity": quantity,
+                "order_status": order_status,
+                "is_returned": returned,
+            })
+    sync_vendor_invoice(period, lines)
+    return len(lines)
+
+
+def ensure_tickbags_invoices():
+    invoices = load_vendor_invoices(TICKBAGS_VENDOR)
+    legacy = next((row for row in invoices if row.get("period_end") == TICKBAGS_LEGACY_END), None)
+    if not legacy or not legacy.get("lines"):
+        try:
+            backfill_tickbags_invoice(tickbags_invoice_period(TICKBAGS_LEGACY_END))
+        except Exception as error:
+            print(f"Could not backfill Tick Bags legacy invoice: {error}")
+    elif legacy.get("status") != "Paid" and any(parse_money(line.get("unit_cost")) <= 0 for line in legacy.get("lines") or []):
+        catalog = get_active_shopify_products(limit=250)
+        by_variant = {str(row.get("variant_id") or ""): row for row in catalog if row.get("variant_id")}
+        by_product = {str(row.get("product_id") or ""): row for row in catalog if row.get("product_id")}
+        refreshed = []
+        for line in legacy.get("lines") or []:
+            row = dict(line)
+            product = by_variant.get(str(row.get("variant_id") or "")) or by_product.get(str(row.get("product_id") or "")) or {}
+            row["unit_cost"] = parse_money(product.get("cost"), row.get("unit_cost") or 0)
+            refreshed.append(row)
+        sync_vendor_invoice(tickbags_invoice_period(TICKBAGS_LEGACY_END), refreshed)
+    return sync_tickbags_invoices()
+
+
+def run_tickbags_sunday_invoice_if_due(today=None):
+    today = today or datetime.now().date()
+    if today.weekday() != 6 or get_app_setting(TICKBAGS_WEEKLY_SYNC_SETTING_KEY, "") == today.isoformat():
+        return False
+    backfill_tickbags_invoice(tickbags_invoice_period(today))
+    set_app_setting(TICKBAGS_WEEKLY_SYNC_SETTING_KEY, today.isoformat())
+    return True
+
+
+def automatic_tickbags_invoice_loop():
+    while True:
+        try:
+            run_tickbags_sunday_invoice_if_due()
+        except Exception as error:
+            print(f"Could not create scheduled Tick Bags invoice: {error}")
+        time.sleep(60 * 60)
+
+
+def present_tickbags_invoices(invoices):
+    presented = []
+    for invoice in invoices or []:
+        lines = invoice.get("lines") or []
+        products_total = round(sum(parse_money(line.get("unit_cost")) * int(line.get("quantity") or 0) for line in lines), 2)
+        refunds = round(sum(parse_money(row.get("amount")) for row in invoice.get("refunds") or []), 2)
+        missing_costs = sum(1 for line in lines if parse_money(line.get("unit_cost")) <= 0)
+        summary = {}
+        for line in lines:
+            key = (line.get("product_name"), line.get("image_url"), parse_money(line.get("unit_cost")))
+            row = summary.setdefault(key, {
+                "product_name": line.get("product_name"), "image_url": line.get("image_url"),
+                "unit_cost": parse_money(line.get("unit_cost")), "quantity": 0, "total": 0,
+            })
+            row["quantity"] += int(line.get("quantity") or 0)
+            row["total"] = round(row["unit_cost"] * row["quantity"], 2)
+        payload = dict(invoice)
+        payload.update({
+            "summary": list(summary.values()), "products_total": products_total,
+            "refunds_total": refunds, "payable": round(products_total - refunds, 2),
+            "missing_costs": missing_costs,
+        })
+        presented.append(payload)
+    return presented
+
+
 def build_employee_invoice_payload(order_name, customer_name, phone, city, address, payment_method, delivery_method, catalog_items, custom_items, discount_amount, delivery_charges, advance_amount):
     items = []
     subtotal = 0.0
@@ -5043,6 +5271,7 @@ def build_admin_mobile_sections():
         {"id": "pending", "label": "Pending", "icon": "📋", "src": "/pending?embedded=1"},
         {"id": "abandoned", "label": "Abandoned", "icon": "🛒", "src": "/abandoned?embedded=1"},
         {"id": "product-costs", "label": "Product Costs", "icon": "💰", "src": "/product-costs?embedded=1"},
+        {"id": "tickbags-invoices", "label": "Tick Bags", "icon": "🧺", "src": "/tickbags-invoices?embedded=1"},
         {"id": "undelivered", "label": "Undelivered", "icon": "🚚", "src": "/undelivered?embedded=1"},
     ]
 
@@ -5494,6 +5723,53 @@ def refresh_aghaje_orders_tracking():
 @app.route("/product-costs")
 def product_costs():
     return render_template("product_costs.html", products=build_product_cost_rows())
+
+
+@app.route("/tickbags-invoices")
+def tickbags_invoices():
+    invoices = present_tickbags_invoices(ensure_tickbags_invoices())
+    current_invoice = next((invoice for invoice in invoices if invoice.get("status") != "Paid"), None)
+    return render_template(
+        "tickbags_invoices.html",
+        invoices=invoices,
+        current_invoice_id=current_invoice.get("id") if current_invoice else None,
+    )
+
+
+@app.route("/tickbags-invoices/<int:invoice_id>/pay", methods=["POST"])
+def pay_tickbags_invoice(invoice_id):
+    data = request.get_json(silent=True) or {}
+    payment_method = str(data.get("payment_method") or "").strip()
+    comments = str(data.get("comments") or "").strip()
+    if payment_method not in {"Adjusted in Payments", "Received in Bank"}:
+        return jsonify({"success": False, "error": "Choose a valid payment method."}), 400
+    saved = mark_vendor_invoice_paid(invoice_id, payment_method, comments)
+    if not saved:
+        return jsonify({"success": False, "error": "Invoice could not be marked paid."}), 404
+    return jsonify({"success": True, "invoice": saved})
+
+
+@app.route("/tickbags-invoices/refund", methods=["POST"])
+def refund_tickbags_invoice_line():
+    data = request.get_json(silent=True) or {}
+    try:
+        source_line_id = int(data.get("line_id"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Invoice line is required."}), 400
+    invoices = load_vendor_invoices(TICKBAGS_VENDOR)
+    current = next((invoice for invoice in invoices if invoice.get("status") != "Paid"), None)
+    source = next(
+        (line for invoice in invoices for line in invoice.get("lines") or [] if int(line.get("id") or 0) == source_line_id),
+        None,
+    )
+    if not current:
+        return jsonify({"success": False, "error": "No current draft invoice is available."}), 409
+    if not source or not source.get("is_returned"):
+        return jsonify({"success": False, "error": "Only returned order charges can be reversed."}), 400
+    saved = add_vendor_invoice_refund(current["id"], source_line_id)
+    if not saved:
+        return jsonify({"success": False, "error": "Charge could not be reversed."}), 500
+    return jsonify({"success": True, "refund": saved, "invoice_id": current["id"]})
 
 
 @app.route("/product-costs/update", methods=["POST"])
@@ -6752,6 +7028,11 @@ if os.getenv("INITIALIZE_APP", "true") == "true":
         target=automatic_order_tracking_refresh_loop,
         daemon=True,
         name="automatic-order-tracking-refresh",
+    ).start()
+    threading.Thread(
+        target=automatic_tickbags_invoice_loop,
+        daemon=True,
+        name="automatic-tickbags-invoices",
     ).start()
     threading.Thread(target=warm_runtime_caches, daemon=True, name="runtime-cache-warm").start()
     threading.Thread(target=warm_daraz_cache, daemon=True, name="daraz-cache-warm").start()
