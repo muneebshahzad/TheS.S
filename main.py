@@ -4955,27 +4955,9 @@ def backfill_tickbags_invoice(period=None):
     catalog = get_active_shopify_products(limit=250)
     by_variant = {str(row.get("variant_id") or ""): row for row in catalog if row.get("variant_id")}
     by_product = {str(row.get("product_id") or ""): row for row in catalog if row.get("product_id")}
-    candidate_tracking = []
-    for order in raw_orders:
-        tags = [tag.strip() for tag in str(getattr(order, "tags", "") or "").split(",") if tag.strip()]
-        tagged_beanbag = has_order_tag(tags, "BeanBag")
-        if not tagged_beanbag:
-            tagged_beanbag = any(
-                is_tickbags_product({
-                    "product_title": getattr(item, "title", "") or "",
-                    "product_type": (by_variant.get(str(getattr(item, "variant_id", "") or "")) or by_product.get(str(getattr(item, "product_id", "") or "")) or {}).get("product_type"),
-                }) for item in (getattr(order, "line_items", []) or [])
-            )
-        if not tagged_beanbag:
-            continue
-        for fulfillment in (getattr(order, "fulfillments", []) or []):
-            tracking = shopify_fulfillment_tracking(fulfillment)
-            if tracking and str(getattr(fulfillment, "status", "") or "").lower() != "cancelled":
-                candidate_tracking.append(tracking)
-    refresh_tracking_summaries_sync(
-        candidate_tracking, limit=100, fresh_seconds=AGHAJE_AUTO_TRACK_FRESH_SECONDS,
-        deadline_seconds=TRACKING_REFRESH_SYNC_DEADLINE_SECONDS,
-    )
+    # Do not refresh thousands of courier records inside an invoice/web
+    # request. The hourly tracking daemon owns network refreshes; this
+    # authoritative backfill consumes its persisted cache.
     lines = []
     for order in raw_orders:
         tags = [tag.strip() for tag in str(getattr(order, "tags", "") or "").split(",") if tag.strip()]
@@ -5069,7 +5051,6 @@ def ensure_tickbags_invoices():
     if get_app_setting(TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY, "") != "complete":
         try:
             backfill_tickbags_invoice(tickbags_invoice_period(TICKBAGS_LEGACY_END))
-            backfill_tickbags_invoice(tickbags_invoice_period(datetime.now(PAKISTAN_TIMEZONE).date()))
             set_app_setting(TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY, "complete")
             invoices = load_vendor_invoices(TICKBAGS_VENDOR)
         except Exception as error:
