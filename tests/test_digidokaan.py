@@ -225,6 +225,38 @@ def test_digidokaan_shipment_prefix_is_removed_before_pending_classification():
     ]) == "Booked"
 
 
+def test_return_statuses_are_split_into_mutually_exclusive_dashboard_buckets():
+    import main
+
+    returned_to_shipper = (
+        "Return Submitted",
+        "RETURN SUBMISSION",
+        "Return To Sender - STAFF",
+        "Returned to Sender",
+        "Return to Shipper",
+        "Returned to Shipper",
+    )
+    being_return = (
+        "Out for Return",
+        "Return to Origin",
+        "Return - In Transit",
+        "Return - Arrived at Origin",
+        "Being Return",
+    )
+
+    for status in returned_to_shipper:
+        assert main.normalize_status_bucket(status) == "RETURNED TO SHIPPER"
+    for status in being_return:
+        assert main.normalize_status_bucket(status) == "Being Return"
+
+    assert main.aggregate_order_status([
+        {"status": "Return To Sender - STAFF", "tracking_number": "LE123"}
+    ]) == "RETURNED TO SHIPPER"
+    assert main.aggregate_order_status([
+        {"status": "Shipment - Return - Arrived at Origin", "tracking_number": "223123"}
+    ]) == "Being Return"
+
+
 def test_payments_page_is_private_and_api_returns_digidokaan_ledger(monkeypatch):
     monkeypatch.setenv("INITIALIZE_APP", "false")
     import main

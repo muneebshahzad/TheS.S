@@ -465,9 +465,22 @@ def normalize_status_bucket(status):
     upper = raw.upper()
     if "PARTIALLY DELIVERED" in upper:
         return "Partially Delivered"
-    if "RETURNED TO SHIPPER" in upper:
+    # Final/merchant-actioned return states belong in the Returned to Shipper
+    # queue. Check these before the broader return matcher below so the two
+    # dashboard filters remain mutually exclusive.
+    if any(marker in upper for marker in (
+        "RETURNED TO SHIPPER",
+        "RETURN TO SHIPPER",
+        "RETURNED TO SENDER",
+        "RETURN TO SENDER",
+        "RETURN SUBMITTED",
+        "RETURN SUBMISSION",
+    )):
         return "RETURNED TO SHIPPER"
-    if "BEING RETURN" in upper or "OUT FOR RETURN" in upper or "RETURN SUBMISSION" in upper:
+    # Every other courier return journey is still in progress. This covers
+    # provider-specific labels such as Return - In Transit, Return to Origin,
+    # Return - Arrived at Origin and Out for Return.
+    if "RETURN" in upper or upper.startswith("RTO "):
         return "Being Return"
     if "UNDELIVERED" in upper:
         return "Undelivered"
