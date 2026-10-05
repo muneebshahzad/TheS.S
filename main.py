@@ -5557,6 +5557,7 @@ def fetch_leopards_shipper_advice_sync(days=30):
     response = requests.post(
         "https://merchantapi.leopardscourier.com/api/shipperAdviceList/format/json/",
         json=payload,
+        verify=False,
         timeout=45,
     )
     response.raise_for_status()
@@ -5595,6 +5596,7 @@ def submit_leopards_shipper_advice(advice_id, tracking_number, advice_status, re
             "id": advice_id, "cn_number": tracking_number,
             "shipper_advice_status": code, "shipper_remarks": remarks,
         }]},
+        verify=False,
         timeout=45,
     )
     response.raise_for_status()
@@ -5608,7 +5610,11 @@ def load_shipper_advice_sync(force=False):
     async def run():
         async with aiohttp.ClientSession() as client:
             return await fetch_pending_shipper_advice(client, force=force)
-    rows = asyncio.run(run())
+    try:
+        rows = asyncio.run(run())
+    except Exception as error:
+        print(f"Could not load DigiDokaan shipper advice: {error}")
+        rows = []
     acknowledged = load_acknowledged_shipper_advice()
     visible_rows = [
         row for row in rows

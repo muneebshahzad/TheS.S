@@ -78,8 +78,8 @@ def test_leopards_shipper_advice_uses_ra_rt_payload(monkeypatch):
         def json(self):
             return {"status": 1, "error": 0, "data": "Updated"}
 
-    def fake_post(url, json, timeout):
-        captured.update(url=url, payload=json, timeout=timeout)
+    def fake_post(url, json, timeout, verify=True):
+        captured.update(url=url, payload=json, timeout=timeout, verify=verify)
         return Response()
 
     monkeypatch.setenv("LEOPARD_API_KEY", "key")
@@ -91,6 +91,7 @@ def test_leopards_shipper_advice_uses_ra_rt_payload(monkeypatch):
         "id": 12, "cn_number": "LE123", "shipper_advice_status": "RA",
         "shipper_remarks": "Customer interested",
     }
+    assert captured["verify"] is False
 
 
 def test_leopards_shipper_advice_normalizes_pending_feed(monkeypatch):
@@ -113,6 +114,28 @@ def test_leopards_shipper_advice_normalizes_pending_feed(monkeypatch):
         "courier_status_reason": "Consignee refused", "courier_status": "",
         "shipper_remarks": "", "courier_source": "leopards",
     }]
+
+
+def test_leopards_advice_still_loads_when_digidokaan_is_unavailable(monkeypatch):
+    async def unavailable(_client, force=False):
+        raise RuntimeError("DigiDokaan unavailable")
+
+    monkeypatch.setattr(main, "fetch_pending_shipper_advice", unavailable)
+    monkeypatch.setattr(main, "fetch_leopards_shipper_advice_sync", lambda: [{
+        "advice_id": 18,
+        "tracking_no": "LE7544000000",
+        "external_reference_no": "PK3000A01",
+        "courier_status_reason": "Consignee refused",
+        "courier_source": "leopards",
+    }])
+    monkeypatch.setattr(main, "load_acknowledged_shipper_advice", lambda: {})
+    monkeypatch.setattr(main, "order_details", [])
+
+    rows = main.load_shipper_advice_sync(force=True)
+
+    assert len(rows) == 1
+    assert rows[0]["tracking_no"] == "LE7544000000"
+    assert rows[0]["courier_source"] == "leopards"
 
 
 def test_payment_ledger_merges_entries_and_requires_explicit_paid_cheque():
