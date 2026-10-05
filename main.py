@@ -5145,10 +5145,13 @@ def present_tickbags_invoices(invoices):
             row["quantity"] += int(line.get("quantity") or 0)
             row["total"] = round(row["unit_cost"] * row["quantity"], 2)
         payload = dict(invoice)
+        net_balance = round(products_total - refunds - adjustments, 2)
         payload.update({
             "summary": list(summary.values()), "products_total": products_total,
             "refunds_total": refunds, "adjustments_total": adjustments,
-            "payable": max(round(products_total - refunds - adjustments, 2), 0),
+            "net_balance": net_balance,
+            "payable": max(net_balance, 0),
+            "receivable": max(-net_balance, 0),
             "missing_costs": missing_costs,
         })
         presented.append(payload)
@@ -5976,12 +5979,13 @@ def tickbags_invoices():
     raw_invoices = ensure_tickbags_invoices()
     invoices = present_tickbags_invoices(raw_invoices)
     current_invoice = next((invoice for invoice in invoices if invoice.get("status") == "Draft"), None)
-    current_balance = round(sum(invoice.get("payable", 0) for invoice in invoices if invoice.get("status") != "Paid"), 2)
+    current_balance = round(sum(invoice.get("net_balance", 0) for invoice in invoices if invoice.get("status") != "Paid"), 2)
     return render_template(
         "tickbags_invoices.html",
         invoices=invoices,
         current_invoice_id=current_invoice.get("id") if current_invoice else None,
-        current_balance=current_balance,
+        current_balance=abs(current_balance),
+        current_balance_type="Receivable" if current_balance < 0 else "Payable",
         product_cost_rows=build_tickbags_product_cost_rows(raw_invoices),
         pending_lahore_orders=build_tickbags_pending_lahore_orders(),
     )

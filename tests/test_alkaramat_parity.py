@@ -347,6 +347,17 @@ def test_tickbags_tag_includes_custom_products_and_adjustments_reduce_balance():
     assert invoice["products_total"] == 10000
     assert invoice["adjustments_total"] == 5000
     assert invoice["payable"] == 5000
+    assert invoice["receivable"] == 0
+
+
+def test_tickbags_overpayment_is_preserved_as_receivable():
+    invoice = main.present_tickbags_invoices([{
+        "id": 3, "status": "Draft", "lines": [], "refunds": [],
+        "adjustments": [{"amount": 44624}],
+    }])[0]
+    assert invoice["net_balance"] == -44624
+    assert invoice["payable"] == 0
+    assert invoice["receivable"] == 44624
 
 
 def test_tickbags_fulfilled_without_tracking_requires_lahore_approval():
@@ -392,7 +403,7 @@ def test_tickbags_pending_lahore_orders_excludes_tracked_orders(monkeypatch):
 
 def test_tickbags_invoice_template_has_required_ledger_controls():
     source = (Path(__file__).resolve().parents[1] / "templates" / "tickbags_invoices.html").read_text()
-    for label in ("Products total", "Refunds", "Payable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current outstanding balance", "Record partial payment", "Mark as Final Invoice", "Product costs", "Update open invoices"):
+    for label in ("Products total", "Refunds", "Payable", "Receivable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current {{ current_balance_type }}", "Record partial payment", "Mark as Final Invoice", "Product costs", "Update open invoices"):
         assert label in source
 
 
