@@ -362,6 +362,19 @@ def test_tickbags_fulfilled_without_tracking_requires_lahore_approval():
     assert lines[0]["tracking_number"] == ""
 
 
+def test_tickbags_removed_shopify_item_is_not_in_invoice():
+    order = {
+        "id": 2937, "order_id": "PK2937A01",
+        "tags": ["BeanBag", "Delivered in Lahore Approved (2026-09-25)"],
+        "status": "Fulfilled", "line_items": [
+            {"product_title": "Kept football beanbag", "quantity": 2, "current_quantity": 2},
+            {"product_title": "Removed ottoman", "quantity": 2, "current_quantity": 0},
+        ],
+    }
+    lines = [line for batch in main.build_tickbags_invoice_source([order], today=date(2026, 10, 5)) for line in batch["lines"]]
+    assert [(line["product_name"], line["quantity"]) for line in lines] == [("Kept football beanbag", 2)]
+
+
 def test_tickbags_pending_lahore_orders_excludes_tracked_orders(monkeypatch):
     monkeypatch.setattr(main, "load_order_statuses", lambda: {})
     orders = [{
@@ -379,7 +392,7 @@ def test_tickbags_pending_lahore_orders_excludes_tracked_orders(monkeypatch):
 
 def test_tickbags_invoice_template_has_required_ledger_controls():
     source = (Path(__file__).resolve().parents[1] / "templates" / "tickbags_invoices.html").read_text()
-    for label in ("Products total", "Refunds", "Payable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current outstanding balance", "Record partial payment"):
+    for label in ("Products total", "Refunds", "Payable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current outstanding balance", "Record partial payment", "Mark as Final Invoice"):
         assert label in source
 
 

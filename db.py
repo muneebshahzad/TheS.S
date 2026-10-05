@@ -137,12 +137,14 @@ def _ensure_vendor_invoices_tables(cur):
             payment_method TEXT NOT NULL DEFAULT '',
             comments TEXT NOT NULL DEFAULT '',
             paid_at TIMESTAMPTZ,
+            finalized_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE (vendor, period_start, period_end)
         )
         """
     )
+    cur.execute("ALTER TABLE vendor_invoices ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMPTZ")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS vendor_invoice_lines (
@@ -487,7 +489,7 @@ def sync_vendor_invoice(invoice, lines):
                     (invoice["vendor"], invoice["name"], invoice["period_start"], invoice["period_end"]),
                 )
                 saved = dict(cur.fetchone())
-                if saved["status"] != "Paid":
+                if saved["status"] == "Draft":
                     for line in lines:
                         cur.execute(
                             """INSERT INTO vendor_invoice_lines
@@ -527,7 +529,7 @@ def prune_vendor_invoice_lines(invoice, line_keys):
                     """DELETE FROM vendor_invoice_lines l
                        USING vendor_invoices i
                        WHERE l.invoice_id=i.id AND i.vendor=%s AND i.period_start=%s AND i.period_end=%s
-                         AND i.status!='Paid' AND NOT (l.line_key = ANY(%s))
+                         AND i.status='Draft' AND NOT (l.line_key = ANY(%s))
                          AND NOT EXISTS (SELECT 1 FROM vendor_invoice_refunds r WHERE r.source_line_id=l.id)""",
                     (invoice["vendor"], invoice["period_start"], invoice["period_end"], list(line_keys) or ["__none__"]),
                 )
@@ -580,7 +582,7 @@ def update_vendor_invoice_line_cost(line_id, unit_cost):
                 _ensure_vendor_invoices_tables(cur)
                 cur.execute(
                     """UPDATE vendor_invoice_lines l SET unit_cost=%s, updated_at=NOW()
-                       FROM vendor_invoices i WHERE l.id=%s AND i.id=l.invoice_id AND i.status!='Paid'
+                       FROM vendor_invoices i WHERE l.id=%s AND i.id=l.invoice_id AND i.status='Draft'
                        RETURNING l.*""",
                     (unit_cost, int(line_id)),
                 )
@@ -621,8 +623,34 @@ def mark_vendor_invoice_paid(invoice_id, payment_method, comments=""):
                 _ensure_vendor_invoices_tables(cur)
                 cur.execute(
                     """UPDATE vendor_invoices SET status='Paid', payment_method=%s, comments=%s,
-                       paid_at=NOW(), updated_at=NOW() WHERE id=%s RETURNING *""",
+                       paid_at=NOW(), updated_at=NOW() WHERE id=%s AND status='Final' RETURNING *""",
                     (payment_method, comments, int(invoice_id)),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return dict(row) if row else None
+    except Exception as error:
+        _set_last_db_error(str(error))
+        return None
+
+
+def finalize_vendor_invoice(invoice_id):
+    """Freeze a reviewed draft invoice so automatic sync cannot alter it."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                _ensure_vendor_invoices_tables(cur)
+                cur.execute(
+                    """UPDATE vendor_invoices i
+                       SET status='Final', finalized_at=NOW(), updated_at=NOW()
+                       WHERE i.id=%s AND i.status='Draft'
+                         AND EXISTS (SELECT 1 FROM vendor_invoice_lines l WHERE l.invoice_id=i.id)
+                         AND NOT EXISTS (
+                           SELECT 1 FROM vendor_invoice_lines l
+                           WHERE l.invoice_id=i.id AND l.unit_cost <= 0
+                         )
+                       RETURNING i.*""",
+                    (int(invoice_id),),
                 )
                 row = cur.fetchone()
             conn.commit()

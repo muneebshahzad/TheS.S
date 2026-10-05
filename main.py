@@ -35,6 +35,7 @@ from db import (
     add_vendor_invoice_adjustment,
     add_vendor_invoice_refund,
     delete_order_status,
+    finalize_vendor_invoice,
     get_app_setting,
     init_db,
     load_admin_passkeys,
@@ -145,7 +146,7 @@ PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
 TICKBAGS_VENDOR = "Tick Bags"
 TICKBAGS_LEGACY_END = datetime(2026, 10, 4).date()
 TICKBAGS_WEEKLY_SYNC_SETTING_KEY = "tickbags_last_weekly_sync_v1"
-TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY = "tickbags_dispatch_eligibility_v3"
+TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY = "tickbags_dispatch_eligibility_v4"
 PAKISTAN_TIMEZONE = ZoneInfo("Asia/Karachi")
 AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY = "aghaje_net_payment_received_v1"
 TRACKING_SUMMARY_CACHE_SETTING_KEY = "tracking_summary_cache_v1"
@@ -4906,7 +4907,9 @@ def build_tickbags_invoice_source(orders, today=None):
             period_key = (period["period_start"], period["period_end"])
             grouped.setdefault(period_key, {"invoice": period, "lines": []})
             product_identity = item.get("variant_id") or item.get("product_id") or item.get("product_title")
-            quantity = max(parse_int(item.get("quantity"), 1), 1)
+            quantity = active_shopify_line_item_quantity(item)
+            if quantity <= 0:
+                continue
             grouped[period_key]["lines"].append({
                 "line_key": f"tickbags:{order.get('id') or order.get('order_id')}:{product_identity}:{position}",
                 "shopify_order_id": str(order.get("id") or ""),
@@ -5007,7 +5010,9 @@ def backfill_tickbags_invoice(period=None):
             product = by_variant.get(variant_id) or by_product.get(product_id) or {}
             if not tagged_beanbag and not is_tickbags_product({"product_title": product_name, "product_type": product.get("product_type")}):
                 continue
-            quantity = max(parse_int(getattr(item, "quantity", 1), 1), 1)
+            quantity = active_shopify_line_item_quantity(item)
+            if quantity <= 0:
+                continue
             fulfillment = next((row for row in (getattr(order, "fulfillments", []) or []) if shopify_fulfillment_tracking(row)), None)
             tracking_number = shopify_fulfillment_tracking(fulfillment) if fulfillment else ""
             live_summary = get_tracking_summary_cache_only(tracking_number) if tracking_number else None
@@ -5944,7 +5949,7 @@ def product_costs():
 @app.route("/tickbags-invoices")
 def tickbags_invoices():
     invoices = present_tickbags_invoices(ensure_tickbags_invoices())
-    current_invoice = next((invoice for invoice in invoices if invoice.get("status") != "Paid"), None)
+    current_invoice = next((invoice for invoice in invoices if invoice.get("status") == "Draft"), None)
     current_balance = round(sum(invoice.get("payable", 0) for invoice in invoices if invoice.get("status") != "Paid"), 2)
     return render_template(
         "tickbags_invoices.html",
@@ -5968,6 +5973,23 @@ def pay_tickbags_invoice(invoice_id):
     return jsonify({"success": True, "invoice": saved})
 
 
+@app.route("/tickbags-invoices/<int:invoice_id>/finalize", methods=["POST"])
+def finalize_tickbags_invoice(invoice_id):
+    invoice = next((row for row in load_vendor_invoices(TICKBAGS_VENDOR) if int(row.get("id") or 0) == invoice_id), None)
+    if not invoice:
+        return jsonify({"success": False, "error": "Invoice was not found."}), 404
+    if invoice.get("status") != "Draft":
+        return jsonify({"success": False, "error": "Only a draft invoice can be finalized."}), 409
+    if not invoice.get("lines"):
+        return jsonify({"success": False, "error": "An empty invoice cannot be finalized."}), 400
+    if any(parse_money(line.get("unit_cost")) <= 0 for line in invoice.get("lines") or []):
+        return jsonify({"success": False, "error": "Add every missing item cost before finalizing."}), 400
+    saved = finalize_vendor_invoice(invoice_id)
+    if not saved:
+        return jsonify({"success": False, "error": "Invoice could not be finalized."}), 409
+    return jsonify({"success": True, "invoice": saved})
+
+
 @app.route("/tickbags-invoices/refund", methods=["POST"])
 def refund_tickbags_invoice_line():
     data = request.get_json(silent=True) or {}
@@ -5976,7 +5998,7 @@ def refund_tickbags_invoice_line():
     except (TypeError, ValueError):
         return jsonify({"success": False, "error": "Invoice line is required."}), 400
     invoices = load_vendor_invoices(TICKBAGS_VENDOR)
-    current = next((invoice for invoice in invoices if invoice.get("status") != "Paid"), None)
+    current = next((invoice for invoice in invoices if invoice.get("status") == "Draft"), None)
     source = next(
         (line for invoice in invoices for line in invoice.get("lines") or [] if int(line.get("id") or 0) == source_line_id),
         None,
