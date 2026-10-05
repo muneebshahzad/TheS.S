@@ -682,6 +682,7 @@ function normalizeStatusBucket(status) {
   const upper = raw.toUpperCase();
 
   if (upper.includes('PARTIALLY DELIVERED')) return 'Partially Delivered';
+  if (upper.includes('OUT FOR RETURN')) return 'Being Return';
   const returnedToShipperMarkers = [
     'RETURNED TO SHIPPER', 'RETURN TO SHIPPER',
     'RETURNED TO SENDER', 'RETURN TO SENDER',
@@ -836,6 +837,24 @@ function updateOrderCardAfterMark(orderId, tag) {
 
 function syncAttentionCards() {
   ORDER_DATA.forEach((order) => {
+    const itemBuckets = (order.line_items || []).map(item => normalizeStatusBucket(item.status || ''));
+    const returnBucket = itemBuckets.includes('RETURNED TO SHIPPER')
+      ? 'RETURNED TO SHIPPER'
+      : (itemBuckets.includes('Being Return') ? 'Being Return' : '');
+    if (returnBucket) {
+      order.status = returnBucket;
+      const returnCard = document.getElementById('order-card-' + order.id);
+      if (!returnCard) return;
+      returnCard.dataset.status = returnBucket;
+      returnCard.dataset.search = `${returnCard.dataset.search || ''} ${returnBucket}`;
+      const returnBadge = returnCard.querySelector('.order-status-badge');
+      if (returnBadge) {
+        const meta = statusBadgeMeta(returnBucket);
+        returnBadge.className = `sbadge ${meta.cls} order-status-badge`;
+        returnBadge.innerHTML = `<svg width="6" height="6" viewBox="0 0 6 6"><circle cx="3" cy="3" r="3" fill="${meta.dot}"/></svg>${meta.label}`;
+      }
+      return;
+    }
     if (!orderNeedsAttention(order)) return;
     const card = document.getElementById('order-card-' + order.id);
     if (!card) return;
@@ -858,7 +877,8 @@ function renderStats() {
   ORDER_DATA.forEach(o => {
     const s = normalizeStatusBucket(o.status);
     const attention = orderNeedsAttention(o);
-    const statBucket = attention ? 'Need Attention' : s;
+    const isReturnBucket = s === 'Being Return' || s === 'RETURNED TO SHIPPER';
+    const statBucket = attention && !isReturnBucket ? 'Need Attention' : s;
     const amount = Number(o.total_price || 0);
     counts[statBucket] = (counts[statBucket] || 0) + 1;
     totals[statBucket] = (totals[statBucket] || 0) + amount;

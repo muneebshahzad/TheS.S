@@ -465,6 +465,8 @@ def normalize_status_bucket(status):
     upper = raw.upper()
     if "PARTIALLY DELIVERED" in upper:
         return "Partially Delivered"
+    if "OUT FOR RETURN" in upper:
+        return "Being Return"
     # Final/merchant-actioned return states belong in the Returned to Shipper
     # queue. Check these before the broader return matcher below so the two
     # dashboard filters remain mutually exclusive.

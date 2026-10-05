@@ -238,6 +238,7 @@ def test_return_statuses_are_split_into_mutually_exclusive_dashboard_buckets():
     )
     being_return = (
         "Out for Return",
+        "OUT FOR RETURN SUBMISSION",
         "Return to Origin",
         "Return - In Transit",
         "Return - Arrived at Origin",
