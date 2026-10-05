@@ -403,7 +403,7 @@ def test_tickbags_pending_lahore_orders_excludes_tracked_orders(monkeypatch):
 
 def test_tickbags_invoice_template_has_required_ledger_controls():
     source = (Path(__file__).resolve().parents[1] / "templates" / "tickbags_invoices.html").read_text()
-    for label in ("Products total", "Refunds", "Payable", "Receivable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current {{ current_balance_type }}", "Record partial payment", "Mark as Final Invoice", "Product costs", "Update open invoices"):
+    for label in ("Products total", "Refunds", "Payable", "Receivable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current {{ current_balance_type }}", "Record partial payment", "Mark as Final Invoice", "Product costs", "Update all changes", "Hide products with saved costs"):
         assert label in source
 
 
@@ -417,6 +417,18 @@ def test_tickbags_product_cost_rows_sort_by_open_invoice_units():
     ]}]
     rows = main.build_tickbags_product_cost_rows(invoices, catalog=[])
     assert [(row["product_name"], row["units_sold"]) for row in rows] == [("High", 6), ("Low", 1)]
+
+
+def test_tickbags_product_cost_groups_keep_colours_together():
+    rows = [
+        {"product_title": "Cocoon", "product_name": "Cocoon - Olive", "units_sold": 1},
+        {"product_title": "Other", "product_name": "Other - Red", "units_sold": 2},
+        {"product_title": "Cocoon", "product_name": "Cocoon - Black", "units_sold": 4},
+    ]
+    groups = main.group_tickbags_product_cost_rows(rows)
+    assert groups[0]["name"] == "Cocoon"
+    assert [row["product_name"] for row in groups[0]["variants"]] == ["Cocoon - Black", "Cocoon - Olive"]
+    assert groups[0]["units_sold"] == 5
 
 
 def test_tickbags_invoice_template_renders_pending_lahore_items():

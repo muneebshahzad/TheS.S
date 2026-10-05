@@ -5175,11 +5175,25 @@ def build_tickbags_product_cost_rows(invoices, catalog=None):
             row = grouped.setdefault(key, {
                 "variant_id": variant_id, "product_id": product_id,
                 "inventory_item_id": str(product.get("inventory_item_id") or ""),
+                "product_title": product.get("product_title") or name,
                 "product_name": name, "image_url": line.get("image_url") or product.get("image") or "",
                 "unit_cost": parse_money(product.get("cost"), line.get("unit_cost") or 0), "units_sold": 0,
             })
             row["units_sold"] += int(line.get("quantity") or 0)
     return sorted(grouped.values(), key=lambda row: (-row["units_sold"], row["product_name"].lower()))
+
+
+def group_tickbags_product_cost_rows(rows):
+    groups = {}
+    for row in rows or []:
+        family = str(row.get("product_title") or row.get("product_name") or "Bean bags").strip()
+        group = groups.setdefault(family.lower(), {"name": family, "units_sold": 0, "variants": []})
+        group["units_sold"] += int(row.get("units_sold") or 0)
+        group["variants"].append(row)
+    result = list(groups.values())
+    for group in result:
+        group["variants"].sort(key=lambda row: (-int(row.get("units_sold") or 0), str(row.get("product_name") or "").lower()))
+    return sorted(result, key=lambda group: (-group["units_sold"], group["name"].lower()))
 
 
 def build_employee_invoice_payload(order_name, customer_name, phone, city, address, payment_method, delivery_method, catalog_items, custom_items, discount_amount, delivery_charges, advance_amount):
@@ -5986,7 +6000,7 @@ def tickbags_invoices():
         current_invoice_id=current_invoice.get("id") if current_invoice else None,
         current_balance=abs(current_balance),
         current_balance_type="Receivable" if current_balance < 0 else "Payable",
-        product_cost_rows=build_tickbags_product_cost_rows(raw_invoices),
+        product_cost_groups=group_tickbags_product_cost_rows(build_tickbags_product_cost_rows(raw_invoices)),
         pending_lahore_orders=build_tickbags_pending_lahore_orders(),
     )
 
@@ -6059,30 +6073,35 @@ def save_tickbags_line_cost():
 @app.route("/tickbags-invoices/product-cost", methods=["POST"])
 def save_tickbags_product_cost():
     data = request.get_json(silent=True) or {}
-    cost = parse_money(data.get("unit_cost"), -1)
-    if cost < 0:
-        return jsonify({"success": False, "error": "Enter a valid product cost."}), 400
-    variant_id = str(data.get("variant_id") or "").strip()
-    product_id = str(data.get("product_id") or "").strip()
-    inventory_item_id = str(data.get("inventory_item_id") or "").strip()
-    product_name = str(data.get("product_name") or "").strip()
-    if not variant_id and not product_id and not product_name:
-        return jsonify({"success": False, "error": "Product identity is required."}), 400
+    updates = data.get("products") if isinstance(data.get("products"), list) else [data]
+    if not updates or len(updates) > 250:
+        return jsonify({"success": False, "error": "Provide between 1 and 250 products."}), 400
     try:
-        if inventory_item_id:
-            update_shopify_inventory_item_cost(inventory_item_id, cost)
         overrides = load_product_cost_overrides()
-        set_cost_override(
-            overrides, product_id=product_id, variant_id=variant_id,
-            title=product_name, price=0, cost=cost,
-        )
+        total_updated = 0
+        saved_products = []
+        for row in updates:
+            cost = parse_money(row.get("unit_cost"), -1)
+            variant_id = str(row.get("variant_id") or "").strip()
+            product_id = str(row.get("product_id") or "").strip()
+            inventory_item_id = str(row.get("inventory_item_id") or "").strip()
+            product_name = str(row.get("product_name") or "").strip()
+            if cost < 0 or (not variant_id and not product_id and not product_name):
+                return jsonify({"success": False, "error": f"Invalid cost row for {product_name or 'a product'}."}), 400
+            if inventory_item_id:
+                update_shopify_inventory_item_cost(inventory_item_id, cost)
+            set_cost_override(
+                overrides, product_id=product_id, variant_id=variant_id,
+                title=product_name, price=0, cost=cost,
+            )
+            total_updated += update_open_vendor_product_cost(
+                TICKBAGS_VENDOR, cost, variant_id=variant_id,
+                product_id=product_id, product_name=product_name,
+            )
+            saved_products.append({"product_name": product_name, "cost": cost})
         if not save_product_cost_overrides(overrides):
             raise RuntimeError("Could not save the product cost.")
-        updated = update_open_vendor_product_cost(
-            TICKBAGS_VENDOR, cost, variant_id=variant_id,
-            product_id=product_id, product_name=product_name,
-        )
-        return jsonify({"success": True, "cost": cost, "updated_lines": updated})
+        return jsonify({"success": True, "products": saved_products, "updated_lines": total_updated})
     except Exception as error:
         return jsonify({"success": False, "error": str(error)}), 500
 
