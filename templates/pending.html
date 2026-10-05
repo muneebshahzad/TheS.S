@@ -69,6 +69,10 @@
   .vendor-summary span { display:block; color:#858796; font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
   .vendor-summary strong { display:block; margin-top:3px; color:#2d2e36; font-size:13px; }
   .summary-tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .summary-group-title { display:flex; align-items:center; gap:8px; padding:12px 12px 0; color:#3a3b45; font-size:13px; font-weight:800; }
+  .summary-group-title.beanbags { color:#9a5b12; }
+  .summary-group-title .section-count { margin-left:auto; }
+  .summary-divider { height:1px; background:#edf0f5; margin:14px 12px 0; }
   .summary-search { width:min(240px,48vw); border:1px solid #dce2ee; border-radius:10px; padding:9px 11px; font:12px 'DM Sans',sans-serif; }
   .top-vendor-btn { border:1px solid #4e73df; border-radius:999px; background:#eef3ff; color:#365ebf; padding:8px 12px; font:800 11px 'DM Sans',sans-serif; cursor:pointer; white-space:nowrap; }
   .vendor-dock { display:none; }
@@ -124,7 +128,7 @@
   <div class="pending-scroll">
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-icon" style="background:rgba(78,115,223,0.1)">📋</div><div><div class="stat-label">Orders</div><div class="stat-value" style="color:#4e73df">{{ all_orders|length }}</div></div></div>
-      <div class="stat-card"><div class="stat-icon" style="background:rgba(28,200,138,0.1)">📦</div><div><div class="stat-label">Unique Items</div><div class="stat-value" style="color:#1cc88a">{{ pending_items|length }}</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(28,200,138,0.1)">📦</div><div><div class="stat-label">Unique Items</div><div class="stat-value" style="color:#1cc88a">{{ unique_item_count }}</div></div></div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(246,194,62,0.12)">🏷️</div><div><div class="stat-label">Booked</div><div class="stat-value" style="color:#f6c23e">{{ all_orders|selectattr('status', 'equalto', 'Booked')|list|length }}</div></div></div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(133,135,150,0.12)">⌛</div><div><div class="stat-label">Un-Booked</div><div class="stat-value" style="color:#858796">{{ all_orders|selectattr('status', 'equalto', 'Un-Booked')|list|length }}</div></div></div>
       <div class="stat-card"><div class="stat-icon" style="background:rgba(54,185,204,0.12)">🪙</div><div><div class="stat-label">Items Cost</div><div class="stat-value" style="color:#36b9cc">PKR {{ summary.total_items_cost|format_number }}</div></div></div>
@@ -138,13 +142,26 @@
           <span style="font-size:14px;font-weight:700;color:#3a3b45;">Item Summary</span>
           <div class="summary-tools">
             <input class="summary-search" id="itemSummarySearch" type="search" placeholder="Search products…" aria-label="Search pending products">
-            <button class="vendor-add" type="button" onclick="addAllSummaryItems()">Add all items</button>
-            <span class="section-count" id="visibleItemCount">{{ pending_items|length }}</span>
+            <button class="vendor-add" type="button" onclick="addAllSummaryItems('regular')">Add all other items</button>
+            <span class="section-count" id="visibleItemCount">{{ unique_item_count }}</span>
           </div>
         </div>
         <div class="summary-list" style="padding:12px;">
+          {% if beanbag_items %}
+          <div class="summary-group-title beanbags"><span>🧺 Bean Bags</span><button class="vendor-add" type="button" onclick="addAllSummaryItems('beanbag')">Add all bean bags</button><span class="section-count">{{ beanbag_items|length }}</span></div>
+          {% for item in beanbag_items %}
+          <div class="summary-row" data-summary-title="{{ item.item_title|lower }}" data-summary-group="beanbag">
+            <div class="summary-thumb">{% if item.item_image %}<img src="{{ item.item_image }}" alt="">{% else %}🧺{% endif %}</div>
+            <div><div class="summary-title">{{ item.item_title }}</div><div class="summary-meta">{% for status, qty in item.statuses.items() %}<span>{{ status }}: {{ qty }}</span>{% endfor %}</div><div class="summary-pricing"><span>Price: PKR {{ item.unit_price|format_number }}</span><span>Cost: PKR {{ item.unit_cost|format_number }}</span><span>Total: PKR {{ item.total_cost|format_number }}</span></div></div>
+            <div class="summary-qty">{{ item.quantity }}</div>
+            <button class="quick-add-btn" type="button" data-key="{{ item.item_title ~ '|' ~ (item.item_image or '') }}" data-title="{{ item.item_title }}" data-quantity="{{ item.quantity|int }}" data-image="{{ item.item_image or '' }}" data-price="{{ item.unit_price }}" data-cost="{{ item.unit_cost }}" data-summary-item="true" data-summary-group="beanbag" onclick="addVendorItemFromButton(this)" title="Add to vendor list">Add</button>
+          </div>
+          {% endfor %}
+          <div class="summary-divider"></div>
+          {% endif %}
+          <div class="summary-group-title"><span>📦 Other Products</span><span class="section-count">{{ pending_items|length }}</span></div>
           {% for item in pending_items %}
-          <div class="summary-row" data-summary-title="{{ item.item_title|lower }}">
+          <div class="summary-row" data-summary-title="{{ item.item_title|lower }}" data-summary-group="regular">
             <div class="summary-thumb">
               {% if item.item_image %}<img src="{{ item.item_image }}" alt="">{% else %}📦{% endif %}
             </div>
@@ -172,13 +189,13 @@
               data-price="{{ item.unit_price }}"
               data-cost="{{ item.unit_cost }}"
               data-summary-item="true"
+              data-summary-group="regular"
               onclick="addVendorItemFromButton(this)"
               title="Add to vendor list"
             >Add</button>
           </div>
-          {% else %}
-          <div class="empty-state">No pending items right now.</div>
           {% endfor %}
+          {% if not beanbag_items and not pending_items %}<div class="empty-state">No pending items right now.</div>{% endif %}
         </div>
       </div>
 
@@ -392,8 +409,9 @@
     });
   }
 
-  function addAllSummaryItems() {
-    const buttons = [...document.querySelectorAll('[data-summary-item="true"]')];
+  function addAllSummaryItems(group = 'regular') {
+    const buttons = [...document.querySelectorAll(`[data-summary-item="true"][data-summary-group="${group}"]`)]
+      .filter((button) => button.closest('.summary-row')?.style.display !== 'none');
     buttons.forEach((button) => addVendorItem({
       key: button.dataset.key || button.dataset.title || '',
       title: button.dataset.title || 'Vendor item',
@@ -404,7 +422,7 @@
     }, { quiet: true, deferRender: true }));
     saveVendorItems();
     renderVendorItems();
-    showVendorToast(`${buttons.length} pending products added.`);
+    showVendorToast(`${buttons.length} ${group === 'beanbag' ? 'bean bag' : 'other'} product${buttons.length === 1 ? '' : 's'} added.`);
     focusVendorBuilder();
   }
 

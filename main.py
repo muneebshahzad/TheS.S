@@ -4326,6 +4326,7 @@ def build_pending_orders_mobile_data():
                     "line_total": 0,
                     "line_cost_total": 0,
                     "applied_status": statuses.get(key, ""),
+                    "is_beanbag": is_tickbags_product(item),
                 }
             )
             items.append(normalized_item)
@@ -4368,6 +4369,7 @@ def build_pending_orders_mobile_data():
             continue
         order_status = shopify_order.get("status", "")
         filtered_tags = [tag.strip() for tag in shopify_order.get("tags", []) if tag and tag.strip() != "Leopards Courier"]
+        tagged_beanbag = has_order_tag(shopify_order.get("tags"), "BeanBag")
         customer_city = ((shopify_order.get("customer_details") or {}).get("city") or "").strip()
         items = []
         for item in shopify_order.get("line_items", []):
@@ -4390,6 +4392,8 @@ def build_pending_orders_mobile_data():
                     "tracking_number": track_num,
                     "status": item_status,
                     "applied_status": statuses.get(key, ""),
+                    "product_type": item.get("product_type", ""),
+                    "is_beanbag": tagged_beanbag or is_tickbags_product(item),
                 }
             )
         if not items:
@@ -4469,7 +4473,9 @@ def build_pending_items_table_data():
                     "total_price": 0.0,
                     "total_cost": 0.0,
                     "statuses": {},
+                    "is_beanbag": bool(item.get("is_beanbag")),
                 }
+            pending_items[key]["is_beanbag"] = pending_items[key]["is_beanbag"] or bool(item.get("is_beanbag"))
             pending_items[key]["quantity"] += quantity
             pending_items[key]["total_price"] += parse_money(item.get("line_total", 0))
             pending_items[key]["total_cost"] += parse_money(item.get("line_cost_total", 0))
@@ -5852,7 +5858,16 @@ def tracking_summary(tracking_num):
 @app.route("/pending")
 def pending_orders():
     all_orders, pending_items, summary = build_pending_items_table_data()
-    return render_template("pending.html", all_orders=all_orders, pending_items=pending_items, summary=summary)
+    beanbag_items = [item for item in pending_items if item.get("is_beanbag")]
+    regular_items = [item for item in pending_items if not item.get("is_beanbag")]
+    return render_template(
+        "pending.html",
+        all_orders=all_orders,
+        pending_items=regular_items,
+        beanbag_items=beanbag_items,
+        unique_item_count=len(pending_items),
+        summary=summary,
+    )
 
 
 @app.route("/daraz")

@@ -176,6 +176,26 @@ def test_pending_page_has_mobile_friendly_vendor_order_builder():
     assert 'table { min-width:920px; }' not in source
 
 
+def test_pending_page_separates_beanbags_from_other_vendor_items(monkeypatch):
+    monkeypatch.setattr(main, "build_pending_orders_mobile_data", lambda: [{
+        "financial_status": "pending", "pending_total_price": 3000, "pending_total_cost": 1200,
+        "items_list": [
+            {"item_title": "ComfyNest Bean Bag - Red", "quantity": 1, "is_beanbag": True},
+            {"item_title": "Wall Clock", "quantity": 2, "is_beanbag": False},
+        ],
+    }])
+    _, items, _ = main.build_pending_items_table_data()
+    by_title = {item["item_title"]: item for item in items}
+    assert by_title["ComfyNest Bean Bag - Red"]["is_beanbag"] is True
+    assert by_title["Wall Clock"]["is_beanbag"] is False
+
+    source = (Path(__file__).resolve().parents[1] / "templates" / "pending.html").read_text()
+    assert "🧺 Bean Bags" in source
+    assert "📦 Other Products" in source
+    assert "Add all bean bags" in source
+    assert "Add all other items" in source
+
+
 def test_undelivered_uses_dispatch_and_dated_return_received_tags():
     dispatched = {
         "id": 1,
