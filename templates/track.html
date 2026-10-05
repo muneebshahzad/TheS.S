@@ -275,6 +275,18 @@
       </div>
     </a>
 
+    <div id="leopardsAdviceMount" style="padding:10px 14px 12px;max-width:960px;display:none;">
+      <section class="shipper-advice-card" aria-label="Leopards shipper advice required">
+        <div class="shipper-advice-head">
+          <strong>⚠️ Leopards Shipper Advice</strong>
+          <span class="section-count" id="leopardsAdviceCount">0</span>
+          <span class="shipper-advice-meta">Urgent undelivered shipments waiting for Reattempt or Return advice.</span>
+          <button class="refresh-btn" style="margin-left:auto;" type="button" onclick="loadLeopardsShipperAdvice(true)">🔄 Refresh Advice</button>
+        </div>
+        <div class="shipper-advice-list" id="leopardsAdviceList"><div class="shipper-advice-empty">Loading Leopards advice…</div></div>
+      </section>
+    </div>
+
     {% if shipper_advice_orders %}
     <div style="padding:10px 14px 12px;max-width:960px;">
       <section class="shipper-advice-card" aria-label="Shipper advice required">
@@ -1173,6 +1185,59 @@ async function postShipperAdvice(button, action) {
   finally { button.disabled = false; }
 }
 
+let LEOPARDS_ADVICE_ITEMS = [];
+function adviceEscape(value) {
+  const node = document.createElement('span');
+  node.textContent = String(value ?? '');
+  return node.innerHTML;
+}
+function renderLeopardsShipperAdvice() {
+  const mount = document.getElementById('leopardsAdviceMount');
+  const list = document.getElementById('leopardsAdviceList');
+  const count = document.getElementById('leopardsAdviceCount');
+  if (!mount || !list || !count) return;
+  count.textContent = LEOPARDS_ADVICE_ITEMS.length;
+  if (!LEOPARDS_ADVICE_ITEMS.length) { mount.style.display = 'none'; list.innerHTML = ''; return; }
+  mount.style.display = '';
+  list.innerHTML = LEOPARDS_ADVICE_ITEMS.map((item, index) => {
+    const matched = item.matched_order || {};
+    const title = matched.order_id ? `Order #${matched.order_id}` : `CN ${item.cn_number || '—'}`;
+    const image = matched.item_image || '';
+    return `<article class="shipper-advice-item">
+      <div class="shipper-advice-thumb">${image ? `<img src="${adviceEscape(image)}" alt="">` : '📦'}</div>
+      <div><div class="shipper-advice-title">${adviceEscape(title)}</div>
+      <div class="shipper-advice-meta">Leopards · Tracking ${adviceEscape(item.cn_number || '—')}${matched.amount ? ` · ${adviceEscape(matched.amount)}` : ''}</div>
+      <div class="shipper-advice-tags"><span class="shipper-advice-pill pending">${adviceEscape(item.reason || item.status || 'Advice required')}</span></div>
+      ${matched.item_title ? `<div class="shipper-advice-meta">${adviceEscape(matched.item_title)}</div>` : ''}</div>
+      <div class="shipper-advice-actions" data-tracking="${adviceEscape(item.cn_number || '')}" data-courier-source="leopards" data-advice-id="${adviceEscape(item.id || '')}">
+        <textarea class="shipper-advice-remarks" maxlength="250" placeholder="Remarks for Leopards">${adviceEscape(item.shipper_remarks || '')}</textarea>
+        <div class="shipper-advice-btns"><button class="btn btn-outline" type="button" onclick="postLeopardsAdvice(this,'reattempt',${index})">Reattempt</button><button class="btn btn-danger" type="button" onclick="postLeopardsAdvice(this,'return',${index})">Return</button></div>
+      </div></article>`;
+  }).join('');
+}
+async function loadLeopardsShipperAdvice(showFeedback = false) {
+  const mount = document.getElementById('leopardsAdviceMount');
+  const list = document.getElementById('leopardsAdviceList');
+  try {
+    const response = await fetch('/api/leopards/shipper-advice', {cache:'no-store'});
+    const payload = await response.json();
+    if (!response.ok || String(payload.status) !== '1') throw new Error(payload.error || 'Could not load Leopards advice.');
+    LEOPARDS_ADVICE_ITEMS = payload.items || [];
+    renderLeopardsShipperAdvice();
+    if (showFeedback) showToast(`Loaded ${LEOPARDS_ADVICE_ITEMS.length} Leopards advice item${LEOPARDS_ADVICE_ITEMS.length === 1 ? '' : 's'}.`);
+  } catch (error) {
+    if (mount && list) { mount.style.display = ''; list.innerHTML = `<div class="shipper-advice-empty">Could not load Leopards advice: ${adviceEscape(error.message || error)}</div>`; }
+    if (showFeedback) showToast(error.message || 'Could not load Leopards advice');
+  }
+}
+async function postLeopardsAdvice(button, action, index) {
+  await postShipperAdvice(button, action);
+  if (!button.closest('.shipper-advice-item')?.isConnected) {
+    LEOPARDS_ADVICE_ITEMS.splice(index, 1);
+    renderLeopardsShipperAdvice();
+  }
+}
+
 // ── Apply Delivered to All (Delivered tab or Out For Delivery → Delivered) ──
 async function applyDeliveredToAll() {
   const btn = document.getElementById('btnDeliver');
@@ -1306,5 +1371,6 @@ syncAttentionCards();
 renderStats();
 applyFilterSearch();
 updateBottomBar();
+loadLeopardsShipperAdvice(false);
 </script>
 {% endblock %}

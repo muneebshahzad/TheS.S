@@ -109,7 +109,10 @@ def test_leopards_shipper_advice_normalizes_pending_feed(monkeypatch):
     monkeypatch.setenv("LEOPARD_PASSWORD", "password")
     monkeypatch.setattr(main.requests, "post", lambda *args, **kwargs: Response())
     rows = main.fetch_leopards_shipper_advice_sync()
-    assert rows == [{
+    assert [{key: row.get(key) for key in (
+        "advice_id", "tracking_no", "external_reference_no", "courier_status_reason",
+        "courier_status", "shipper_remarks", "courier_source",
+    )} for row in rows] == [{
         "advice_id": 7, "tracking_no": "LE999", "external_reference_no": "",
         "courier_status_reason": "Consignee refused", "courier_status": "",
         "shipper_remarks": "", "courier_source": "leopards",
@@ -136,6 +139,26 @@ def test_leopards_advice_still_loads_when_digidokaan_is_unavailable(monkeypatch)
     assert len(rows) == 1
     assert rows[0]["tracking_no"] == "LE7544000000"
     assert rows[0]["courier_source"] == "leopards"
+
+
+def test_leopards_advice_has_independent_live_endpoint(monkeypatch):
+    monkeypatch.setattr(main, "load_acknowledged_shipper_advice", lambda: {})
+    monkeypatch.setattr(main, "order_details", [])
+    monkeypatch.setattr(main, "fetch_leopards_shipper_advice_sync", lambda: [{
+        "advice_id": 21, "tracking_no": "LE7544111111", "external_reference_no": "PK3001A01",
+        "courier_status_reason": "Consignee refused", "courier_status": "Undelivered",
+        "shipper_advice_status": "", "shipper_remarks": "", "courier_source": "leopards",
+    }])
+
+    payload = main.app.test_client().get("/api/leopards/shipper-advice").get_json()
+
+    assert payload["status"] == 1
+    assert payload["count"] == 1
+    assert payload["items"][0]["cn_number"] == "LE7544111111"
+
+    source = (Path(__file__).resolve().parents[1] / "templates" / "track.html").read_text()
+    assert "loadLeopardsShipperAdvice(false)" in source
+    assert "Refresh Advice" in source
 
 
 def test_payment_ledger_merges_entries_and_requires_explicit_paid_cheque():

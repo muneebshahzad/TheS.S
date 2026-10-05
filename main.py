@@ -5576,10 +5576,16 @@ def fetch_leopards_shipper_advice_sync(days=30):
             "external_reference_no": item.get("order_id") or "",
             "courier_status_reason": item.get("reason") or item.get("pending_reason") or item.get("status") or "Advice required",
             "courier_status": item.get("status") or item.get("booked_packet_status") or "",
+            "shipper_advice_status": item.get("shipper_advice_status") or "",
             "shipper_remarks": item.get("shipper_remarks") or item.get("remarks") or "",
+            "created_date": item.get("created_date") or item.get("advice_date_created") or item.get("booked_packet_date") or "",
+            "consignee_name": item.get("consignee_name") or item.get("consignment_name_eng") or "",
+            "consignee_address": item.get("consignee_address") or item.get("consignment_address") or "",
+            "consignee_mobile": item.get("consignee_mobile") or item.get("consignment_phone") or "",
+            "destination_city_name": item.get("destination_city_name") or "",
             "courier_source": "leopards",
         })
-    return rows
+    return sorted(rows, key=lambda row: str(row.get("created_date") or ""), reverse=True)
 
 
 def submit_leopards_shipper_advice(advice_id, tracking_number, advice_status, remarks):
@@ -5718,7 +5724,10 @@ def tracking():
     if not daraz_orders_cache:
         refresh_daraz_cache_if_needed()
     try:
-        shipper_advice_orders = load_shipper_advice_sync()
+        shipper_advice_orders = [
+            row for row in load_shipper_advice_sync()
+            if row.get("courier_source") != "leopards"
+        ]
     except Exception as error:
         print(f"Could not load DigiDokaan shipper advice: {error}")
         shipper_advice_orders = []
@@ -5730,6 +5739,46 @@ def tracking():
         abandoned_summary=get_abandoned_summary_safe(),
         shipper_advice_orders=shipper_advice_orders,
     )
+
+
+@app.route("/api/leopards/shipper-advice")
+def get_leopards_shipper_advice():
+    """Load Leopards advice independently, matching tb_track's live client flow."""
+    try:
+        acknowledged = load_acknowledged_shipper_advice()
+        rows = [
+            row for row in fetch_leopards_shipper_advice_sync()
+            if "".join(character for character in str(row.get("tracking_no") or "") if character.isdigit())
+            not in acknowledged
+        ]
+        enriched = enrich_shipper_advice_orders(rows, order_details)
+        items = []
+        for row in enriched:
+            matched = row.get("shopify_order") or {}
+            first_item = (matched.get("items") or [{}])[0]
+            items.append({
+                "id": row.get("advice_id"),
+                "cn_number": row.get("tracking_no"),
+                "status": row.get("courier_status"),
+                "reason": row.get("courier_status_reason"),
+                "shipper_advice_status": row.get("shipper_advice_status") or "",
+                "shipper_remarks": row.get("shipper_remarks") or "",
+                "created_date": row.get("created_date") or "",
+                "consignee_name": row.get("consignee_name") or "",
+                "consignee_address": row.get("consignee_address") or "",
+                "consignee_mobile": row.get("consignee_mobile") or "",
+                "destination_city_name": row.get("destination_city_name") or "",
+                "matched_order": {
+                    "order_id": matched.get("order_num") or row.get("external_reference_no") or "",
+                    "item_title": first_item.get("title") or "",
+                    "item_image": first_item.get("image") or "",
+                    "amount": matched.get("display_total") or "",
+                },
+            })
+        return jsonify({"status": 1, "error": "0", "count": len(items), "items": items})
+    except Exception as error:
+        print(f"Could not load Leopards shipper advice endpoint: {error}")
+        return jsonify({"status": 0, "error": str(error), "items": []}), 502
 
 
 @app.route("/api/shipper-advice", methods=["POST"])
