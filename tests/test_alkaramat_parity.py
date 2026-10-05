@@ -331,6 +331,19 @@ def test_tickbags_invoice_groups_dispatched_and_lahore_beanbags_by_week():
     assert by_end[date(2026, 10, 11)]["lines"][0]["order_number"] == "PK2"
 
 
+@pytest.mark.parametrize("title", [
+    "2x Leather football xxl with ottoman-Black & charcoal grey",
+    "Black&Grey Football xxxl with ottoman-Leather",
+    "Square Ottoman-ULS P.144 COLOUR #5",
+])
+def test_tickbags_classifier_includes_ottoman_product_names(title):
+    assert main.is_tickbags_product({"product_title": title}) is True
+
+
+def test_tickbags_classifier_does_not_include_unrelated_products():
+    assert main.is_tickbags_product({"product_title": "Wild Stalk Leopard Table"}) is False
+
+
 def test_tickbags_return_is_highlighted_and_totals_include_current_refund():
     orders = [{
         "id": 3, "order_id": "PK3", "tags": ["Dispatched (2026-10-06)", "Return Received (2026-10-08)"],

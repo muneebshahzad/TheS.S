@@ -4847,7 +4847,12 @@ def build_product_cost_rows(limit=250):
 def is_tickbags_product(item):
     title = re.sub(r"[^a-z0-9]+", " ", str((item or {}).get("product_title") or "").lower()).strip()
     product_type = str((item or {}).get("product_type") or "").strip().lower()
-    return product_type == "bean bag" or "bean bag" in title or "beanbag" in title
+    return (
+        product_type in {"bean bag", "beanbag", "ottoman"}
+        or "bean bag" in title
+        or "beanbag" in title
+        or "ottoman" in title
+    )
 
 
 def tickbags_invoice_period(eligible_date):
