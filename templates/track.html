@@ -281,7 +281,7 @@
         <div class="shipper-advice-head">
           <strong>⚠️ Shipper Advice Required</strong>
           <span class="section-count">{{ shipper_advice_orders|length }}</span>
-          <span class="shipper-advice-meta">Pending courier exceptions · refreshed every 6 hours</span>
+          <span class="shipper-advice-meta">DigiDokaan and Leopards courier exceptions · refreshed automatically</span>
         </div>
         <div class="shipper-advice-list">
           {% for advice in shipper_advice_orders %}
@@ -291,11 +291,11 @@
             </div>
             <div>
               <div class="shipper-advice-title">Order #{{ advice.external_reference_no or advice.order_id or '—' }}</div>
-              <div class="shipper-advice-meta">Tracking {{ advice.tracking_no or '—' }}{% if advice.shopify_order %} · {{ advice.shopify_order.display_total }}{% endif %}</div>
+              <div class="shipper-advice-meta">{{ 'Leopards' if advice.courier_source == 'leopards' else 'DigiDokaan' }} · Tracking {{ advice.tracking_no or '—' }}{% if advice.shopify_order %} · {{ advice.shopify_order.display_total }}{% endif %}</div>
               <div class="shipper-advice-tags"><span class="shipper-advice-pill pending">{{ advice.courier_status_reason or 'Advice required' }}</span></div>
               {% if advice.shopify_order and advice.shopify_order['items'] %}<div class="shipper-advice-meta">{{ advice.shopify_order['items'][0].title }} ×{{ advice.shopify_order['items'][0].quantity }}</div>{% endif %}
             </div>
-            <div class="shipper-advice-actions" data-tracking="{{ advice.tracking_no }}">
+            <div class="shipper-advice-actions" data-tracking="{{ advice.tracking_no }}" data-courier-source="{{ advice.courier_source or 'digidokaan' }}" data-advice-id="{{ advice.advice_id or '' }}">
               <textarea class="shipper-advice-remarks" maxlength="250" placeholder="Required remarks"></textarea>
               <div class="shipper-advice-btns">
                 <button class="btn btn-outline" type="button" onclick="postShipperAdvice(this,'reattempt')">Reattempt</button>
@@ -1137,7 +1137,7 @@ async function postShipperAdvice(button, action) {
   try {
     const response = await fetch('/api/shipper-advice', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({tracking_number: form.dataset.tracking, advice_status: action, remarks})
+      body: JSON.stringify({tracking_number: form.dataset.tracking, courier_source: form.dataset.courierSource, advice_id: form.dataset.adviceId, advice_status: action, remarks})
     });
     const result = await response.json();
     if (!response.ok || !result.success) throw new Error(result.error || 'Could not submit advice');

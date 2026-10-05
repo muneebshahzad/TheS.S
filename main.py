@@ -5401,6 +5401,77 @@ def acknowledge_shipper_advice(tracking_number, now=None):
     return set_app_setting(SHIPPER_ADVICE_ACK_SETTING, json.dumps(acknowledged, separators=(",", ":")))
 
 
+def fetch_leopards_shipper_advice_sync(days=30):
+    api_key = os.getenv("LEOPARD_API_KEY")
+    api_password = os.getenv("LEOPARD_PASSWORD")
+    if not api_key or not api_password:
+        return []
+    today = datetime.now(PAKISTAN_TIMEZONE).date()
+    payload = {
+        "api_key": api_key,
+        "api_password": api_password,
+        "product": "",
+        "status": "",
+        "origionID": "",
+        "destinationID": "",
+        "dateFrom": (today - timedelta(days=days)).strftime("%m/%d/%Y"),
+        "toDate": today.strftime("%m/%d/%Y"),
+        "from_date": (today - timedelta(days=days)).isoformat(),
+        "to_date": today.isoformat(),
+        "Cn_number": "",
+        "start": 0,
+        "length": 100,
+    }
+    response = requests.post(
+        "https://merchantapi.leopardscourier.com/api/shipperAdviceList/format/json/",
+        json=payload,
+        timeout=45,
+    )
+    response.raise_for_status()
+    data = response.json()
+    raw_items = data.get("data") or data.get("packet_list") or []
+    if not isinstance(raw_items, list):
+        return []
+    rows = []
+    for item in raw_items:
+        tracking = str(item.get("cn_number") or item.get("track_number") or "").strip()
+        if not tracking:
+            continue
+        rows.append({
+            "advice_id": item.get("id"),
+            "tracking_no": tracking,
+            "external_reference_no": item.get("order_id") or "",
+            "courier_status_reason": item.get("reason") or item.get("pending_reason") or item.get("status") or "Advice required",
+            "courier_status": item.get("status") or item.get("booked_packet_status") or "",
+            "shipper_remarks": item.get("shipper_remarks") or item.get("remarks") or "",
+            "courier_source": "leopards",
+        })
+    return rows
+
+
+def submit_leopards_shipper_advice(advice_id, tracking_number, advice_status, remarks):
+    api_key = os.getenv("LEOPARD_API_KEY")
+    api_password = os.getenv("LEOPARD_PASSWORD")
+    if not api_key or not api_password:
+        raise ValueError("Leopards credentials are not configured.")
+    code = {"reattempt": "RA", "return": "RT"}.get(advice_status)
+    if not advice_id or not code:
+        raise ValueError("Leopards advice ID and a valid action are required.")
+    response = requests.post(
+        "https://merchantapi.leopardscourier.com/api/updateShipperAdvice/format/json/",
+        json={"api_key": api_key, "api_password": api_password, "data": [{
+            "id": advice_id, "cn_number": tracking_number,
+            "shipper_advice_status": code, "shipper_remarks": remarks,
+        }]},
+        timeout=45,
+    )
+    response.raise_for_status()
+    result = response.json()
+    if str(result.get("status")) != "1" or str(result.get("error", "0")) not in {"0", ""}:
+        raise ValueError(str(result.get("error") or "Leopards rejected the shipper advice update."))
+    return result
+
+
 def load_shipper_advice_sync(force=False):
     async def run():
         async with aiohttp.ClientSession() as client:
@@ -5412,7 +5483,17 @@ def load_shipper_advice_sync(force=False):
         if "".join(character for character in str(row.get("tracking_no") or "") if character.isdigit())
         not in acknowledged
     ]
-    return enrich_shipper_advice_orders(visible_rows, order_details)
+    try:
+        leopards_rows = fetch_leopards_shipper_advice_sync()
+    except Exception as error:
+        print(f"Could not load Leopards shipper advice: {error}")
+        leopards_rows = []
+    combined = visible_rows + [
+        row for row in leopards_rows
+        if "".join(character for character in str(row.get("tracking_no") or "") if character.isdigit())
+        not in acknowledged
+    ]
+    return enrich_shipper_advice_orders(combined, order_details)
 
 
 @app.route("/send-email", methods=["POST"])
@@ -5518,11 +5599,24 @@ def post_shipper_advice():
     if not admin_portal_is_authenticated():
         return jsonify({"success": False, "error": "Authentication required"}), 401
     data = request.get_json(silent=True) or {}
-    tracking_number = "".join(ch for ch in str(data.get("tracking_number") or "") if ch.isdigit())
+    raw_tracking = str(data.get("tracking_number") or "").strip()
+    courier_source = str(data.get("courier_source") or "").strip().casefold()
+    tracking_number = raw_tracking.upper() if courier_source == "leopards" or is_leopards_tracking(raw_tracking) else "".join(ch for ch in raw_tracking if ch.isdigit())
     advice_status = str(data.get("advice_status") or "").strip().casefold()
     remarks = str(data.get("remarks") or "").strip()
     if not tracking_number or advice_status not in {"reattempt", "return"} or not remarks:
         return jsonify({"success": False, "error": "Tracking number, action and remarks are required."}), 400
+
+    if courier_source == "leopards" or is_leopards_tracking(tracking_number):
+        try:
+            result = submit_leopards_shipper_advice(data.get("advice_id"), tracking_number, advice_status, remarks)
+            acknowledge_shipper_advice(tracking_number)
+            return jsonify({"success": True, "message": result.get("data") or "Leopards shipper advice submitted successfully."})
+        except ValueError as error:
+            return jsonify({"success": False, "error": str(error)}), 409
+        except Exception as error:
+            print(f"Could not submit Leopards shipper advice: {error}")
+            return jsonify({"success": False, "error": "Leopards did not accept the shipper advice."}), 502
 
     async def submit():
         async with aiohttp.ClientSession() as client:

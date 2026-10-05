@@ -68,6 +68,53 @@ def test_shipper_advice_acknowledgement_expires(monkeypatch):
     ) == {}
 
 
+def test_leopards_shipper_advice_uses_ra_rt_payload(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"status": 1, "error": 0, "data": "Updated"}
+
+    def fake_post(url, json, timeout):
+        captured.update(url=url, payload=json, timeout=timeout)
+        return Response()
+
+    monkeypatch.setenv("LEOPARD_API_KEY", "key")
+    monkeypatch.setenv("LEOPARD_PASSWORD", "password")
+    monkeypatch.setattr(main.requests, "post", fake_post)
+    result = main.submit_leopards_shipper_advice(12, "LE123", "reattempt", "Customer interested")
+    assert result["data"] == "Updated"
+    assert captured["payload"]["data"][0] == {
+        "id": 12, "cn_number": "LE123", "shipper_advice_status": "RA",
+        "shipper_remarks": "Customer interested",
+    }
+
+
+def test_leopards_shipper_advice_normalizes_pending_feed(monkeypatch):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"status": 1, "data": [{
+                "id": 7, "cn_number": "LE999", "reason": "Consignee refused",
+                "shipper_advice_status": "",
+            }]}
+
+    monkeypatch.setenv("LEOPARD_API_KEY", "key")
+    monkeypatch.setenv("LEOPARD_PASSWORD", "password")
+    monkeypatch.setattr(main.requests, "post", lambda *args, **kwargs: Response())
+    rows = main.fetch_leopards_shipper_advice_sync()
+    assert rows == [{
+        "advice_id": 7, "tracking_no": "LE999", "external_reference_no": "",
+        "courier_status_reason": "Consignee refused", "courier_status": "",
+        "shipper_remarks": "", "courier_source": "leopards",
+    }]
+
+
 def test_payment_ledger_merges_entries_and_requires_explicit_paid_cheque():
     payments = {
         "balance": {"deliver_orders_payments": 1200},
