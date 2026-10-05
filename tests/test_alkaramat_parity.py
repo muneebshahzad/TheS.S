@@ -411,10 +411,20 @@ def test_tickbags_legacy_backfill_uses_fulfillment_date_without_dispatch_tag(mon
     monkeypatch.setattr(main, "get_active_shopify_products", lambda **_kwargs: [{
         "variant_id": 44, "product_id": 4, "product_type": "bean bag", "cost": 1500, "image": "seat.jpg",
     }])
+    monkeypatch.setattr(main, "refresh_tracking_summaries_sync", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(main, "get_tracking_summary_cache_only", lambda _tracking: {"status": "Out for Delivery"})
     monkeypatch.setattr(main, "sync_vendor_invoice", lambda invoice, lines: captured.update(invoice=invoice, lines=lines))
+    monkeypatch.setattr(main, "prune_vendor_invoice_lines", lambda *_args: 0)
     assert main.backfill_tickbags_invoice(main.tickbags_invoice_period(date(2026, 10, 4))) == 1
     assert captured["lines"][0]["eligible_date"] == date(2026, 9, 25)
     assert captured["lines"][0]["unit_cost"] == 1500
+    assert captured["lines"][0]["tracking_number"] == "223123"
+    assert captured["lines"][0]["order_status"] == "Out for Delivery"
+
+
+def test_shopify_fulfillment_tracking_supports_tracking_numbers_list():
+    fulfillment = SimpleNamespace(tracking_number=None, tracking_numbers=["", "LE123"])
+    assert main.shopify_fulfillment_tracking(fulfillment) == "LE123"
 
 class FakeDraftOrder:
     instances = []

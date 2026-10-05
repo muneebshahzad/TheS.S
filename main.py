@@ -4917,6 +4917,14 @@ def sync_tickbags_invoices(orders=None, today=None):
     return load_vendor_invoices(TICKBAGS_VENDOR)
 
 
+def shopify_fulfillment_tracking(fulfillment):
+    number = str(getattr(fulfillment, "tracking_number", "") or "").strip()
+    if not number:
+        numbers = getattr(fulfillment, "tracking_numbers", None) or []
+        number = str(next((value for value in numbers if str(value or "").strip()), "") or "").strip()
+    return number
+
+
 def backfill_tickbags_invoice(period=None):
     """Backfill an invoice from all Shopify orders, including closed/cancelled orders."""
     period = period or tickbags_invoice_period(TICKBAGS_LEGACY_END)
@@ -4925,6 +4933,27 @@ def backfill_tickbags_invoice(period=None):
     catalog = get_active_shopify_products(limit=250)
     by_variant = {str(row.get("variant_id") or ""): row for row in catalog if row.get("variant_id")}
     by_product = {str(row.get("product_id") or ""): row for row in catalog if row.get("product_id")}
+    candidate_tracking = []
+    for order in raw_orders:
+        tags = [tag.strip() for tag in str(getattr(order, "tags", "") or "").split(",") if tag.strip()]
+        tagged_beanbag = has_order_tag(tags, "BeanBag")
+        if not tagged_beanbag:
+            tagged_beanbag = any(
+                is_tickbags_product({
+                    "product_title": getattr(item, "title", "") or "",
+                    "product_type": (by_variant.get(str(getattr(item, "variant_id", "") or "")) or by_product.get(str(getattr(item, "product_id", "") or "")) or {}).get("product_type"),
+                }) for item in (getattr(order, "line_items", []) or [])
+            )
+        if not tagged_beanbag:
+            continue
+        for fulfillment in (getattr(order, "fulfillments", []) or []):
+            tracking = shopify_fulfillment_tracking(fulfillment)
+            if tracking and str(getattr(fulfillment, "status", "") or "").lower() != "cancelled":
+                candidate_tracking.append(tracking)
+    refresh_tracking_summaries_sync(
+        candidate_tracking, limit=100, fresh_seconds=AGHAJE_AUTO_TRACK_FRESH_SECONDS,
+        deadline_seconds=TRACKING_REFRESH_SYNC_DEADLINE_SECONDS,
+    )
     lines = []
     for order in raw_orders:
         tags = [tag.strip() for tag in str(getattr(order, "tags", "") or "").split(",") if tag.strip()]
@@ -4934,7 +4963,7 @@ def backfill_tickbags_invoice(period=None):
             fulfillment_dates = [
                 parse_courier_event_date(getattr(fulfillment, "created_at", "") or getattr(fulfillment, "updated_at", ""))
                 for fulfillment in (getattr(order, "fulfillments", []) or [])
-                if str(getattr(fulfillment, "tracking_number", "") or "").strip()
+                if shopify_fulfillment_tracking(fulfillment)
                 and str(getattr(fulfillment, "status", "") or "").lower() != "cancelled"
             ]
             fulfillment_dates = [value for value in fulfillment_dates if value]
@@ -4948,7 +4977,7 @@ def backfill_tickbags_invoice(period=None):
             or dated_order_tag_date(tags, "Return Received")
             or has_order_tag(tags, "Returned")
         )
-        order_status = "Returned" if returned else ((getattr(order, "fulfillment_status", "") or "Dispatched").title())
+        order_status = "Returned" if returned else ("Delivered in Lahore" if lahore_date else "Dispatched")
         for position, item in enumerate(getattr(order, "line_items", []) or []):
             base_title = getattr(item, "title", "") or "Product"
             variant_title = getattr(item, "variant_title", "") or ""
@@ -4959,8 +4988,12 @@ def backfill_tickbags_invoice(period=None):
             if not tagged_beanbag and not is_tickbags_product({"product_title": product_name, "product_type": product.get("product_type")}):
                 continue
             quantity = max(parse_int(getattr(item, "quantity", 1), 1), 1)
-            fulfillment = next((row for row in (getattr(order, "fulfillments", []) or []) if str(getattr(row, "tracking_number", "") or "").strip()), None)
-            tracking_number = str(getattr(fulfillment, "tracking_number", "") or "").strip() if fulfillment else ""
+            fulfillment = next((row for row in (getattr(order, "fulfillments", []) or []) if shopify_fulfillment_tracking(row)), None)
+            tracking_number = shopify_fulfillment_tracking(fulfillment) if fulfillment else ""
+            live_summary = get_tracking_summary_cache_only(tracking_number) if tracking_number else None
+            if not returned and live_summary and live_summary.get("status"):
+                order_status = normalize_courier_status_label(live_summary.get("status"))
+            courier_name = str(getattr(fulfillment, "tracking_company", "") or "").strip() if fulfillment else ""
             lines.append({
                 "line_key": f"tickbags:{getattr(order, 'id', '')}:{variant_id or product_id or product_name}:{position}",
                 "shopify_order_id": str(getattr(order, "id", "") or ""),
@@ -4970,7 +5003,7 @@ def backfill_tickbags_invoice(period=None):
                 "variant_id": variant_id,
                 "product_name": product_name,
                 "image_url": product.get("image") or "",
-                "courier": courier_label_for_tracking("", tracking_number) or "",
+                "courier": courier_label_for_tracking(courier_name, tracking_number) or courier_name,
                 "tracking_number": tracking_number,
                 "unit_cost": parse_money(product.get("cost"), 0),
                 "quantity": quantity,
