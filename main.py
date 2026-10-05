@@ -144,6 +144,7 @@ PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
 TICKBAGS_VENDOR = "Tick Bags"
 TICKBAGS_LEGACY_END = datetime(2026, 10, 4).date()
 TICKBAGS_WEEKLY_SYNC_SETTING_KEY = "tickbags_last_weekly_sync_v1"
+TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY = "tickbags_dispatch_eligibility_v2"
 PAKISTAN_TIMEZONE = ZoneInfo("Asia/Karachi")
 AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY = "aghaje_net_payment_received_v1"
 TRACKING_SUMMARY_CACHE_SETTING_KEY = "tracking_summary_cache_v1"
@@ -4872,6 +4873,12 @@ def tickbags_order_is_returned(order, item):
 
 def tickbags_line_eligible_date(order, item):
     tracking = str(item.get("tracking_number") or "").strip()
+    item_status = normalize_status_bucket(item.get("status") or order.get("status") or "")
+    # Booking only reserves a courier consignment; it does not mean Tick Bags
+    # has dispatched the product. The line enters the invoice only after the
+    # first real courier movement has been observed.
+    if tracking and tracking not in {"N/A", "0"} and item_status in {"Booked", "Un-Booked"}:
+        return None
     dispatch_date = parse_courier_event_date(item.get("dispatched_at"))
     if not dispatch_date:
         dispatch_date = parse_courier_event_date(dated_order_tag_date(order.get("tags"), "Dispatched"))
@@ -4975,14 +4982,16 @@ def backfill_tickbags_invoice(period=None):
         tagged_beanbag = has_order_tag(tags, "BeanBag")
         dispatch_date = parse_courier_event_date(dated_order_tag_date(tags, "Dispatched"))
         if not dispatch_date:
-            fulfillment_dates = [
-                parse_courier_event_date(getattr(fulfillment, "created_at", "") or getattr(fulfillment, "updated_at", ""))
-                for fulfillment in (getattr(order, "fulfillments", []) or [])
-                if shopify_fulfillment_tracking(fulfillment)
-                and str(getattr(fulfillment, "status", "") or "").lower() != "cancelled"
-            ]
-            fulfillment_dates = [value for value in fulfillment_dates if value]
-            dispatch_date = min(fulfillment_dates) if fulfillment_dates else None
+            courier_dispatch_dates = []
+            for fulfillment in (getattr(order, "fulfillments", []) or []):
+                tracking = shopify_fulfillment_tracking(fulfillment)
+                if not tracking or str(getattr(fulfillment, "status", "") or "").lower() == "cancelled":
+                    continue
+                summary = get_tracking_summary_cache_only(tracking) or {}
+                observed_dispatch = parse_courier_event_date(summary.get("dispatched_at"))
+                if observed_dispatch:
+                    courier_dispatch_dates.append(observed_dispatch)
+            dispatch_date = min(courier_dispatch_dates) if courier_dispatch_dates else None
         lahore_date = parse_courier_event_date(dated_order_tag_date(tags, "Delivered in Lahore Approved"))
         eligible_date = dispatch_date or lahore_date
         if not eligible_date or not (period["period_start"] <= eligible_date <= period["period_end"]):
@@ -5057,6 +5066,14 @@ def build_tickbags_pending_lahore_orders(orders=None):
 
 def ensure_tickbags_invoices():
     invoices = load_vendor_invoices(TICKBAGS_VENDOR)
+    if get_app_setting(TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY, "") != "complete":
+        try:
+            backfill_tickbags_invoice(tickbags_invoice_period(TICKBAGS_LEGACY_END))
+            backfill_tickbags_invoice(tickbags_invoice_period(datetime.now(PAKISTAN_TIMEZONE).date()))
+            set_app_setting(TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY, "complete")
+            invoices = load_vendor_invoices(TICKBAGS_VENDOR)
+        except Exception as error:
+            print(f"Could not reconcile Tick Bags dispatch eligibility: {error}")
     legacy = next((row for row in invoices if row.get("period_end") == TICKBAGS_LEGACY_END), None)
     if not legacy or not legacy.get("lines"):
         try:

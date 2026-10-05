@@ -398,7 +398,7 @@ def test_tickbags_invoice_template_renders_pending_lahore_items():
     assert "Mark delivered in Lahore" in rendered
 
 
-def test_tickbags_legacy_backfill_uses_fulfillment_date_without_dispatch_tag(monkeypatch):
+def test_tickbags_legacy_backfill_uses_first_courier_dispatch_date(monkeypatch):
     order = SimpleNamespace(
         id=10, name="PK10", tags="", cancelled_at=None, fulfillment_status="fulfilled",
         created_at="2026-09-20T10:00:00+00:00",
@@ -412,7 +412,9 @@ def test_tickbags_legacy_backfill_uses_fulfillment_date_without_dispatch_tag(mon
         "variant_id": 44, "product_id": 4, "product_type": "bean bag", "cost": 1500, "image": "seat.jpg",
     }])
     monkeypatch.setattr(main, "refresh_tracking_summaries_sync", lambda *_args, **_kwargs: 1)
-    monkeypatch.setattr(main, "get_tracking_summary_cache_only", lambda _tracking: {"status": "Out for Delivery"})
+    monkeypatch.setattr(main, "get_tracking_summary_cache_only", lambda _tracking: {
+        "status": "Out for Delivery", "dispatched_at": "2026-09-25",
+    })
     monkeypatch.setattr(main, "sync_vendor_invoice", lambda invoice, lines: captured.update(invoice=invoice, lines=lines))
     monkeypatch.setattr(main, "prune_vendor_invoice_lines", lambda *_args: 0)
     assert main.backfill_tickbags_invoice(main.tickbags_invoice_period(date(2026, 10, 4))) == 1
@@ -420,6 +422,33 @@ def test_tickbags_legacy_backfill_uses_fulfillment_date_without_dispatch_tag(mon
     assert captured["lines"][0]["unit_cost"] == 1500
     assert captured["lines"][0]["tracking_number"] == "223123"
     assert captured["lines"][0]["order_status"] == "Out for Delivery"
+
+
+def test_tickbags_booked_tracking_waits_for_actual_dispatch_week():
+    booked = {
+        "id": 11, "order_id": "PK11", "tags": ["BeanBag"], "status": "Booked",
+        "line_items": [{
+            "product_title": "Custom beanbag", "tracking_number": "LE123", "quantity": 1,
+            "status": "Booked", "dispatched_at": "",
+        }],
+    }
+    assert all(not batch["lines"] for batch in main.build_tickbags_invoice_source(
+        [booked], today=date(2026, 10, 8)
+    ))
+
+    dispatched = {
+        **booked,
+        "status": "In Transit",
+        "line_items": [{
+            **booked["line_items"][0], "status": "In Transit", "dispatched_at": "2026-10-06",
+        }],
+    }
+    lines = [line for batch in main.build_tickbags_invoice_source(
+        [dispatched], today=date(2026, 10, 8)
+    ) for line in batch["lines"]]
+    assert len(lines) == 1
+    assert lines[0]["eligible_date"] == date(2026, 10, 6)
+    assert main.tickbags_invoice_period(lines[0]["eligible_date"])["period_end"] == date(2026, 10, 11)
 
 
 def test_shopify_fulfillment_tracking_supports_tracking_numbers_list():
