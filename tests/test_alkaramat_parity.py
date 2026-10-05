@@ -383,6 +383,21 @@ def test_tickbags_invoice_template_has_required_ledger_controls():
         assert label in source
 
 
+def test_tickbags_invoice_template_renders_pending_lahore_items():
+    with main.app.test_request_context("/tickbags-invoices"):
+        rendered = main.app.jinja_env.get_template("tickbags_invoices.html").render(
+            invoices=[], current_balance=0, pending_lahore_orders=[{
+                "order_id": "PK-LHR", "created_at": "2026-10-05T10:00:00+05:00",
+                "customer_name": "Customer", "city": "Lahore", "total_price": 10000,
+                "awaiting_approval": False,
+                "items": [{"image_src": "", "product_title": "Custom BeanBag", "quantity": 1}],
+            }],
+        )
+    assert "PK-LHR" in rendered
+    assert "Custom BeanBag" in rendered
+    assert "Mark delivered in Lahore" in rendered
+
+
 def test_tickbags_legacy_backfill_uses_fulfillment_date_without_dispatch_tag(monkeypatch):
     order = SimpleNamespace(
         id=10, name="PK10", tags="", cancelled_at=None, fulfillment_status="fulfilled",
