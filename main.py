@@ -131,6 +131,7 @@ tracking_summary_cache = {}
 tracking_summary_cache_loaded = False
 tracking_refresh_lock = threading.Lock()
 order_tracking_refresh_lock = threading.Lock()
+tickbags_reconcile_lock = threading.Lock()
 order_tracking_refresh_state = {
     "running": False,
     "error": "",
@@ -5046,15 +5047,29 @@ def build_tickbags_pending_lahore_orders(orders=None):
     return sorted(pending, key=lambda row: parse_date_for_sort(row.get("created_at")), reverse=True)
 
 
-def ensure_tickbags_invoices():
-    invoices = load_vendor_invoices(TICKBAGS_VENDOR)
-    if get_app_setting(TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY, "") != "complete":
+def start_tickbags_dispatch_reconciliation():
+    if get_app_setting(TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY, "") == "complete":
+        return False
+    if not tickbags_reconcile_lock.acquire(blocking=False):
+        return False
+
+    def reconcile():
         try:
             backfill_tickbags_invoice(tickbags_invoice_period(TICKBAGS_LEGACY_END))
             set_app_setting(TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY, "complete")
-            invoices = load_vendor_invoices(TICKBAGS_VENDOR)
+            print("Tick Bags dispatch eligibility reconciliation complete.")
         except Exception as error:
             print(f"Could not reconcile Tick Bags dispatch eligibility: {error}")
+        finally:
+            tickbags_reconcile_lock.release()
+
+    threading.Thread(target=reconcile, daemon=True, name="tickbags-dispatch-reconciliation").start()
+    return True
+
+
+def ensure_tickbags_invoices():
+    start_tickbags_dispatch_reconciliation()
+    invoices = load_vendor_invoices(TICKBAGS_VENDOR)
     legacy = next((row for row in invoices if row.get("period_end") == TICKBAGS_LEGACY_END), None)
     if not legacy or not legacy.get("lines"):
         try:
