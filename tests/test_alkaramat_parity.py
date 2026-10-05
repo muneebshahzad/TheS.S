@@ -424,6 +424,30 @@ def test_tickbags_legacy_backfill_uses_first_courier_dispatch_date(monkeypatch):
     assert captured["lines"][0]["order_status"] == "Out for Delivery"
 
 
+def test_tickbags_legacy_backfill_includes_fulfilled_plain_lahore_delivery(monkeypatch):
+    order = SimpleNamespace(
+        id=2937, name="PK2937A01", tags="BeanBag, Delivered in Lahore",
+        cancelled_at=None, fulfillment_status="fulfilled",
+        created_at="2026-09-25T10:00:00+05:00", processed_at="2026-09-25T10:00:00+05:00",
+        fulfillments=[],
+        line_items=[SimpleNamespace(
+            title="Black&White Football xxxl with stool-Leather", variant_title="Default Title",
+            variant_id=None, product_id=None, quantity=2,
+        )],
+    )
+    captured = {}
+    monkeypatch.setattr(main, "setup_shopify", lambda: None)
+    monkeypatch.setattr(main, "fetch_all_shopify_orders", lambda *_args: [order])
+    monkeypatch.setattr(main, "get_active_shopify_products", lambda **_kwargs: [])
+    monkeypatch.setattr(main, "sync_vendor_invoice", lambda invoice, lines: captured.update(invoice=invoice, lines=lines))
+    monkeypatch.setattr(main, "prune_vendor_invoice_lines", lambda *_args: 0)
+
+    assert main.backfill_tickbags_invoice(main.tickbags_invoice_period(date(2026, 10, 4))) == 1
+    assert captured["lines"][0]["order_number"] == "PK2937A01"
+    assert captured["lines"][0]["quantity"] == 2
+    assert captured["lines"][0]["order_status"] == "Delivered in Lahore"
+
+
 def test_tickbags_booked_tracking_waits_for_actual_dispatch_week():
     booked = {
         "id": 11, "order_id": "PK11", "tags": ["BeanBag"], "status": "Booked",

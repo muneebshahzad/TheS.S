@@ -145,7 +145,7 @@ PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
 TICKBAGS_VENDOR = "Tick Bags"
 TICKBAGS_LEGACY_END = datetime(2026, 10, 4).date()
 TICKBAGS_WEEKLY_SYNC_SETTING_KEY = "tickbags_last_weekly_sync_v1"
-TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY = "tickbags_dispatch_eligibility_v2"
+TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY = "tickbags_dispatch_eligibility_v3"
 PAKISTAN_TIMEZONE = ZoneInfo("Asia/Karachi")
 AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY = "aghaje_net_payment_received_v1"
 TRACKING_SUMMARY_CACHE_SETTING_KEY = "tracking_summary_cache_v1"
@@ -4976,6 +4976,19 @@ def backfill_tickbags_invoice(period=None):
                     courier_dispatch_dates.append(observed_dispatch)
             dispatch_date = min(courier_dispatch_dates) if courier_dispatch_dates else None
         lahore_date = parse_courier_event_date(dated_order_tag_date(tags, "Delivered in Lahore Approved"))
+        # Older Lahore deliveries predate the dated approval tag. They were
+        # recorded with the plain Shopify tag after fulfillment, so retain
+        # those completed deliveries in the one-off legacy invoice. A plain
+        # tag on an unfulfilled order is still only an approval request.
+        if (
+            not lahore_date
+            and has_order_tag(tags, "Delivered in Lahore")
+            and str(getattr(order, "fulfillment_status", "") or "").strip().lower() == "fulfilled"
+        ):
+            lahore_date = (
+                parse_courier_event_date(getattr(order, "processed_at", None))
+                or parse_courier_event_date(getattr(order, "created_at", None))
+            )
         eligible_date = dispatch_date or lahore_date
         if not eligible_date or not (period["period_start"] <= eligible_date <= period["period_end"]):
             continue
