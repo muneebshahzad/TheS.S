@@ -392,8 +392,20 @@ def test_tickbags_pending_lahore_orders_excludes_tracked_orders(monkeypatch):
 
 def test_tickbags_invoice_template_has_required_ledger_controls():
     source = (Path(__file__).resolve().parents[1] / "templates" / "tickbags_invoices.html").read_text()
-    for label in ("Products total", "Refunds", "Payable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current outstanding balance", "Record partial payment", "Mark as Final Invoice"):
+    for label in ("Products total", "Refunds", "Payable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current outstanding balance", "Record partial payment", "Mark as Final Invoice", "Product costs", "Update open invoices"):
         assert label in source
+
+
+def test_tickbags_product_cost_rows_sort_by_open_invoice_units():
+    invoices = [{"status": "Draft", "lines": [
+        {"variant_id": "1", "product_name": "Low", "quantity": 1, "unit_cost": 10},
+        {"variant_id": "2", "product_name": "High", "quantity": 4, "unit_cost": 20},
+        {"variant_id": "2", "product_name": "High", "quantity": 2, "unit_cost": 20},
+    ]}, {"status": "Final", "lines": [
+        {"variant_id": "3", "product_name": "Locked", "quantity": 99, "unit_cost": 30},
+    ]}]
+    rows = main.build_tickbags_product_cost_rows(invoices, catalog=[])
+    assert [(row["product_name"], row["units_sold"]) for row in rows] == [("High", 6), ("Low", 1)]
 
 
 def test_tickbags_invoice_template_renders_pending_lahore_items():

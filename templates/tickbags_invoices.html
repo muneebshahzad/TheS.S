@@ -12,6 +12,12 @@
   <div class="ti-top"><strong>Tick Bags Invoices</strong><span>Weekly beanbag purchasing ledger</span></div>
   <div class="ti-list">
     <div class="ti-balance"><div><span>Current outstanding balance</span><div>All unpaid invoices after refunds and adjustments</div></div><strong>PKR {{ current_balance|round(0)|int|format_number }}</strong></div>
+    <details class="ti-invoice">
+      <summary class="ti-head"><div><div class="ti-name">Product costs</div><div class="ti-meta">Update once across every open invoice · sorted by units sold</div></div><span class="ti-badge final">{{ product_cost_rows|length }} products</span></summary>
+      <div class="ti-body"><div class="ti-wrap"><table class="ti-table"><thead><tr><th>Product</th><th>Units sold</th><th>Default unit cost</th><th>Action</th></tr></thead><tbody>
+        {% for product in product_cost_rows %}<tr><td><div class="ti-product"><div class="ti-thumb">{% if product.image_url %}<img src="{{ product.image_url }}" alt="">{% else %}🧺{% endif %}</div><strong>{{ product.product_name }}</strong></div></td><td><strong>{{ product.units_sold }}</strong></td><td><input class="ti-cost" id="product-cost-{{ loop.index }}" type="number" min="0" step="1" value="{{ product.unit_cost }}" aria-label="Default cost for {{ product.product_name }}"></td><td><button class="ti-btn primary" onclick='saveProductCost({{ loop.index }},{{ product.variant_id|tojson }},{{ product.product_id|tojson }},{{ product.inventory_item_id|tojson }},{{ product.product_name|tojson }},this)'>Update open invoices</button></td></tr>{% else %}<tr><td colspan="4" class="ti-empty">No products in open invoices yet.</td></tr>{% endfor %}
+      </tbody></table></div><div class="ti-meta">Changing a default cost updates Draft invoices only. Final and Paid invoices stay locked. You can still override an individual order from its invoice row afterward.</div></div>
+    </details>
     <details class="ti-invoice" open>
       <summary class="ti-head"><div><div class="ti-name">Pending Lahore beanbag orders</div><div class="ti-meta">No courier tracking · approval required before adding to the current invoice</div></div><span class="ti-badge draft">{{ pending_lahore_orders|length }}</span></summary>
       <div class="ti-body"><div class="ti-wrap"><table class="ti-table"><thead><tr><th>Order</th><th>Products</th><th>Customer</th><th>Value</th><th>Action</th></tr></thead><tbody>
@@ -79,6 +85,12 @@ async function reverseCharge(lineId,button){
 async function saveCost(lineId,input){
   input.disabled=true;
   try{const r=await fetch('/tickbags-invoices/line-cost',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({line_id:lineId,unit_cost:input.value})});const j=await r.json();if(!r.ok||!j.success)throw new Error(j.error||'Could not save cost');location.reload()}catch(e){showToast(e.message);input.disabled=false}
+}
+async function saveProductCost(index,variant_id,product_id,inventory_item_id,product_name,button){
+  const input=document.getElementById(`product-cost-${index}`),unit_cost=Number(input.value);
+  if(!Number.isFinite(unit_cost)||unit_cost<0){showToast('Enter a valid product cost.');return}
+  button.disabled=true;input.disabled=true;
+  try{const r=await fetch('/tickbags-invoices/product-cost',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({variant_id,product_id,inventory_item_id,product_name,unit_cost})});const j=await r.json();if(!r.ok||!j.success)throw new Error(j.error||'Could not update product cost');showToast(`Cost updated in ${j.updated_lines} open invoice line${j.updated_lines===1?'':'s'}`);location.reload()}catch(e){showToast(e.message);button.disabled=false;input.disabled=false}
 }
 async function addAdjustment(id,button){
   const amount=document.getElementById(`adjust-amount-${id}`).value,method=document.getElementById(`adjust-method-${id}`).value,comments=document.getElementById(`adjust-comments-${id}`).value.trim();

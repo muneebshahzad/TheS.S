@@ -164,6 +164,7 @@ def _ensure_vendor_invoices_tables(cur):
             quantity INTEGER NOT NULL DEFAULT 1,
             order_status TEXT NOT NULL DEFAULT '',
             is_returned BOOLEAN NOT NULL DEFAULT FALSE,
+            cost_overridden BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
@@ -171,6 +172,7 @@ def _ensure_vendor_invoices_tables(cur):
     )
     cur.execute("ALTER TABLE vendor_invoice_lines ADD COLUMN IF NOT EXISTS courier TEXT NOT NULL DEFAULT ''")
     cur.execute("ALTER TABLE vendor_invoice_lines ADD COLUMN IF NOT EXISTS tracking_number TEXT NOT NULL DEFAULT ''")
+    cur.execute("ALTER TABLE vendor_invoice_lines ADD COLUMN IF NOT EXISTS cost_overridden BOOLEAN NOT NULL DEFAULT FALSE")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS vendor_invoice_refunds (
@@ -499,7 +501,7 @@ def sync_vendor_invoice(invoice, lines):
                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                                ON CONFLICT (line_key) DO UPDATE SET
                                  product_name=EXCLUDED.product_name, image_url=EXCLUDED.image_url,
-                                 unit_cost=CASE WHEN vendor_invoice_lines.unit_cost = 0 OR EXCLUDED.unit_cost > 0
+                                 unit_cost=CASE WHEN NOT vendor_invoice_lines.cost_overridden
                                                 THEN EXCLUDED.unit_cost ELSE vendor_invoice_lines.unit_cost END,
                                  courier=EXCLUDED.courier, tracking_number=EXCLUDED.tracking_number,
                                  quantity=EXCLUDED.quantity, order_status=EXCLUDED.order_status,
@@ -581,7 +583,7 @@ def update_vendor_invoice_line_cost(line_id, unit_cost):
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 _ensure_vendor_invoices_tables(cur)
                 cur.execute(
-                    """UPDATE vendor_invoice_lines l SET unit_cost=%s, updated_at=NOW()
+                    """UPDATE vendor_invoice_lines l SET unit_cost=%s, cost_overridden=TRUE, updated_at=NOW()
                        FROM vendor_invoices i WHERE l.id=%s AND i.id=l.invoice_id AND i.status='Draft'
                        RETURNING l.*""",
                     (unit_cost, int(line_id)),
@@ -592,6 +594,38 @@ def update_vendor_invoice_line_cost(line_id, unit_cost):
     except Exception as error:
         _set_last_db_error(str(error))
         return None
+
+
+def update_open_vendor_product_cost(vendor, unit_cost, *, variant_id=None, product_id=None, product_name=""):
+    """Apply a catalog cost to matching draft lines while preserving order overrides."""
+    variant_id = str(variant_id or "").strip()
+    product_id = str(product_id or "").strip()
+    product_name = str(product_name or "").strip()
+    if variant_id:
+        identity_sql, identity_value = "l.variant_id=%s", variant_id
+    elif product_id:
+        identity_sql, identity_value = "l.product_id=%s", product_id
+    elif product_name:
+        identity_sql, identity_value = "LOWER(l.product_name)=LOWER(%s)", product_name
+    else:
+        return 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                _ensure_vendor_invoices_tables(cur)
+                cur.execute(
+                    f"""UPDATE vendor_invoice_lines l SET unit_cost=%s, updated_at=NOW()
+                        FROM vendor_invoices i
+                        WHERE l.invoice_id=i.id AND i.vendor=%s AND i.status='Draft'
+                          AND NOT l.cost_overridden AND {identity_sql}""",
+                    (unit_cost, vendor, identity_value),
+                )
+                updated = cur.rowcount
+            conn.commit()
+        return updated
+    except Exception as error:
+        _set_last_db_error(str(error))
+        return 0
 
 
 def add_vendor_invoice_adjustment(invoice_id, amount, method, comments=""):
