@@ -290,6 +290,21 @@ async def _fetch_status(session, tracking_number, config):
             body = await response.json(content_type=None)
 
     rows = body.get("data") if isinstance(body, dict) else None
+    if response.status == 200 and (not isinstance(rows, list) or not rows):
+        # TCS and other secondary couriers can belong to a different gateway
+        # than the account default. DigiDokaan's unscoped search resolves the
+        # gateway from the CN and keeps existing configured-gateway behavior as
+        # the fast first attempt.
+        fallback_payload = {"phone": config["phone"], "search_value": tracking_number}
+        async with session.post(
+            config["base_url"] + "/api/orders/search-courier-order",
+            json=fallback_payload,
+            headers=headers,
+            timeout=ClientTimeout(total=20),
+            ssl=_SSL_CONTEXT,
+        ) as response:
+            body = await response.json(content_type=None)
+        rows = body.get("data") if isinstance(body, dict) else None
     if response.status != 200 or not isinstance(rows, list) or not rows:
         return None
     exact = next(
@@ -373,6 +388,16 @@ async def fetch_tracking_history(session, tracking_number):
         ) as response:
             search_body = await response.json(content_type=None)
         rows = search_body.get("data") if isinstance(search_body, dict) else None
+        if response.status == 200 and (not isinstance(rows, list) or not rows):
+            async with session.post(
+                config["base_url"] + "/api/orders/search-courier-order",
+                json={"phone": config["phone"], "search_value": normalized},
+                headers=headers,
+                timeout=timeout,
+                ssl=_SSL_CONTEXT,
+            ) as response:
+                search_body = await response.json(content_type=None)
+            rows = search_body.get("data") if isinstance(search_body, dict) else None
         if response.status != 200 or not isinstance(rows, list) or not rows:
             return []
         order = next(

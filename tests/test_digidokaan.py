@@ -24,8 +24,10 @@ class FakeResponse:
 class FakeSession:
     def __init__(self, responses):
         self.responses = iter(responses)
+        self.calls = []
 
-    def post(self, *_args, **_kwargs):
+    def post(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
         return FakeResponse(*next(self.responses))
 
 
@@ -107,6 +109,31 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
             status = await digidokaan._fetch_status(session, "22315868148789", config)
 
         self.assertEqual(status, "Delivery In Transit")
+
+    async def test_tracking_search_retries_without_gateway_for_tcs(self):
+        config = {
+            "base_url": "https://digidokaan.example",
+            "phone": "923000000000",
+            "password": "secret",
+            "gateway_id": "5",
+        }
+        session = FakeSession([
+            ({"data": []},),
+            ({"data": [{
+                "tracking_no": "173018543246",
+                "order_id": "TCS-1",
+                "courier_status": "In Transit",
+            }]},),
+            ({"data": {"tracking_response": {"data": [
+                {"status": "Shipment - In Transit", "date_time": "12/10/2026 01:00 PM"},
+            ]}}},),
+        ])
+        with patch.object(digidokaan, "_access_token", AsyncMock(return_value="token")):
+            status = await digidokaan._fetch_status(session, "173018543246", config)
+
+        self.assertEqual(status, "In Transit")
+        self.assertEqual(session.calls[0][1]["json"]["gateway_id"], "5")
+        self.assertNotIn("gateway_id", session.calls[1][1]["json"])
 
     def test_payment_record_separates_active_cod_from_settlement(self):
         record = digidokaan._payment_record(
