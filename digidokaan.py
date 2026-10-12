@@ -335,6 +335,20 @@ async def _fetch_status(session, tracking_number, config):
             if response.status == 200 and isinstance(rows, list) and rows:
                 break
     if response.status != 200 or not isinstance(rows, list) or not rows:
+        if _looks_like_tcs_tracking(tracking_number):
+            try:
+                async with session.post(
+                    config["base_url"] + "/api/seller/order/get_single_order_detail",
+                    json={"phone": config["phone"], "order_no": tracking_number},
+                    headers=headers,
+                    timeout=ClientTimeout(total=20),
+                    ssl=_SSL_CONTEXT,
+                ) as detail_response:
+                    detail_body = await detail_response.json(content_type=None)
+                if detail_response.status == 200:
+                    return display_status_from_detail(detail_body)
+            except Exception:
+                pass
         return None
     exact = next(
         (row for row in rows if str(row.get("tracking_no") or "").strip() == tracking_number),
@@ -441,7 +455,33 @@ async def fetch_tracking_history(session, tracking_number):
                 if response.status == 200 and isinstance(rows, list) and rows:
                     break
         if response.status != 200 or not isinstance(rows, list) or not rows:
-            return []
+            if not _looks_like_tcs_tracking(normalized):
+                return []
+            async with session.post(
+                config["base_url"] + "/api/seller/order/get_single_order_detail",
+                json={"phone": config["phone"], "order_no": normalized},
+                headers=headers,
+                timeout=timeout,
+                ssl=_SSL_CONTEXT,
+            ) as response:
+                detail_body = await response.json(content_type=None)
+            if response.status != 200:
+                return []
+            data = detail_body.get("data") if isinstance(detail_body, dict) else None
+            detail = data.get("order_detail") if isinstance(data, dict) else None
+            tracking = data.get("tracking_response") if isinstance(data, dict) else None
+            events = tracking.get("data") if isinstance(tracking, dict) else None
+            if not isinstance(events, list):
+                return []
+            detail = detail if isinstance(detail, dict) else {}
+            return [{
+                "ConsignmentNo": normalized,
+                "TransactionDate": event.get("date_time") or "",
+                "ProcessDescForPortal": _clean_status(event.get("status")),
+                "ReasonDesc": event.get("status_reason") or "",
+                "ConsigneeName": detail.get("customer_name") or "",
+                "ConsigneeCity": detail.get("customer_city") or "",
+            } for event in reversed(events) if isinstance(event, dict) and str(event.get("status") or "").strip()]
         order = next(
             (row for row in rows if str(row.get("tracking_no") or "").strip() == normalized),
             rows[0],
