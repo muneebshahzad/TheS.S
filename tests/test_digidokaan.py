@@ -135,6 +135,25 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
         self.assertEqual(session.calls[0][1]["json"]["gateway_id"], "5")
         self.assertNotIn("gateway_id", session.calls[1][1]["json"])
 
+    async def test_tcs_tracking_discovers_secondary_gateway(self):
+        config = {
+            "base_url": "https://digidokaan.example", "phone": "923000000000",
+            "password": "secret", "gateway_id": "5",
+        }
+        session = FakeSession([
+            ({"data": []},), ({"data": []},), ({"data": []},),
+            ({"data": [{"tracking_no": "173018543246", "order_id": "TCS-1", "courier_status": "Out for Delivery"}]},),
+            ({"data": {"tracking_response": {"data": [{"status": "Shipment - Out for Delivery"}]}}},),
+        ])
+        with patch.dict(os.environ, {"DIGIDOKAAN_TCS_GATEWAY_IDS": "1,8"}), patch.object(
+            digidokaan, "_access_token", AsyncMock(return_value="token")
+        ):
+            status = await digidokaan._fetch_status(session, "173018543246", config)
+
+        self.assertEqual(status, "Out for Delivery")
+        self.assertEqual(session.calls[2][1]["json"]["gateway_id"], "1")
+        self.assertEqual(session.calls[3][1]["json"]["gateway_id"], "8")
+
     def test_payment_record_separates_active_cod_from_settlement(self):
         record = digidokaan._payment_record(
             {

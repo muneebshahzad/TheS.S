@@ -194,6 +194,22 @@ def configuration():
     return values
 
 
+def _tcs_gateway_candidates(config):
+    configured = str(config.get("gateway_id") or "").strip()
+    raw = os.getenv("DIGIDOKAAN_TCS_GATEWAY_IDS") or "1,2,3,4,6,7,8,9,10,11,12"
+    candidates = []
+    for value in raw.split(","):
+        gateway_id = value.strip()
+        if gateway_id and gateway_id != configured and gateway_id not in candidates:
+            candidates.append(gateway_id)
+    return candidates
+
+
+def _looks_like_tcs_tracking(tracking_number):
+    digits = re.sub(r"\D", "", str(tracking_number or ""))
+    return len(digits) == 12 and digits.startswith("17")
+
+
 def display_status_from_detail(body, fallback=None):
     """Return the actionable latest status shown by DigiDokaan.
 
@@ -305,6 +321,19 @@ async def _fetch_status(session, tracking_number, config):
         ) as response:
             body = await response.json(content_type=None)
         rows = body.get("data") if isinstance(body, dict) else None
+    if response.status == 200 and (not isinstance(rows, list) or not rows) and _looks_like_tcs_tracking(tracking_number):
+        for gateway_id in _tcs_gateway_candidates(config):
+            async with session.post(
+                config["base_url"] + "/api/orders/search-courier-order",
+                json={"phone": config["phone"], "search_value": tracking_number, "gateway_id": gateway_id},
+                headers=headers,
+                timeout=ClientTimeout(total=20),
+                ssl=_SSL_CONTEXT,
+            ) as response:
+                body = await response.json(content_type=None)
+            rows = body.get("data") if isinstance(body, dict) else None
+            if response.status == 200 and isinstance(rows, list) and rows:
+                break
     if response.status != 200 or not isinstance(rows, list) or not rows:
         return None
     exact = next(
@@ -398,6 +427,19 @@ async def fetch_tracking_history(session, tracking_number):
             ) as response:
                 search_body = await response.json(content_type=None)
             rows = search_body.get("data") if isinstance(search_body, dict) else None
+        if response.status == 200 and (not isinstance(rows, list) or not rows) and _looks_like_tcs_tracking(normalized):
+            for gateway_id in _tcs_gateway_candidates(config):
+                async with session.post(
+                    config["base_url"] + "/api/orders/search-courier-order",
+                    json={"phone": config["phone"], "search_value": normalized, "gateway_id": gateway_id},
+                    headers=headers,
+                    timeout=timeout,
+                    ssl=_SSL_CONTEXT,
+                ) as response:
+                    search_body = await response.json(content_type=None)
+                rows = search_body.get("data") if isinstance(search_body, dict) else None
+                if response.status == 200 and isinstance(rows, list) and rows:
+                    break
         if response.status != 200 or not isinstance(rows, list) or not rows:
             return []
         order = next(
