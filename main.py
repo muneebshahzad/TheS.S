@@ -188,18 +188,24 @@ def is_leopards_tracking(tracking_number):
     return str(tracking_number or "").strip().upper().startswith("LE")
 
 
+def is_tcs_tracking(tracking_number):
+    normalized = "".join(character for character in str(tracking_number or "") if character.isdigit())
+    return len(normalized) == 12 and normalized.startswith("17")
+
+
 def is_digidokaan_tracking(tracking_number, courier_name=""):
     normalized = "".join(character for character in str(tracking_number or "") if character.isdigit())
     courier = re.sub(r"[^a-z0-9]+", "", str(courier_name or "").casefold())
     return (
         (len(normalized) in {14, 15} and normalized.startswith("223"))
+        or is_tcs_tracking(normalized)
         or (bool(normalized) and ("tcs" in courier or "digidokaan" in courier))
     )
 
 
 def courier_label_for_tracking(courier_name="", tracking_number=""):
     if is_digidokaan_tracking(tracking_number, courier_name):
-        if "tcs" in str(courier_name or "").casefold():
+        if is_tcs_tracking(tracking_number) or "tcs" in str(courier_name or "").casefold():
             return "TCS"
         return "DigiDokaan"
     if is_leopards_tracking(tracking_number):

@@ -192,8 +192,10 @@ def test_sleek_space_routes_digidokaan_tracking(monkeypatch):
     assert main.courier_label_for_tracking("", "22322367960798") == "DigiDokaan"
     assert not main.is_digidokaan_tracking("LE123456")
     assert main.is_digidokaan_tracking("173018543246", "TCS")
+    assert main.is_digidokaan_tracking("173018543246")
+    assert main.is_tcs_tracking("173018543246")
     assert main.courier_label_for_tracking("TCS", "173018543246") == "TCS"
-    assert not main.is_digidokaan_tracking("173018543246", "Call Courier")
+    assert main.courier_label_for_tracking("Call Courier", "173018543246") == "TCS"
 
 
 def test_tcs_fulfillment_uses_digidokaan_tracking(monkeypatch):
