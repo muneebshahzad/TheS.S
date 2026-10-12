@@ -191,6 +191,24 @@ def test_sleek_space_routes_digidokaan_tracking(monkeypatch):
     assert main.is_digidokaan_tracking("22322367960798")
     assert main.courier_label_for_tracking("", "22322367960798") == "DigiDokaan"
     assert not main.is_digidokaan_tracking("LE123456")
+    assert main.is_digidokaan_tracking("173018543246", "TCS")
+    assert main.courier_label_for_tracking("TCS", "173018543246") == "TCS"
+    assert not main.is_digidokaan_tracking("173018543246", "Call Courier")
+
+
+def test_tcs_fulfillment_uses_digidokaan_tracking(monkeypatch):
+    monkeypatch.setenv("INITIALIZE_APP", "false")
+    import main
+
+    expected = [{"ProcessDescForPortal": "In Transit"}]
+
+    async def history(_session, tracking_number):
+        assert tracking_number == "173018543246"
+        return expected
+
+    monkeypatch.setattr(main, "fetch_digidokaan_tracking_history", history)
+    result = asyncio.run(main.fetch_tracking_data(object(), "173018543246", "TCS"))
+    assert result == expected
 
 
 def test_digidokaan_delivery_exceptions_need_attention(monkeypatch):

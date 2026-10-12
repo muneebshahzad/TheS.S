@@ -188,17 +188,36 @@ def is_leopards_tracking(tracking_number):
     return str(tracking_number or "").strip().upper().startswith("LE")
 
 
-def is_digidokaan_tracking(tracking_number):
+def is_digidokaan_tracking(tracking_number, courier_name=""):
     normalized = "".join(character for character in str(tracking_number or "") if character.isdigit())
-    return len(normalized) in {14, 15} and normalized.startswith("223")
+    courier = re.sub(r"[^a-z0-9]+", "", str(courier_name or "").casefold())
+    return (
+        (len(normalized) in {14, 15} and normalized.startswith("223"))
+        or (bool(normalized) and ("tcs" in courier or "digidokaan" in courier))
+    )
 
 
 def courier_label_for_tracking(courier_name="", tracking_number=""):
-    if is_digidokaan_tracking(tracking_number):
+    if is_digidokaan_tracking(tracking_number, courier_name):
+        if "tcs" in str(courier_name or "").casefold():
+            return "TCS"
         return "DigiDokaan"
     if is_leopards_tracking(tracking_number):
         return "Leopards"
     return str(courier_name or "").strip()
+
+
+def known_courier_for_tracking(tracking_number):
+    target = str(tracking_number or "").strip().casefold()
+    if not target:
+        return ""
+    for order in globals().get("order_details", []) or []:
+        for item in order.get("line_items") or []:
+            if str(item.get("tracking_number") or "").strip().casefold() == target:
+                courier = str(item.get("courier_name") or "").strip()
+                if courier:
+                    return courier
+    return ""
 
 
 def is_postex_courier(courier_name=""):
@@ -2631,7 +2650,7 @@ def fetch_tracking_data_sync(tracking_number):
     async def run_lookup():
         timeout = aiohttp.ClientTimeout(total=8)
         async with aiohttp.ClientSession(timeout=timeout) as session_obj:
-            return await fetch_tracking_data(session_obj, tracking_number)
+            return await fetch_tracking_data(session_obj, tracking_number, known_courier_for_tracking(tracking_number))
 
     return asyncio.run(run_lookup())
 
@@ -2658,7 +2677,7 @@ def build_tracking_summary_payload(tracking_number):
             events.append({"title": title, "meta": meta, "reason": "" if reason == "OK" else reason})
     return {
         "tracking_number": tracking_number,
-        "courier": courier_label_for_tracking("", tracking_number) or "Call Courier",
+        "courier": courier_label_for_tracking(known_courier_for_tracking(tracking_number), tracking_number) or "Call Courier",
         "status": summary.get("status") or "No tracking status",
         "tracking_observed": tracking_data_is_valid(tracking_number, data),
         "customer": summary.get("name") or "",
@@ -2806,7 +2825,7 @@ def refresh_tracking_summaries_sync(
                 async with semaphore:
                     try:
                         data = await asyncio.wait_for(
-                            fetch_tracking_data(session_obj, tracking_number),
+                            fetch_tracking_data(session_obj, tracking_number, known_courier_for_tracking(tracking_number)),
                             timeout=TRACKING_REFRESH_PER_SHIPMENT_TIMEOUT_SECONDS,
                         )
                         summary = summarize_tracking_result(tracking_number, data)
@@ -3524,10 +3543,10 @@ def ensure_required_aghaje_webhooks():
         create_response.raise_for_status()
 
 
-async def fetch_tracking_data(session_obj, tracking_number):
+async def fetch_tracking_data(session_obj, tracking_number, courier_name=""):
     if not tracking_number or tracking_number == "N/A":
         return {}
-    if is_digidokaan_tracking(tracking_number):
+    if is_digidokaan_tracking(tracking_number, courier_name):
         history = await fetch_digidokaan_tracking_history(session_obj, tracking_number)
         if history:
             return history
@@ -3679,8 +3698,9 @@ async def process_line_item(session_obj, line_item, fulfillments):
                 if quantity <= 0:
                     continue
                 tracking_number = getattr(fulfillment, "tracking_number", "") or "N/A"
+                courier_name = str(getattr(fulfillment, "tracking_company", "") or "").strip()
                 try:
-                    data = await fetch_tracking_data(session_obj, tracking_number)
+                    data = await fetch_tracking_data(session_obj, tracking_number, courier_name)
                 except Exception as error:
                     print(f"Error fetching tracking for {tracking_number}: {error}")
                     data = {}
@@ -3688,7 +3708,7 @@ async def process_line_item(session_obj, line_item, fulfillments):
                 tracking_info.append(
                     {
                         "tracking_number": tracking_number,
-                        "courier_name": courier_label_for_tracking("", tracking_number) or "Call Courier",
+                        "courier_name": courier_label_for_tracking(courier_name, tracking_number) or "Call Courier",
                         "status": summary["status"],
                         "tracking_observed": tracking_data_is_valid(tracking_number, data),
                         "return_marked_at": summary.get("return_marked_at") or "",
@@ -5895,9 +5915,10 @@ def mark_abandoned_viewed():
 def display_tracking(tracking_num):
     async def run_lookup():
         async with aiohttp.ClientSession() as session_obj:
-            if is_digidokaan_tracking(tracking_num):
+            courier_name = known_courier_for_tracking(tracking_num)
+            if is_digidokaan_tracking(tracking_num, courier_name):
                 return await fetch_digidokaan_tracking_history(session_obj, tracking_num)
-            return await fetch_tracking_data(session_obj, tracking_num)
+            return await fetch_tracking_data(session_obj, tracking_num, courier_name)
 
     data = asyncio.run(run_lookup())
     summary = summarize_tracking_result(tracking_num, data)
@@ -6985,7 +7006,7 @@ def merge_shopify_digidokaan_payment_records(payments, shopify_orders):
         grouped_items = {}
         for item in order.get("line_items") or []:
             tracking = str(item.get("tracking_number") or "").strip()
-            if not is_digidokaan_tracking(tracking):
+            if not is_digidokaan_tracking(tracking, item.get("courier_name")):
                 continue
             grouped_items.setdefault(tracking, []).append(item)
         for tracking, items in grouped_items.items():
