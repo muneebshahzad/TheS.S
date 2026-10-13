@@ -5260,6 +5260,7 @@ def group_tickbags_product_cost_rows(rows):
     result = list(groups.values())
     for group in result:
         group["variants"].sort(key=lambda row: (-int(row.get("units_sold") or 0), str(row.get("product_name") or "").lower()))
+        group["image_url"] = next((row.get("image_url") for row in group["variants"] if row.get("image_url")), "")
         costs = sorted({parse_money(row.get("unit_cost"), 0) for row in group["variants"]})
         group["shared_cost"] = costs[0] if len(costs) == 1 else None
         group["has_mixed_costs"] = len(costs) > 1

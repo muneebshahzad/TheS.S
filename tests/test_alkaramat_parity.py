@@ -512,12 +512,13 @@ def test_tickbags_product_cost_groups_keep_colours_together():
 
 def test_tickbags_product_cost_groups_expose_one_shared_cost():
     rows = [
-        {"product_title": "Cocoon", "product_name": "Cocoon - Olive", "units_sold": 1, "unit_cost": 8060},
+        {"product_title": "Cocoon", "product_name": "Cocoon - Olive", "units_sold": 1, "unit_cost": 8060, "image_url": "olive.jpg"},
         {"product_title": "Cocoon", "product_name": "Cocoon - Black", "units_sold": 2, "unit_cost": 8060},
     ]
     group = main.group_tickbags_product_cost_rows(rows)[0]
     assert group["shared_cost"] == 8060
     assert group["has_mixed_costs"] is False
+    assert group["image_url"] == "olive.jpg"
 
 
 def test_tickbags_product_cost_groups_fold_separate_colour_products():
