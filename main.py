@@ -294,6 +294,9 @@ RETURN_COURIER_MARKERS = (
     "RETURNED TO SHIPPER",
     "RETURN TO SENDER",
     "RETURNED TO SENDER",
+    "RETURN TO ORIGIN",
+    "RETURN - IN TRANSIT",
+    "RETURN - ARRIVED AT ORIGIN",
     "OUT FOR RETURN",
     "BEING RETURN",
     "ASSIGNED TO COURIER FOR RETURN",
@@ -4911,6 +4914,14 @@ def tickbags_order_is_returned(order, item):
     )
 
 
+def tickbags_invoice_line_is_returned(line):
+    """Recognize returns even when an older invoice row predates its return flag."""
+    return bool(
+        (line or {}).get("is_returned")
+        or status_contains_any([(line or {}).get("order_status")], RETURN_COURIER_MARKERS)
+    )
+
+
 def tickbags_line_eligible_date(order, item):
     tracking = str(item.get("tracking_number") or "").strip()
     item_status = normalize_status_bucket(item.get("status") or order.get("status") or "")
@@ -5261,9 +5272,10 @@ def build_tickbags_unreversed_returns(invoices):
     rows = []
     for invoice in invoices or []:
         for line in invoice.get("lines") or []:
-            if not line.get("is_returned") or line.get("refund_invoice_id"):
+            if not tickbags_invoice_line_is_returned(line) or line.get("refund_invoice_id"):
                 continue
             row = dict(line)
+            row["is_returned"] = True
             row["source_invoice_name"] = invoice.get("name") or ""
             row["amount"] = round(parse_money(line.get("unit_cost")) * int(line.get("quantity") or 0), 2)
             rows.append(row)
@@ -6190,7 +6202,7 @@ def refund_tickbags_invoice_line():
     )
     if not current:
         return jsonify({"success": False, "error": "No current draft invoice is available."}), 409
-    if not source or not source.get("is_returned"):
+    if not source or not tickbags_invoice_line_is_returned(source):
         return jsonify({"success": False, "error": "Only returned order charges can be reversed."}), 400
     saved = add_vendor_invoice_refund(current["id"], source_line_id)
     if not saved:

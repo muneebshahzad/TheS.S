@@ -543,6 +543,14 @@ def test_tickbags_unreversed_returns_excludes_already_credited_lines():
     assert rows[0]["source_invoice_name"] == "Old"
 
 
+def test_tickbags_unreversed_returns_recognizes_historical_status_text():
+    invoices = [{"name": "Old", "lines": [
+        {"id": 1, "is_returned": False, "order_status": "Return To Sender - STAFF", "unit_cost": 500, "quantity": 1},
+        {"id": 2, "is_returned": False, "order_status": "Return to Origin", "unit_cost": 700, "quantity": 1},
+    ]}]
+    assert [row["id"] for row in main.build_tickbags_unreversed_returns(invoices)] == [2, 1]
+
+
 def test_tickbags_invoice_template_renders_pending_lahore_items():
     with main.app.test_request_context("/tickbags-invoices"):
         rendered = main.app.jinja_env.get_template("tickbags_invoices.html").render(
