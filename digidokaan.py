@@ -5,9 +5,11 @@ import re
 import ssl
 import time
 from datetime import datetime
+from html.parser import HTMLParser
 
 import certifi
 from aiohttp import ClientTimeout
+import requests
 
 
 _token = ""
@@ -26,6 +28,126 @@ _PAYMENTS_CACHE_SECONDS = 5 * 60
 _OPERATIONS_REFRESH_SECONDS = 6 * 60 * 60
 _TERMINAL_STATUSES = {"delivered", "returned", "return delivered", "cancelled"}
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+
+class _DigiDokaanPageParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.csrf = ""
+
+    def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        if tag == "meta" and values.get("name") == "csrf-token":
+            self.csrf = html.unescape(values.get("content") or "")
+
+
+def _web_login_session(config):
+    session = requests.Session()
+    login_page = session.get(config["web_url"] + "/", timeout=30)
+    login_page.raise_for_status()
+    parser = _DigiDokaanPageParser()
+    parser.feed(login_page.text)
+    if not parser.csrf:
+        raise RuntimeError("DigiDokaan login token was not found")
+    digits = re.sub(r"\D", "", config["phone"])
+    number = digits[2:] if digits.startswith("92") else digits.lstrip("0")
+    headers = {"Accept": "application/json", "X-CSRF-TOKEN": parser.csrf, "X-Requested-With": "XMLHttpRequest"}
+    send = session.post(
+        config["web_url"] + "/user/send-otp",
+        data={"country_code": "+92", "number": number}, headers=headers, timeout=30,
+    )
+    send.raise_for_status()
+    login = session.post(
+        config["web_url"] + "/user/login-new-password",
+        data={"password": config["password"], "number": "+92" + number}, headers=headers, timeout=30,
+    )
+    result = login.json()
+    if login.status_code != 200 or str(result.get("code")) != "200":
+        raise RuntimeError("DigiDokaan web login failed")
+    session.get(config["web_url"] + "/", timeout=30).raise_for_status()
+    return session
+
+
+def generate_trax_load_sheet(tracking_numbers):
+    """Generate one DigiDokaan/Trax load sheet for scanned shipments."""
+    config = configuration()
+    if not config:
+        raise RuntimeError("DigiDokaan booking credentials are not configured")
+    normalized = []
+    for value in tracking_numbers or []:
+        tracking_no = re.sub(r"\D", "", str(value or ""))
+        if tracking_no and tracking_no not in normalized:
+            normalized.append(tracking_no)
+    if not normalized:
+        raise ValueError("Scan at least one DigiDokaan shipment")
+    if len(normalized) > 100:
+        raise ValueError("A load sheet can contain at most 100 shipments")
+
+    api_session = requests.Session()
+    token_response = api_session.post(
+        config["base_url"] + "/api/auth/login",
+        json={"phone": config["phone"], "password": config["password"]},
+        headers={"Accept": "application/json"}, timeout=30,
+    )
+    token_response.raise_for_status()
+    token = str(token_response.json().get("token") or "")
+    if not token:
+        raise RuntimeError("DigiDokaan authentication failed")
+    headers = {"Accept": "application/json", "Authorization": "Bearer " + token}
+    order_numbers = []
+    unresolved = []
+    for tracking_no in normalized:
+        lookup = api_session.post(
+            config["base_url"] + "/api/orders/search-courier-order",
+            json={"phone": config["phone"], "search_value": tracking_no, "gateway_id": config["gateway_id"]},
+            headers=headers, timeout=30,
+        )
+        try:
+            body = lookup.json()
+        except ValueError:
+            body = {}
+        rows = body.get("data") if isinstance(body, dict) else None
+        exact = next(
+            (row for row in (rows or []) if re.sub(r"\D", "", str(row.get("tracking_no") or "")) == tracking_no),
+            None,
+        )
+        order_no = str((exact or {}).get("order_id") or "").strip()
+        if lookup.status_code != 200 or not order_no:
+            unresolved.append(tracking_no)
+        else:
+            order_numbers.append(order_no)
+    if unresolved:
+        preview = ", ".join(unresolved[:5])
+        raise ValueError(f"DigiDokaan could not find: {preview}{'…' if len(unresolved) > 5 else ''}")
+
+    session = _web_login_session(config)
+    page = session.get(config["web_url"] + f"/orders/order-detail/{order_numbers[0]}", timeout=30)
+    page.raise_for_status()
+    parser = _DigiDokaanPageParser()
+    parser.feed(page.text)
+    if not parser.csrf:
+        raise RuntimeError("DigiDokaan load-sheet token was not found")
+    form = [
+        *(("orders[]", value) for value in order_numbers),
+        *(("tracking_numbers[]", value) for value in normalized),
+        ("gateway_id", config["gateway_id"]), ("order_type_download", "load_sheet"),
+        ("order_type", "2"), ("phone", config["phone"]),
+    ]
+    response = session.post(
+        config["web_url"] + "/orders/generate-load-sheet", data=form,
+        headers={"Accept": "application/json", "X-CSRF-TOKEN": parser.csrf, "X-Requested-With": "XMLHttpRequest"}, timeout=90,
+    )
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    if response.status_code != 200 or str(body.get("code")) != "200":
+        raise RuntimeError(body.get("error") or body.get("message") or "DigiDokaan could not generate the load sheet")
+    result = body.get("data") if isinstance(body.get("data"), dict) else body
+    link = result.get("link") or result.get("pdf_link") or result.get("url")
+    if not link:
+        raise RuntimeError("DigiDokaan returned no load-sheet PDF")
+    return {"link": str(link), "tracking_numbers": normalized, "shipment_count": len(normalized)}
 
 
 def _clean_status(value):

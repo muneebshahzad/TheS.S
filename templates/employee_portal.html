@@ -598,6 +598,7 @@
           </div>
           <button class="ghost-btn" onclick="clearQueue()">Clear</button>
         </div>
+        <button class="primary-btn dispatch" id="loadSheetBtn" onclick="createLoadSheet()">Create &amp; Print Load Sheet</button>
         <button class="primary-btn dispatch" id="reportBtn" onclick="createReport()">Create Dispatch Report</button>
         <div class="queue-list" id="queueList"></div>
       </section>
@@ -622,10 +623,12 @@
       let lastScanValue = '';
       let audioContext = null;
       let deferredInstallPrompt = null;
+      let generatedLoadSheetLink = '';
 
       function setMode(mode) {
         currentMode = mode;
         queue = [];
+        resetGeneratedLoadSheet();
         renderModeButtons();
         renderQueue();
         hideResult();
@@ -661,7 +664,16 @@
       }
 
       function normalizeTerm(value) {
-        return (value || '').trim().toLowerCase().replaceAll('#', '');
+        return String(value || '').trim().toLowerCase().replaceAll('#', '').replace(/[^a-z0-9]/g, '');
+      }
+
+      function isDigiDokaanTracking(value) {
+        const digits = String(value || '').replace(/\D/g, '');
+        return (digits.length === 14 || digits.length === 15) && digits.startsWith('223');
+      }
+
+      function trackingNumbersForOrder(order) {
+        return [...new Set((order.items || []).map(item => String(item.tracking_number || '').replace(/\D/g, '')).filter(isDigiDokaanTracking))];
       }
 
       function findOrder(term) {
@@ -710,7 +722,8 @@
           return;
         }
 
-        queue.unshift(order);
+        queue.unshift({...order, _dispatch_tracking_numbers: trackingNumbersForOrder(order)});
+        resetGeneratedLoadSheet();
         renderQueue();
         renderResult(order);
         showToast('Added to ' + (currentMode === 'dispatch' ? 'dispatch' : 'return') + ' queue', true);
@@ -763,11 +776,15 @@
         const queueList = document.getElementById('queueList');
         const queueSummary = document.getElementById('queueSummary');
         const reportBtn = document.getElementById('reportBtn');
+        const loadSheetBtn = document.getElementById('loadSheetBtn');
+        const trackingCount = scannedDispatchTrackingNumbers().length;
 
         queueSummary.textContent = `${queue.length} scanned`;
         updateScanCount();
         reportBtn.disabled = queue.length === 0;
         reportBtn.style.opacity = queue.length === 0 ? '0.5' : '1';
+        loadSheetBtn.disabled = currentMode !== 'dispatch' || trackingCount === 0;
+        loadSheetBtn.style.opacity = loadSheetBtn.disabled ? '0.5' : '1';
 
         queueList.innerHTML = queue.map((order, index) => {
           const productCount = (order.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
@@ -784,14 +801,53 @@
         }).join('');
       }
 
+      function scannedDispatchTrackingNumbers() {
+        return [...new Set(queue.flatMap(order => order._dispatch_tracking_numbers || []).filter(Boolean))];
+      }
+
+      async function createLoadSheet() {
+        const trackingNumbers = scannedDispatchTrackingNumbers();
+        const button = document.getElementById('loadSheetBtn');
+        if (generatedLoadSheetLink) { window.open(generatedLoadSheetLink, '_blank'); return; }
+        if (!trackingNumbers.length) { showToast('No booked DigiDokaan shipment found', false); return; }
+        const pdfWindow = window.open('', '_blank');
+        if (pdfWindow) pdfWindow.document.write('<p style="font-family:sans-serif;padding:24px">Generating load sheet…</p>');
+        button.disabled = true;
+        button.textContent = 'Creating Load Sheet…';
+        try {
+          const response = await fetch('/api/scan/load-sheet', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking_numbers:trackingNumbers})});
+          const result = await response.json();
+          if (!response.ok || !result.success || !result.link) throw new Error(result.error || 'Load sheet failed');
+          generatedLoadSheetLink = result.link;
+          button.disabled = false;
+          button.style.opacity = '1';
+          button.textContent = `Print Load Sheet (${result.shipment_count})`;
+          if (pdfWindow) pdfWindow.location.replace(result.link); else window.open(result.link, '_blank');
+          showToast(`Load sheet created for ${result.shipment_count} shipments`, true);
+        } catch (error) {
+          if (pdfWindow) pdfWindow.close();
+          button.disabled = false;
+          button.textContent = 'Create & Print Load Sheet';
+          showToast(error.message || 'Could not create load sheet', false);
+        }
+      }
+
       function removeFromQueue(source, orderId) {
         queue = queue.filter((entry) => !(entry.source === source && entry.order_id === orderId));
+        resetGeneratedLoadSheet();
         renderQueue();
       }
 
       function clearQueue() {
         queue = [];
+        resetGeneratedLoadSheet();
         renderQueue();
+      }
+
+      function resetGeneratedLoadSheet() {
+        generatedLoadSheetLink = '';
+        const button = document.getElementById('loadSheetBtn');
+        if (button) button.textContent = 'Create & Print Load Sheet';
       }
 
       function updateScanCount() {

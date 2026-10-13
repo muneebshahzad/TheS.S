@@ -95,6 +95,7 @@ from digidokaan import (
     fetch_pending_shipper_advice,
     fetch_tracking_history as fetch_digidokaan_tracking_history,
     fetch_tracking_status as fetch_digidokaan_tracking_status,
+    generate_trax_load_sheet,
     submit_shipper_advice,
     summarize_payment_records as summarize_digidokaan_payment_records,
 )
@@ -6931,6 +6932,28 @@ def employee_portal_updates():
             "generated_at": datetime.now().isoformat(timespec="seconds"),
         }
     )
+
+
+@app.route("/api/scan/load-sheet", methods=["POST"])
+def create_scanned_digidokaan_load_sheet():
+    if not employee_portal_is_authenticated():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    tracking_numbers = (request.get_json(silent=True) or {}).get("tracking_numbers") or []
+    if not isinstance(tracking_numbers, list):
+        return jsonify({"success": False, "error": "Invalid tracking-number list"}), 400
+    try:
+        result = generate_trax_load_sheet(tracking_numbers)
+        link = str(result.get("link") or "")
+        if link.startswith(("https://", "http://")):
+            host = (urlparse(link).hostname or "").casefold()
+            if host != "digidokaan.pk" and not host.endswith(".digidokaan.pk"):
+                raise RuntimeError("DigiDokaan returned an unsafe load-sheet address")
+        return jsonify({"success": True, **result})
+    except ValueError as error:
+        return jsonify({"success": False, "error": str(error)}), 400
+    except Exception as error:
+        print(f"DigiDokaan load-sheet generation failed: {error}")
+        return jsonify({"success": False, "error": str(error)}), 502
 
 
 @app.route("/employee_portal-manifest.webmanifest")
