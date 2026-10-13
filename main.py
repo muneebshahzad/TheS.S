@@ -5220,17 +5220,54 @@ def build_tickbags_product_cost_rows(invoices, catalog=None):
     return sorted(grouped.values(), key=lambda row: (-row["units_sold"], row["product_name"].lower()))
 
 
+TICKBAGS_COLOUR_WORDS = {
+    "beige", "black", "blue", "brown", "camel", "charcoal", "choco", "chocolate",
+    "cream", "crimson", "dark", "espresso", "fossil", "green", "grey", "gray",
+    "light", "maroon", "olive", "onyx", "orange", "pink", "red", "silver", "sienna",
+    "sky", "tan", "white", "yellow",
+}
+
+
+def tickbags_product_family_name(row):
+    family = str(row.get("product_title") or row.get("product_name") or "Bean bags").strip()
+    parts = re.split(r"\s+[–-]\s+", family)
+    if len(parts) < 2:
+        return family
+    suffix_words = set(re.findall(r"[a-z]+", parts[-1].lower()))
+    if suffix_words and suffix_words.issubset(TICKBAGS_COLOUR_WORDS):
+        return " – ".join(parts[:-1]).strip()
+    return family
+
+
 def group_tickbags_product_cost_rows(rows):
     groups = {}
     for row in rows or []:
-        family = str(row.get("product_title") or row.get("product_name") or "Bean bags").strip()
+        family = tickbags_product_family_name(row)
         group = groups.setdefault(family.lower(), {"name": family, "units_sold": 0, "variants": []})
         group["units_sold"] += int(row.get("units_sold") or 0)
         group["variants"].append(row)
     result = list(groups.values())
     for group in result:
         group["variants"].sort(key=lambda row: (-int(row.get("units_sold") or 0), str(row.get("product_name") or "").lower()))
+        costs = sorted({parse_money(row.get("unit_cost"), 0) for row in group["variants"]})
+        group["shared_cost"] = costs[0] if len(costs) == 1 else None
+        group["has_mixed_costs"] = len(costs) > 1
+        group["has_saved_cost"] = bool(costs and all(cost > 0 for cost in costs))
     return sorted(result, key=lambda group: (-group["units_sold"], group["name"].lower()))
+
+
+def build_tickbags_unreversed_returns(invoices):
+    """Return charged lines that have returned but have not received a credit yet."""
+    rows = []
+    for invoice in invoices or []:
+        for line in invoice.get("lines") or []:
+            if not line.get("is_returned") or line.get("refund_invoice_id"):
+                continue
+            row = dict(line)
+            row["source_invoice_name"] = invoice.get("name") or ""
+            row["amount"] = round(parse_money(line.get("unit_cost")) * int(line.get("quantity") or 0), 2)
+            rows.append(row)
+    return sorted(rows, key=lambda row: (parse_courier_event_date(row.get("eligible_date")) or datetime.min.date(), int(row.get("id") or 0)), reverse=True)
 
 
 def build_employee_invoice_payload(order_name, customer_name, phone, city, address, payment_method, delivery_method, catalog_items, custom_items, discount_amount, delivery_charges, advance_amount):
@@ -6103,6 +6140,7 @@ def tickbags_invoices():
         current_balance=abs(current_balance),
         current_balance_type="Receivable" if current_balance < 0 else "Payable",
         product_cost_groups=group_tickbags_product_cost_rows(build_tickbags_product_cost_rows(raw_invoices)),
+        unreversed_returns=build_tickbags_unreversed_returns(raw_invoices),
         pending_lahore_orders=build_tickbags_pending_lahore_orders(),
     )
 

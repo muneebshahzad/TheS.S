@@ -510,6 +510,39 @@ def test_tickbags_product_cost_groups_keep_colours_together():
     assert groups[0]["units_sold"] == 5
 
 
+def test_tickbags_product_cost_groups_expose_one_shared_cost():
+    rows = [
+        {"product_title": "Cocoon", "product_name": "Cocoon - Olive", "units_sold": 1, "unit_cost": 8060},
+        {"product_title": "Cocoon", "product_name": "Cocoon - Black", "units_sold": 2, "unit_cost": 8060},
+    ]
+    group = main.group_tickbags_product_cost_rows(rows)[0]
+    assert group["shared_cost"] == 8060
+    assert group["has_mixed_costs"] is False
+
+
+def test_tickbags_product_cost_groups_fold_separate_colour_products():
+    rows = [
+        {"product_title": "Cocoon Bean Bag Sofa with Ottoman - Camel", "product_name": "Camel", "units_sold": 2},
+        {"product_title": "Cocoon Bean Bag Sofa with Ottoman - Onyx", "product_name": "Onyx", "units_sold": 1},
+    ]
+    groups = main.group_tickbags_product_cost_rows(rows)
+    assert len(groups) == 1
+    assert groups[0]["name"] == "Cocoon Bean Bag Sofa with Ottoman"
+    assert groups[0]["units_sold"] == 3
+
+
+def test_tickbags_unreversed_returns_excludes_already_credited_lines():
+    invoices = [{"name": "Old", "lines": [
+        {"id": 1, "is_returned": True, "refund_invoice_id": None, "unit_cost": 500, "quantity": 2},
+        {"id": 2, "is_returned": True, "refund_invoice_id": 9, "unit_cost": 700, "quantity": 1},
+        {"id": 3, "is_returned": False, "refund_invoice_id": None, "unit_cost": 900, "quantity": 1},
+    ]}]
+    rows = main.build_tickbags_unreversed_returns(invoices)
+    assert [row["id"] for row in rows] == [1]
+    assert rows[0]["amount"] == 1000
+    assert rows[0]["source_invoice_name"] == "Old"
+
+
 def test_tickbags_invoice_template_renders_pending_lahore_items():
     with main.app.test_request_context("/tickbags-invoices"):
         rendered = main.app.jinja_env.get_template("tickbags_invoices.html").render(
