@@ -439,6 +439,26 @@ def test_tickbags_overpayment_is_preserved_as_receivable():
     assert invoice["receivable"] == 44624
 
 
+def test_tickbags_negative_adjustment_records_vendor_repayment(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(main, "add_vendor_invoice_adjustment", lambda invoice_id, amount, method, comments: captured.update(invoice_id=invoice_id, amount=amount, method=method, comments=comments) or captured)
+    with main.app.test_client() as client:
+        response = client.post("/tickbags-invoices/7/adjustment", json={
+            "amount": -182071, "method": "Received in Bank", "comments": "Tick Bags repayment",
+        })
+    assert response.status_code == 200
+    assert captured == {"invoice_id": 7, "amount": -182071.0, "method": "Received in Bank", "comments": "Tick Bags repayment"}
+
+
+def test_tickbags_negative_adjustment_reduces_receivable_balance():
+    invoice = main.present_tickbags_invoices([{
+        "id": 4, "status": "Draft", "lines": [], "refunds": [{"amount": 182071}],
+        "adjustments": [{"amount": -182071}],
+    }])[0]
+    assert invoice["net_balance"] == 0
+    assert invoice["receivable"] == 0
+
+
 def test_tickbags_fulfilled_without_tracking_requires_lahore_approval():
     base = {
         "id": 5, "order_id": "PK5", "tags": ["BeanBag", "Delivered in Lahore"],
@@ -482,7 +502,7 @@ def test_tickbags_pending_lahore_orders_excludes_tracked_orders(monkeypatch):
 
 def test_tickbags_invoice_template_has_required_ledger_controls():
     source = (Path(__file__).resolve().parents[1] / "templates" / "tickbags_invoices.html").read_text()
-    for label in ("Products total", "Refunds", "Payable", "Receivable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current {{ current_balance_type }}", "Record partial payment", "Mark as Final Invoice", "Product costs", "Update all changes", "Hide products with saved costs"):
+    for label in ("Products total", "Refunds", "Payable", "Receivable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current {{ current_balance_type }}", "Record payment or balance adjustment", "Mark as Final Invoice", "Product costs", "Update all changes", "Hide products with saved costs"):
         assert label in source
 
 

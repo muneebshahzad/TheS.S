@@ -6266,8 +6266,8 @@ def add_tickbags_adjustment(invoice_id):
     amount = parse_money(data.get("amount"), 0)
     method = str(data.get("method") or "").strip()
     comments = str(data.get("comments") or "").strip()
-    if amount <= 0 or method not in {"Adjusted in Payments", "Received in Bank", "Other payment"}:
-        return jsonify({"success": False, "error": "Enter an amount and payment method."}), 400
+    if amount == 0 or method not in {"Adjusted in Payments", "Received in Bank", "Other payment"}:
+        return jsonify({"success": False, "error": "Enter a non-zero amount and payment method."}), 400
     saved = add_vendor_invoice_adjustment(invoice_id, amount, method, comments)
     if not saved:
         return jsonify({"success": False, "error": "Adjustment could not be saved."}), 400
