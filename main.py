@@ -3558,19 +3558,24 @@ async def fetch_tracking_data(session_obj, tracking_number, courier_name=""):
     if not tracking_number or tracking_number == "N/A":
         return {}
     if is_digidokaan_tracking(tracking_number, courier_name):
-        history = await fetch_digidokaan_tracking_history(session_obj, tracking_number)
-        latest_status = ""
-        if history:
-            latest_status = normalize_status_bucket(history[-1].get("ProcessDescForPortal"))
-        # DigiDokaan's summary can remain Booked after Trax has physically
-        # scanned the parcel. Consult Trax's public no-login tracker before a
-        # booked shipment is allowed into Pending/vendor-order quantities.
-        if is_trax_tracking_number(tracking_number) and (not history or latest_status == "Booked"):
-            direct_history = await fetch_public_tracking_history(session_obj, tracking_number)
+        if is_trax_tracking_number(tracking_number):
+            digidokaan_result, trax_result = await asyncio.gather(
+                fetch_digidokaan_tracking_history(session_obj, tracking_number),
+                fetch_public_tracking_history(session_obj, tracking_number),
+                return_exceptions=True,
+            )
+            history = digidokaan_result if isinstance(digidokaan_result, list) else []
+            direct_history = trax_result if isinstance(trax_result, list) else []
             if direct_history:
-                direct_status = normalize_status_bucket(direct_history[-1].get("ProcessDescForPortal"))
-                if not history or direct_status != "Booked":
+                digi_latest = tracking_history_latest_datetime(history)
+                trax_latest = tracking_history_latest_datetime(direct_history)
+                # DigiDokaan stays primary on equal timestamps. Trax wins only
+                # when it contains a demonstrably newer courier scan, or when
+                # DigiDokaan has no dated history at all.
+                if not history or (trax_latest and (not digi_latest or trax_latest > digi_latest)):
                     return direct_history
+        else:
+            history = await fetch_digidokaan_tracking_history(session_obj, tracking_number)
         if history:
             return history
         status = await fetch_digidokaan_tracking_status(session_obj, tracking_number)
@@ -3587,6 +3592,29 @@ async def fetch_tracking_data(session_obj, tracking_number, courier_name=""):
 
     async with session_obj.get(url) as response:
         return await response.json()
+
+
+def tracking_history_latest_datetime(history):
+    latest = None
+    for event in history or []:
+        raw = str((event or {}).get("TransactionDate") or "").strip()
+        parsed = None
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%d/%m/%Y %I:%M %p",
+            "%d/%m/%Y %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d",
+            "%d/%m/%Y",
+        ):
+            try:
+                parsed = datetime.strptime(raw, fmt)
+                break
+            except ValueError:
+                continue
+        if parsed and (latest is None or parsed > latest):
+            latest = parsed
+    return latest
 
 
 def get_variant_image_and_title(product, line_item):
@@ -5990,8 +6018,6 @@ def display_tracking(tracking_num):
     async def run_lookup():
         async with aiohttp.ClientSession() as session_obj:
             courier_name = known_courier_for_tracking(tracking_num)
-            if is_digidokaan_tracking(tracking_num, courier_name):
-                return await fetch_digidokaan_tracking_history(session_obj, tracking_num)
             return await fetch_tracking_data(session_obj, tracking_num, courier_name)
 
     data = asyncio.run(run_lookup())

@@ -1,5 +1,6 @@
 from unittest import IsolatedAsyncioTestCase
 
+import trax
 from trax import _csrf_token, _portal_history, fetch_public_tracking_history
 
 
@@ -36,6 +37,10 @@ class FakeSession:
 
 
 class TraxPublicTrackingTests(IsolatedAsyncioTestCase):
+    def setUp(self):
+        trax._history_cache.clear()
+        trax._inflight.clear()
+
     def test_token_and_history_are_normalized(self):
         self.assertEqual(_csrf_token("'_token': 'abc123'"), "abc123")
         history = _portal_history({"shipments": {"1": {

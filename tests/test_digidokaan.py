@@ -277,6 +277,40 @@ def test_tcs_fulfillment_uses_digidokaan_tracking(monkeypatch):
     assert result == expected
 
 
+def test_newer_direct_trax_history_wins_over_digidokaan(monkeypatch):
+    monkeypatch.setenv("INITIALIZE_APP", "false")
+    import main
+
+    async def digidokaan_history(_session, _tracking_number):
+        return [{"TransactionDate": "27/10/2026 10:00 AM", "ProcessDescForPortal": "In Transit"}]
+
+    async def direct_history(_session, _tracking_number):
+        return [{"TransactionDate": "2026-10-28 12:00:00", "ProcessDescForPortal": "Shipment - Delivered"}]
+
+    monkeypatch.setattr(main, "fetch_digidokaan_tracking_history", digidokaan_history)
+    monkeypatch.setattr(main, "fetch_public_tracking_history", direct_history)
+    result = asyncio.run(main.fetch_tracking_data(object(), "22322660078220", "DigiDokaan"))
+    assert result[-1]["ProcessDescForPortal"] == "Shipment - Delivered"
+
+
+def test_digidokaan_stays_primary_when_direct_trax_is_older(monkeypatch):
+    monkeypatch.setenv("INITIALIZE_APP", "false")
+    import main
+
+    expected = [{"TransactionDate": "28/10/2026 01:00 PM", "ProcessDescForPortal": "Delivered"}]
+
+    async def digidokaan_history(_session, _tracking_number):
+        return expected
+
+    async def direct_history(_session, _tracking_number):
+        return [{"TransactionDate": "2026-10-28 12:00:00", "ProcessDescForPortal": "Shipment - In Transit"}]
+
+    monkeypatch.setattr(main, "fetch_digidokaan_tracking_history", digidokaan_history)
+    monkeypatch.setattr(main, "fetch_public_tracking_history", direct_history)
+    result = asyncio.run(main.fetch_tracking_data(object(), "22322660078220", "DigiDokaan"))
+    assert result == expected
+
+
 def test_digidokaan_delivery_exceptions_need_attention(monkeypatch):
     monkeypatch.setenv("INITIALIZE_APP", "false")
     import main
