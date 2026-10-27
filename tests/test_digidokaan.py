@@ -311,6 +311,28 @@ def test_digidokaan_stays_primary_when_direct_trax_is_older(monkeypatch):
     assert result == expected
 
 
+def test_tracking_page_uses_cached_status_when_live_lookup_fails(monkeypatch):
+    monkeypatch.setenv("INITIALIZE_APP", "false")
+    import main
+
+    async def unavailable(*_args, **_kwargs):
+        raise RuntimeError("temporary courier failure")
+
+    monkeypatch.setattr(main, "fetch_tracking_data", unavailable)
+    monkeypatch.setattr(main, "get_tracking_summary_cache_only", lambda _tracking: {
+        "status": "Out For Delivery",
+        "name": "Customer",
+        "city": "Lahore",
+    })
+    monkeypatch.setattr(main, "find_shopify_order_by_tracking_number", lambda _tracking: None)
+    main.app.testing = True
+    with main.app.test_client() as client:
+        response = client.get("/track/173019191169")
+    assert response.status_code == 200
+    assert b"Out For Delivery" in response.data
+    assert b"Internal Server Error" not in response.data
+
+
 def test_digidokaan_delivery_exceptions_need_attention(monkeypatch):
     monkeypatch.setenv("INITIALIZE_APP", "false")
     import main

@@ -6020,7 +6020,20 @@ def display_tracking(tracking_num):
             courier_name = known_courier_for_tracking(tracking_num)
             return await fetch_tracking_data(session_obj, tracking_num, courier_name)
 
-    data = asyncio.run(run_lookup())
+    try:
+        data = asyncio.run(run_lookup())
+    except Exception as error:
+        print(f"Tracking page lookup failed for {tracking_num}: {error}")
+        cached = get_tracking_summary_cache_only(tracking_num) or {}
+        cached_status = str(cached.get("status") or "").strip()
+        data = [{
+            "ConsignmentNo": tracking_num,
+            "ProcessDescForPortal": cached_status,
+            "TransactionDate": "",
+            "ConsigneeName": cached.get("name") or "",
+            "ConsigneeCity": cached.get("city") or "",
+            "TrackingSource": "Cached",
+        }] if cached_status else []
     summary = summarize_tracking_result(tracking_num, data)
     if tracking_data_is_valid(tracking_num, data):
         remember_tracking_summary(tracking_num, summary)
