@@ -69,8 +69,8 @@
 <body>
   {% set is_leopard = data.packet_list is defined %}
   {% set leopard_packet = data.packet_list[0] if is_leopard and data.packet_list else None %}
-  {% set is_callcourier = (data is sequence and data is not string and data|length > 0 and data[0] is defined and data[0].ConsignmentNo is defined) %}
-  {% set current_status = leopard_packet.booked_packet_status if leopard_packet else (data[-1].ProcessDescForPortal if is_callcourier else '') %}
+  {% set has_timeline = (data is sequence and data is not string and data|length > 0 and data[0] is defined and (data[0].ProcessDescForPortal is defined or data[0].ProcessDesc is defined)) %}
+  {% set current_status = leopard_packet.booked_packet_status if leopard_packet else (data[-1].ProcessDescForPortal if has_timeline else '') %}
   {% set status_upper = (current_status or '')|upper %}
   {% set status_class = 'yellow' %}
   {% if 'DELIVERED' in status_upper %}{% set status_class = 'green' %}{% elif 'RETURN' in status_upper or 'REFUS' in status_upper %}{% set status_class = 'red' %}{% elif 'BOOKED' in status_upper %}{% set status_class = 'blue' %}{% endif %}
@@ -120,7 +120,7 @@
           </div>
           {% endfor %}
         </div>
-        {% elif is_callcourier %}
+        {% elif has_timeline %}
         <div style="padding:18px 18px 6px;">
           <div class="hero-id mono">{{ data[0].ConsignmentNo or tracking_number }}</div>
         </div>

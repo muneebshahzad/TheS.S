@@ -52,6 +52,7 @@ class TraxPublicTrackingTests(IsolatedAsyncioTestCase):
             ],
         }}}, "22322660078220")
         self.assertEqual(history[-1]["ProcessDescForPortal"], "Shipment - In Transit")
+        self.assertEqual(history[-1]["ConsignmentNo"], "22322660078220")
         self.assertEqual(history[-1]["TrackingSource"], "Trax Direct")
 
     async def test_public_tracker_posts_cn_and_returns_history(self):

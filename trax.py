@@ -53,6 +53,7 @@ def _portal_history(payload, tracking_number):
         if not isinstance(event, dict) or not str(event.get("status") or "").strip():
             continue
         history.append({
+            "ConsignmentNo": digits,
             "ProcessDescForPortal": str(event.get("status") or "").strip(),
             "TransactionDate": str(event.get("date_time") or "").strip(),
             "ConsigneeName": str(consignee.get("name") or "").strip(),
