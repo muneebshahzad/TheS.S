@@ -99,6 +99,7 @@ from digidokaan import (
     submit_shipper_advice,
     summarize_payment_records as summarize_digidokaan_payment_records,
 )
+from trax import fetch_public_tracking_history, is_trax_tracking_number
 
 
 app = Flask(__name__)
@@ -3558,6 +3559,18 @@ async def fetch_tracking_data(session_obj, tracking_number, courier_name=""):
         return {}
     if is_digidokaan_tracking(tracking_number, courier_name):
         history = await fetch_digidokaan_tracking_history(session_obj, tracking_number)
+        latest_status = ""
+        if history:
+            latest_status = normalize_status_bucket(history[-1].get("ProcessDescForPortal"))
+        # DigiDokaan's summary can remain Booked after Trax has physically
+        # scanned the parcel. Consult Trax's public no-login tracker before a
+        # booked shipment is allowed into Pending/vendor-order quantities.
+        if is_trax_tracking_number(tracking_number) and (not history or latest_status == "Booked"):
+            direct_history = await fetch_public_tracking_history(session_obj, tracking_number)
+            if direct_history:
+                direct_status = normalize_status_bucket(direct_history[-1].get("ProcessDescForPortal"))
+                if not history or direct_status != "Booked":
+                    return direct_history
         if history:
             return history
         status = await fetch_digidokaan_tracking_status(session_obj, tracking_number)
@@ -4404,9 +4417,13 @@ def build_pending_orders_mobile_data():
         items = []
         for item in shopify_order.get("line_items", []):
             item_status = normalize_status_bucket(item.get("status", ""))
+            track_num = item.get("tracking_number", "N/A")
+            if is_pending_line_item_status(item_status):
+                cached_tracking = get_tracking_summary_cache_only(track_num)
+                if cached_tracking and cached_tracking.get("status"):
+                    item_status = normalize_status_bucket(cached_tracking.get("status"))
             if not is_pending_line_item_status(item_status):
                 continue
-            track_num = item.get("tracking_number", "N/A")
             key = f"{shopify_order['order_id']}:{track_num}"
             items.append(
                 {
@@ -5995,6 +6012,23 @@ def tracking_summary(tracking_num):
 
 @app.route("/pending")
 def pending_orders():
+    # Validate apparently booked Trax parcels before presenting vendor-order
+    # quantities. Existing cached data stays available if either source fails.
+    booked_trax_numbers = []
+    for order in order_details:
+        for item in order.get("line_items") or []:
+            tracking_number = item.get("tracking_number")
+            if (
+                is_trax_tracking_number(tracking_number)
+                and is_pending_line_item_status(item.get("status"))
+            ):
+                booked_trax_numbers.append(tracking_number)
+    refresh_tracking_summaries_sync(
+        booked_trax_numbers,
+        limit=30,
+        fresh_seconds=5 * 60,
+        deadline_seconds=8,
+    )
     all_orders, pending_items, summary = build_pending_items_table_data()
     beanbag_items = [item for item in pending_items if item.get("is_beanbag")]
     regular_items = [item for item in pending_items if not item.get("is_beanbag")]
