@@ -6241,7 +6241,9 @@ def tickbags_invoices():
         current_balance=abs(current_balance),
         current_balance_type="Receivable" if current_balance < 0 else "Payable",
         product_cost_groups=group_tickbags_product_cost_rows(build_tickbags_product_cost_rows(raw_invoices)),
-        unreversed_returns=build_tickbags_unreversed_returns(raw_invoices),
+        # Build the return queue from the presented rows so it uses the same
+        # latest cached courier status shown in the invoice detail table.
+        unreversed_returns=build_tickbags_unreversed_returns(invoices),
         pending_lahore_orders=build_tickbags_pending_lahore_orders(),
     )
 

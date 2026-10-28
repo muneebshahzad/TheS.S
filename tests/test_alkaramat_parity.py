@@ -590,6 +590,24 @@ def test_tickbags_unreversed_returns_recognizes_historical_status_text():
     assert [row["id"] for row in main.build_tickbags_unreversed_returns(invoices)] == [2, 1]
 
 
+def test_tickbags_return_queue_uses_latest_cached_status_and_excludes_reversed(monkeypatch):
+    statuses = {"LE-NEW": "Return to Origin", "LE-DONE": "Return To Sender - STAFF"}
+    monkeypatch.setattr(
+        main,
+        "get_tracking_summary_cache_only",
+        lambda tracking_number: {"status": statuses[tracking_number]},
+    )
+    invoices = main.present_tickbags_invoices([{"name": "Old", "status": "Final", "lines": [
+        {"id": 1, "tracking_number": "LE-NEW", "order_status": "Dispatched", "is_returned": False,
+         "refund_invoice_id": None, "unit_cost": 500, "quantity": 1},
+        {"id": 2, "tracking_number": "LE-DONE", "order_status": "Dispatched", "is_returned": False,
+         "refund_invoice_id": 9, "unit_cost": 700, "quantity": 1},
+    ], "refunds": [], "adjustments": []}])
+    rows = main.build_tickbags_unreversed_returns(invoices)
+    assert [row["id"] for row in rows] == [1]
+    assert rows[0]["order_status"] == "Return to Origin"
+
+
 def test_tickbags_invoice_template_renders_pending_lahore_items():
     with main.app.test_request_context("/tickbags-invoices"):
         rendered = main.app.jinja_env.get_template("tickbags_invoices.html").render(
