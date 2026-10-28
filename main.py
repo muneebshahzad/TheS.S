@@ -7306,101 +7306,62 @@ def build_digidokaan_payment_dashboard(payments):
         })
         shipments.append(group)
 
-    # Settlement endpoints contain accounting entries only, not the complete
-    # shipment inventory. Merge the live order-level feed so active/booked
-    # shipments retain their actual COD instead of appearing as zero/negative.
-    shipment_records = [dict(row) for row in payments.get("records", []) if isinstance(row, dict)]
-    indexed_shipments = {}
-    for shipment in shipments:
-        for value in (shipment.get("tracking_no"), shipment.get("order_no"), shipment.get("reference")):
-            if value:
-                indexed_shipments[str(value).strip().casefold()] = shipment
-
-    for record in shipment_records:
-        tracking = str(record.get("tracking_number") or "").strip()
-        order_no = str(record.get("order_id") or "").strip()
-        reference = str(record.get("digidokaan_order_id") or "").strip()
-        shipment = next(
-            (indexed_shipments.get(value.casefold()) for value in (tracking, order_no, reference) if value and indexed_shipments.get(value.casefold())),
-            None,
-        )
-        order_amount = parse_money(record.get("order_amount"), 0)
-        record_deductions = round(sum(
-            parse_money(record.get(field), 0)
-            for field in ("delivery_charges", "other_charges", "reserve_amount")
-        ), 2)
-        record_net = parse_money(record.get("net_cod"), max(order_amount - record_deductions, 0))
-        record_payment_status = str(record.get("payment_status") or "").strip()
-        display_payment_status = {
-            "Settled": "Paid",
-            "Pending settlement": "Not paid",
-            "Partially paid": "Not paid",
-            "Awaiting delivery": "Awaiting delivery",
-            "Not payable": "Not payable",
-        }.get(record_payment_status, "Not paid")
-        if shipment is None:
-            shipment = {
-                "order_no": order_no,
-                "reference": reference,
-                "tracking_no": tracking,
-                "order_date": str(record.get("created_at") or ""),
-                "order_status": str(record.get("shipment_status") or ""),
-                "price": order_amount,
-                "cod": order_amount,
-                "deductions": record_deductions,
-                "net": record_net,
-                "entry_types": str(record.get("payment_mode") or "COD"),
-                "cheque_no": str(record.get("settlement_id") or ""),
-                "cheque_status": record_payment_status if record.get("settlement_id") else "",
-                "payment_status": display_payment_status,
-            }
-            shipments.append(shipment)
-        else:
-            shipment.update({
-                "order_no": order_no or shipment.get("order_no"),
-                "reference": reference or shipment.get("reference"),
-                "tracking_no": tracking or shipment.get("tracking_no"),
-                "order_date": str(record.get("created_at") or shipment.get("order_date") or ""),
-                "order_status": str(record.get("shipment_status") or shipment.get("order_status") or ""),
-                "price": order_amount or shipment.get("price", 0),
-                "cod": order_amount or shipment.get("cod", 0),
-                "deductions": record_deductions or shipment.get("deductions", 0),
-                "net": record_net or shipment.get("net", 0),
-            })
-            if display_payment_status == "Paid" or shipment.get("payment_status") not in {"Paid", "Pending cheque"}:
-                shipment["payment_status"] = display_payment_status
-            if record.get("settlement_id") and not shipment.get("cheque_no"):
-                shipment["cheque_no"] = str(record.get("settlement_id"))
-                shipment["cheque_status"] = record_payment_status
-        for value in (tracking, order_no, reference):
-            if value:
-                indexed_shipments[value.casefold()] = shipment
-
-    shipments.sort(key=lambda row: str(row.get("order_date") or ""), reverse=True)
-    total_deductions = round(sum(row["deductions"] for row in shipments), 2)
+    total_cod = parse_money(
+        ledger.get("total_order_price"),
+        parse_money(ledger.get("total_cod"), sum(row["cod"] for row in shipments)),
+    )
+    deduction_keys = ("total_delivery_charges", "total_sales_tax", "total_income_tax")
+    total_deductions = round(
+        sum(parse_money(ledger.get(key), 0) for key in deduction_keys)
+        if any(ledger.get(key) is not None for key in deduction_keys)
+        else sum(row["deductions"] for row in shipments),
+        2,
+    )
     paid_shipments = [row for row in shipments if row["payment_status"] == "Paid"]
     unpaid_shipments = [row for row in shipments if row["payment_status"] != "Paid"]
     delivered_shipments = [row for row in shipments if _is_digidokaan_delivered_status(row.get("order_status"))]
     deducted_shipments = [row for row in shipments if row["deductions"] > 0]
     cheque_total = round(sum(parse_money(row.get("amount") or row.get("cheque_amount"), 0) for row in cheque_rows), 2)
-    record_received = round(sum(parse_money(row.get("amount_paid"), 0) for row in shipment_records), 2)
-    received = max(cheque_total, record_received, parse_money(ledger.get("total_paid"), 0), parse_money(balance.get("payment_received"), 0))
+    if cheque_rows:
+        received = cheque_total
+    elif ledger.get("total_paid") is not None:
+        received = parse_money(ledger.get("total_paid"), 0)
+    elif balance.get("payment_received") is not None:
+        received = parse_money(balance.get("payment_received"), 0)
+    else:
+        received = round(sum(max(row["net"], 0) for row in paid_shipments), 2)
     outstanding = parse_money(ledger.get("total_balance"), sum(max(row["net"], 0) for row in unpaid_shipments))
+    combined_cheques = [dict(row) for row in cheque_rows]
+    known_cheques = {
+        _payment_identifier(row, cheque_keys).casefold()
+        for row in combined_cheques
+        if _payment_identifier(row, cheque_keys)
+    }
+    for row in ledger_rows:
+        cheque_id = _payment_identifier(row, cheque_keys)
+        if cheque_id and cheque_id.casefold() not in known_cheques:
+            combined_cheques.append({
+                "cheque_no": cheque_id,
+                "cheque_date": row.get("cheque_date") or row.get("settlement_date") or row.get("payment_date"),
+                "cheque_amount": row.get("cheque_amount") or row.get("settlement_amount"),
+                "status": row.get("cheque_status") or row.get("settlement_status") or row.get("payment_status") or "Unconfirmed",
+            })
+            known_cheques.add(cheque_id.casefold())
     gross_shipments = [row for row in shipments if row.get("price", 0) > 0 or row.get("cod", 0) > 0]
     gross_cod = round(sum(row.get("price", 0) or row.get("cod", 0) for row in gross_shipments), 2)
     ready_shipments = [row for row in delivered_shipments if row["payment_status"] != "Paid"]
     cards = [
-        {"label": "Gross COD", "value": gross_cod, "count": len(gross_shipments), "note": "DigiDokaan shipments"},
+        {"label": "Gross COD", "value": gross_cod, "count": len(gross_shipments), "note": "dispatched shipments"},
         {"label": "Total shipments", "value": len(shipments), "count": len(shipments), "note": f"PKR {gross_cod:,.2f} combined gross COD", "count_primary": True},
         {"label": "Payment received", "value": received, "count": len(paid_shipments), "note": "shipments explicitly linked to paid cheques"},
-        {"label": "Outstanding payment", "value": outstanding, "count": len(ready_shipments), "note": "delivered shipments awaiting settlement"},
+        {"label": "Outstanding payment", "value": outstanding, "count": len(unpaid_shipments), "note": "shipments not confirmed paid"},
         {"label": "Ready for payout", "value": parse_money(balance.get("deliver_orders_payments"), 0), "count": len(ready_shipments), "note": "delivered shipments not yet paid"},
         {"label": "Courier deductions", "value": total_deductions, "count": len(deducted_shipments), "note": "shipments with recorded deductions"},
         {"label": "Effective deduction", "value": total_deductions / gross_cod * 100 if gross_cod else 0, "count": len(deducted_shipments), "note": "percent of gross COD", "percent": True},
         {"label": "Delivered COD", "value": round(sum(row["cod"] for row in delivered_shipments), 2), "count": len(delivered_shipments), "note": "delivered shipments"},
         {"label": "Ledger balance", "value": parse_money(ledger.get("total_balance"), outstanding), "count": len(unpaid_shipments), "note": "DigiDokaan current net balance"},
     ]
-    return {"cards": cards, "shipments": shipments, "cheques": [dict(row) for row in cheque_rows]}
+    return {"cards": cards, "shipments": shipments, "cheques": combined_cheques}
 
 
 def build_legacy_digidokaan_payment_dashboard(records):

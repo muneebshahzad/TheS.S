@@ -477,7 +477,7 @@ def test_legacy_payment_feed_populates_alkaramat_dashboard_without_treating_fail
     assert len(dashboard["shipments"]) == 2
 
 
-def test_official_payment_dashboard_uses_live_shipments_as_inventory():
+def test_official_payment_dashboard_ignores_non_ledger_order_inventory():
     import main
 
     payments = {
@@ -495,13 +495,11 @@ def test_official_payment_dashboard_uses_live_shipments_as_inventory():
     cards = {card["label"]: card for card in dashboard["cards"]}
     rows = {row["tracking_no"]: row for row in dashboard["shipments"]}
 
-    assert len(rows) == 2
-    assert cards["Gross COD"]["value"] == 3000
-    assert cards["Total shipments"]["value"] == 2
-    assert cards["Courier deductions"]["value"] == 150
-    assert rows["T2"]["cod"] == 2000
-    assert rows["T2"]["net"] == 1900
-    assert rows["T2"]["payment_status"] == "Awaiting delivery"
+    assert len(rows) == 1
+    assert cards["Gross COD"]["value"] == 1000
+    assert cards["Total shipments"]["value"] == 1
+    assert cards["Outstanding payment"]["value"] == 950
+    assert "T2" not in rows
 
 
 def test_shopify_tracking_fills_capped_digidokaan_inventory_without_duplicates():
