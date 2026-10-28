@@ -502,6 +502,27 @@ def test_official_payment_dashboard_ignores_non_ledger_order_inventory():
     assert "T2" not in rows
 
 
+def test_outstanding_is_delivered_unpaid_while_ledger_balance_includes_all_unpaid():
+    import main
+
+    payments = {
+        "balance": {"deliver_orders_payments": 950},
+        "ledger": {"total_balance": 2850, "data": [
+            {"tracking_no": "T1", "order_no": "O1", "order_status": "Delivered", "payment_type": "COD", "amount": 1000},
+            {"tracking_no": "T1", "order_no": "O1", "order_status": "Delivered", "payment_type": "DC", "sub_amount": 50},
+            {"tracking_no": "T2", "order_no": "O2", "order_status": "In Transit", "payment_type": "COD", "amount": 2000},
+            {"tracking_no": "T2", "order_no": "O2", "order_status": "In Transit", "payment_type": "DC", "sub_amount": 100},
+        ]},
+        "cheques": [],
+    }
+    cards = {card["label"]: card for card in main.build_digidokaan_payment_dashboard(payments)["cards"]}
+
+    assert cards["Outstanding payment"]["value"] == 950
+    assert cards["Outstanding payment"]["count"] == 1
+    assert cards["Ledger balance"]["value"] == 2850
+    assert cards["Ledger balance"]["count"] == 2
+
+
 def test_shopify_tracking_fills_capped_digidokaan_inventory_without_duplicates():
     import main
 

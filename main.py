@@ -7330,7 +7330,7 @@ def build_digidokaan_payment_dashboard(payments):
         received = parse_money(balance.get("payment_received"), 0)
     else:
         received = round(sum(max(row["net"], 0) for row in paid_shipments), 2)
-    outstanding = parse_money(ledger.get("total_balance"), sum(max(row["net"], 0) for row in unpaid_shipments))
+    ledger_balance = parse_money(ledger.get("total_balance"), sum(max(row["net"], 0) for row in unpaid_shipments))
     combined_cheques = [dict(row) for row in cheque_rows]
     known_cheques = {
         _payment_identifier(row, cheque_keys).casefold()
@@ -7350,16 +7350,20 @@ def build_digidokaan_payment_dashboard(payments):
     gross_shipments = [row for row in shipments if row.get("price", 0) > 0 or row.get("cod", 0) > 0]
     gross_cod = round(sum(row.get("price", 0) or row.get("cod", 0) for row in gross_shipments), 2)
     ready_shipments = [row for row in delivered_shipments if row["payment_status"] != "Paid"]
+    outstanding = parse_money(
+        balance.get("deliver_orders_payments"),
+        sum(max(row["net"], 0) for row in ready_shipments),
+    )
     cards = [
         {"label": "Gross COD", "value": gross_cod, "count": len(gross_shipments), "note": "dispatched shipments"},
         {"label": "Total shipments", "value": len(shipments), "count": len(shipments), "note": f"PKR {gross_cod:,.2f} combined gross COD", "count_primary": True},
         {"label": "Payment received", "value": received, "count": len(paid_shipments), "note": "shipments explicitly linked to paid cheques"},
-        {"label": "Outstanding payment", "value": outstanding, "count": len(unpaid_shipments), "note": "shipments not confirmed paid"},
+        {"label": "Outstanding payment", "value": outstanding, "count": len(ready_shipments), "note": "delivered shipments awaiting settlement"},
         {"label": "Ready for payout", "value": parse_money(balance.get("deliver_orders_payments"), 0), "count": len(ready_shipments), "note": "delivered shipments not yet paid"},
         {"label": "Courier deductions", "value": total_deductions, "count": len(deducted_shipments), "note": "shipments with recorded deductions"},
         {"label": "Effective deduction", "value": total_deductions / gross_cod * 100 if gross_cod else 0, "count": len(deducted_shipments), "note": "percent of gross COD", "percent": True},
         {"label": "Delivered COD", "value": round(sum(row["cod"] for row in delivered_shipments), 2), "count": len(delivered_shipments), "note": "delivered shipments"},
-        {"label": "Ledger balance", "value": parse_money(ledger.get("total_balance"), outstanding), "count": len(unpaid_shipments), "note": "DigiDokaan current net balance"},
+        {"label": "Ledger balance", "value": ledger_balance, "count": len(unpaid_shipments), "note": "all DigiDokaan shipments not confirmed paid"},
     ]
     return {"cards": cards, "shipments": shipments, "cheques": combined_cheques}
 
