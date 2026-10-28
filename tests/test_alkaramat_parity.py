@@ -608,6 +608,30 @@ def test_tickbags_return_queue_uses_latest_cached_status_and_excludes_reversed(m
     assert rows[0]["order_status"] == "Return to Origin"
 
 
+def test_tickbags_can_reverse_multiple_cached_returns(monkeypatch):
+    invoices = [
+        {"id": 20, "status": "Draft", "lines": []},
+        {"id": 10, "status": "Final", "lines": [
+            {"id": 1, "tracking_number": "LE-1", "order_status": "Dispatched", "is_returned": False},
+            {"id": 2, "tracking_number": "LE-2", "order_status": "Dispatched", "is_returned": False},
+        ]},
+    ]
+    saved = []
+    monkeypatch.setattr(main, "load_vendor_invoices", lambda _vendor: invoices)
+    monkeypatch.setattr(main, "get_tracking_summary_cache_only", lambda _tracking: {"status": "Return to Origin"})
+    monkeypatch.setattr(
+        main,
+        "add_vendor_invoice_refund",
+        lambda invoice_id, line_id: saved.append((invoice_id, line_id)) or {"source_line_id": line_id},
+    )
+    with main.app.test_client() as client:
+        first = client.post("/tickbags-invoices/refund", json={"line_id": 1})
+        second = client.post("/tickbags-invoices/refund", json={"line_id": 2})
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert saved == [(20, 1), (20, 2)]
+
+
 def test_tickbags_invoice_template_renders_pending_lahore_items():
     with main.app.test_request_context("/tickbags-invoices"):
         rendered = main.app.jinja_env.get_template("tickbags_invoices.html").render(

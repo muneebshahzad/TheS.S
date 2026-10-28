@@ -5221,23 +5221,26 @@ def automatic_tickbags_invoice_loop():
         time.sleep(60 * 60)
 
 
+def refresh_tickbags_invoice_line_status(stored_line):
+    """Overlay the latest cached status without making a courier request."""
+    line = dict(stored_line or {})
+    tracking_number = str(line.get("tracking_number") or "").strip()
+    if tracking_number:
+        latest = get_tracking_summary_cache_only(tracking_number) or {}
+        latest_status = normalize_courier_status_label(latest.get("status"))
+        if latest_status:
+            line["order_status"] = latest_status
+            line["is_returned"] = bool(
+                line.get("is_returned")
+                or status_contains_any([latest_status], RETURN_COURIER_MARKERS)
+            )
+    return line
+
+
 def present_tickbags_invoices(invoices):
     presented = []
     for invoice in invoices or []:
-        lines = []
-        for stored_line in invoice.get("lines") or []:
-            line = dict(stored_line)
-            tracking_number = str(line.get("tracking_number") or "").strip()
-            if tracking_number:
-                latest = get_tracking_summary_cache_only(tracking_number) or {}
-                latest_status = normalize_courier_status_label(latest.get("status"))
-                if latest_status:
-                    line["order_status"] = latest_status
-                    line["is_returned"] = bool(
-                        line.get("is_returned")
-                        or status_contains_any([latest_status], RETURN_COURIER_MARKERS)
-                    )
-            lines.append(line)
+        lines = [refresh_tickbags_invoice_line_status(line) for line in invoice.get("lines") or []]
         products_total = round(sum(parse_money(line.get("unit_cost")) * int(line.get("quantity") or 0) for line in lines), 2)
         refunds = round(sum(parse_money(row.get("amount")) for row in invoice.get("refunds") or []), 2)
         adjustments = round(sum(parse_money(row.get("amount")) for row in invoice.get("adjustments") or []), 2)
@@ -6293,6 +6296,7 @@ def refund_tickbags_invoice_line():
     )
     if not current:
         return jsonify({"success": False, "error": "No current draft invoice is available."}), 409
+    source = refresh_tickbags_invoice_line_status(source) if source else None
     if not source or not tickbags_invoice_line_is_returned(source):
         return jsonify({"success": False, "error": "Only returned order charges can be reversed."}), 400
     saved = add_vendor_invoice_refund(current["id"], source_line_id)
