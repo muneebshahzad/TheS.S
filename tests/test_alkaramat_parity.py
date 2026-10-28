@@ -429,6 +429,23 @@ def test_tickbags_tag_includes_custom_products_and_adjustments_reduce_balance():
     assert invoice["receivable"] == 0
 
 
+def test_tickbags_invoice_displays_latest_cached_courier_status(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "get_tracking_summary_cache_only",
+        lambda tracking_number: {"status": "Delivered"} if tracking_number == "LE123" else None,
+    )
+    stored_line = {
+        "id": 11, "tracking_number": "LE123", "order_status": "Arrived at Station",
+        "unit_cost": 5000, "quantity": 1, "is_returned": False,
+    }
+    invoice = main.present_tickbags_invoices([{
+        "id": 3, "status": "Final", "lines": [stored_line], "refunds": [], "adjustments": [],
+    }])[0]
+    assert invoice["lines"][0]["order_status"] == "Delivered"
+    assert stored_line["order_status"] == "Arrived at Station"
+
+
 def test_tickbags_overpayment_is_preserved_as_receivable():
     invoice = main.present_tickbags_invoices([{
         "id": 3, "status": "Draft", "lines": [], "refunds": [],
@@ -504,6 +521,7 @@ def test_tickbags_invoice_template_has_required_ledger_controls():
     source = (Path(__file__).resolve().parents[1] / "templates" / "tickbags_invoices.html").read_text()
     for label in ("Products total", "Refunds", "Payable", "Receivable", "Adjusted in Payments", "Received in Bank", "Reverse in current invoice", "Current {{ current_balance_type }}", "Record payment or balance adjustment", "Mark as Final Invoice", "Product costs", "Update all changes", "Hide products with saved costs"):
         assert label in source
+    assert "adjustment.created_at.strftime('%d %b %Y, %I:%M %p')" in source
 
 
 def test_tickbags_product_cost_rows_sort_by_open_invoice_units():

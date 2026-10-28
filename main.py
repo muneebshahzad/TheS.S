@@ -5224,7 +5224,20 @@ def automatic_tickbags_invoice_loop():
 def present_tickbags_invoices(invoices):
     presented = []
     for invoice in invoices or []:
-        lines = invoice.get("lines") or []
+        lines = []
+        for stored_line in invoice.get("lines") or []:
+            line = dict(stored_line)
+            tracking_number = str(line.get("tracking_number") or "").strip()
+            if tracking_number:
+                latest = get_tracking_summary_cache_only(tracking_number) or {}
+                latest_status = normalize_courier_status_label(latest.get("status"))
+                if latest_status:
+                    line["order_status"] = latest_status
+                    line["is_returned"] = bool(
+                        line.get("is_returned")
+                        or status_contains_any([latest_status], RETURN_COURIER_MARKERS)
+                    )
+            lines.append(line)
         products_total = round(sum(parse_money(line.get("unit_cost")) * int(line.get("quantity") or 0) for line in lines), 2)
         refunds = round(sum(parse_money(row.get("amount")) for row in invoice.get("refunds") or []), 2)
         adjustments = round(sum(parse_money(row.get("amount")) for row in invoice.get("adjustments") or []), 2)
@@ -5239,6 +5252,7 @@ def present_tickbags_invoices(invoices):
             row["quantity"] += int(line.get("quantity") or 0)
             row["total"] = round(row["unit_cost"] * row["quantity"], 2)
         payload = dict(invoice)
+        payload["lines"] = lines
         net_balance = round(products_total - refunds - adjustments, 2)
         payload.update({
             "summary": list(summary.values()), "products_total": products_total,
