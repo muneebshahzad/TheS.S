@@ -5751,12 +5751,15 @@ def submit_leopards_shipper_advice(advice_id, tracking_number, advice_status, re
     return result
 
 
-def load_shipper_advice_sync(force=False):
+def load_shipper_advice_sync(force=False, include_leopards=True, timeout_seconds=None):
     async def run():
         async with aiohttp.ClientSession() as client:
             return await fetch_pending_shipper_advice(client, force=force)
     try:
-        rows = asyncio.run(run())
+        pending = run()
+        if timeout_seconds is not None:
+            pending = asyncio.wait_for(pending, timeout=max(float(timeout_seconds), 0.1))
+        rows = asyncio.run(pending)
     except Exception as error:
         print(f"Could not load DigiDokaan shipper advice: {error}")
         rows = []
@@ -5766,11 +5769,12 @@ def load_shipper_advice_sync(force=False):
         if "".join(character for character in str(row.get("tracking_no") or "") if character.isdigit())
         not in acknowledged
     ]
-    try:
-        leopards_rows = fetch_leopards_shipper_advice_sync()
-    except Exception as error:
-        print(f"Could not load Leopards shipper advice: {error}")
-        leopards_rows = []
+    leopards_rows = []
+    if include_leopards:
+        try:
+            leopards_rows = fetch_leopards_shipper_advice_sync()
+        except Exception as error:
+            print(f"Could not load Leopards shipper advice: {error}")
     combined = visible_rows + [
         row for row in leopards_rows
         if "".join(character for character in str(row.get("tracking_no") or "") if character.isdigit())
@@ -5863,10 +5867,13 @@ def tracking():
     if not daraz_orders_cache:
         refresh_daraz_cache_if_needed()
     try:
-        shipper_advice_orders = [
-            row for row in load_shipper_advice_sync()
-            if row.get("courier_source") != "leopards"
-        ]
+        # Leopards advice loads independently in the browser. Never block the
+        # homepage on that courier API; its observed latency can exceed the
+        # web worker timeout and previously turned a slow provider into a 500.
+        shipper_advice_orders = load_shipper_advice_sync(
+            include_leopards=False,
+            timeout_seconds=8,
+        )
     except Exception as error:
         print(f"Could not load DigiDokaan shipper advice: {error}")
         shipper_advice_orders = []

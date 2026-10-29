@@ -161,6 +161,20 @@ def test_leopards_advice_has_independent_live_endpoint(monkeypatch):
     assert "Refresh Advice" in source
 
 
+def test_tracking_homepage_never_waits_for_leopards_advice(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(main, "daraz_orders_cache", [{"id": 1}])
+    monkeypatch.setattr(main, "load_shipper_advice_sync", lambda **kwargs: captured.update(kwargs) or [])
+    monkeypatch.setattr(main, "build_employee_approval_items", lambda: [])
+    monkeypatch.setattr(main, "get_abandoned_summary_safe", lambda: {})
+    monkeypatch.setattr(main, "render_template", lambda template, **context: {"template": template, **context})
+
+    response = main.app.test_client().get("/")
+
+    assert response.status_code == 200
+    assert captured == {"include_leopards": False, "timeout_seconds": 8}
+
+
 def test_payment_ledger_merges_entries_and_requires_explicit_paid_cheque():
     payments = {
         "balance": {"deliver_orders_payments": 1200},
