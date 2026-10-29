@@ -95,6 +95,8 @@ def test_leopards_shipper_advice_uses_ra_rt_payload(monkeypatch):
 
 
 def test_leopards_shipper_advice_normalizes_pending_feed(monkeypatch):
+    captured = {}
+
     class Response:
         def raise_for_status(self):
             return None
@@ -107,8 +109,13 @@ def test_leopards_shipper_advice_normalizes_pending_feed(monkeypatch):
 
     monkeypatch.setenv("LEOPARD_API_KEY", "key")
     monkeypatch.setenv("LEOPARD_PASSWORD", "password")
-    monkeypatch.setattr(main.requests, "post", lambda *args, **kwargs: Response())
+    def fake_post(*args, **kwargs):
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr(main.requests, "post", fake_post)
     rows = main.fetch_leopards_shipper_advice_sync()
+    assert captured["timeout"] == (4, 8)
     assert [{key: row.get(key) for key in (
         "advice_id", "tracking_no", "external_reference_no", "courier_status_reason",
         "courier_status", "shipper_remarks", "courier_source",
@@ -144,6 +151,7 @@ def test_leopards_advice_still_loads_when_digidokaan_is_unavailable(monkeypatch)
 def test_leopards_advice_has_independent_live_endpoint(monkeypatch):
     monkeypatch.setattr(main, "load_acknowledged_shipper_advice", lambda: {})
     monkeypatch.setattr(main, "order_details", [])
+    monkeypatch.setattr(main, "save_leopards_shipper_advice_cache", lambda rows: True)
     monkeypatch.setattr(main, "fetch_leopards_shipper_advice_sync", lambda: [{
         "advice_id": 21, "tracking_no": "LE7544111111", "external_reference_no": "PK3001A01",
         "courier_status_reason": "Consignee refused", "courier_status": "Undelivered",
@@ -159,6 +167,37 @@ def test_leopards_advice_has_independent_live_endpoint(monkeypatch):
     source = (Path(__file__).resolve().parents[1] / "templates" / "track.html").read_text()
     assert "loadLeopardsShipperAdvice(false)" in source
     assert "Refresh Advice" in source
+
+
+def test_leopards_advice_uses_cached_rows_when_provider_times_out(monkeypatch):
+    monkeypatch.setattr(main, "fetch_leopards_shipper_advice_sync", lambda: (_ for _ in ()).throw(main.requests.Timeout()))
+    monkeypatch.setattr(main, "load_leopards_shipper_advice_cache", lambda: [{
+        "advice_id": 22, "tracking_no": "LE7544222222", "external_reference_no": "PK3002A01",
+        "courier_status_reason": "Consignee unavailable", "courier_source": "leopards",
+    }])
+    monkeypatch.setattr(main, "load_acknowledged_shipper_advice", lambda: {})
+    monkeypatch.setattr(main, "order_details", [])
+
+    response = main.app.test_client().get("/api/leopards/shipper-advice")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["status"] == 1
+    assert payload["stale"] is True
+    assert payload["items"][0]["cn_number"] == "LE7544222222"
+
+
+def test_leopards_advice_failure_is_always_json(monkeypatch):
+    monkeypatch.setattr(main, "fetch_leopards_shipper_advice_sync", lambda: (_ for _ in ()).throw(main.requests.Timeout()))
+    monkeypatch.setattr(main, "load_leopards_shipper_advice_cache", lambda: [])
+
+    response = main.app.test_client().get("/api/leopards/shipper-advice")
+
+    assert response.status_code == 502
+    assert response.is_json
+    assert response.get_json()["status"] == 0
+    source = (Path(__file__).resolve().parents[1] / "templates" / "track.html").read_text()
+    assert "JSON.parse(responseText)" in source
 
 
 def test_tracking_homepage_never_waits_for_leopards_advice(monkeypatch):

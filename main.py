@@ -5638,6 +5638,27 @@ def enrich_shipper_advice_orders(advice_rows, shopify_orders):
 
 SHIPPER_ADVICE_ACK_SETTING = "digidokaan_shipper_advice_acknowledged"
 SHIPPER_ADVICE_ACK_TTL_SECONDS = 24 * 60 * 60
+LEOPARDS_ADVICE_CACHE_SETTING = "leopards_shipper_advice_cache_v1"
+
+
+def save_leopards_shipper_advice_cache(rows):
+    """Keep the last good provider response available during Leopards outages."""
+    payload = {"saved_at": time.time(), "rows": rows or []}
+    try:
+        return set_app_setting(LEOPARDS_ADVICE_CACHE_SETTING, json.dumps(payload, default=str))
+    except Exception as error:
+        print(f"Could not save Leopards shipper advice cache: {error}")
+        return False
+
+
+def load_leopards_shipper_advice_cache():
+    try:
+        payload = json.loads(get_app_setting(LEOPARDS_ADVICE_CACHE_SETTING, "{}") or "{}")
+        rows = payload.get("rows") if isinstance(payload, dict) else []
+        return rows if isinstance(rows, list) else []
+    except Exception as error:
+        print(f"Could not load Leopards shipper advice cache: {error}")
+        return []
 
 
 def load_acknowledged_shipper_advice(now=None):
@@ -5697,7 +5718,9 @@ def fetch_leopards_shipper_advice_sync(days=30):
         "https://merchantapi.leopardscourier.com/api/shipperAdviceList/format/json/",
         json=payload,
         verify=False,
-        timeout=45,
+        # Stay comfortably below Gunicorn's 30-second worker timeout. A slow
+        # courier must produce our JSON error/fallback, not Railway's HTML 502.
+        timeout=(4, 8),
     )
     response.raise_for_status()
     data = response.json()
@@ -5890,10 +5913,27 @@ def tracking():
 @app.route("/api/leopards/shipper-advice")
 def get_leopards_shipper_advice():
     """Load Leopards advice independently, matching tb_track's live client flow."""
+    stale = False
+    warning = ""
+    try:
+        rows = fetch_leopards_shipper_advice_sync()
+        save_leopards_shipper_advice_cache(rows)
+    except Exception as error:
+        print(f"Could not load live Leopards shipper advice endpoint: {error}")
+        rows = load_leopards_shipper_advice_cache()
+        stale = bool(rows)
+        warning = "Leopards is responding slowly. Showing the last successfully loaded advice."
+        if not rows:
+            return jsonify({
+                "status": 0,
+                "error": "Leopards advice is temporarily unavailable. Please try Refresh Advice again shortly.",
+                "count": 0,
+                "items": [],
+            }), 502
     try:
         acknowledged = load_acknowledged_shipper_advice()
         rows = [
-            row for row in fetch_leopards_shipper_advice_sync()
+            row for row in rows
             if "".join(character for character in str(row.get("tracking_no") or "") if character.isdigit())
             not in acknowledged
         ]
@@ -5921,7 +5961,14 @@ def get_leopards_shipper_advice():
                     "amount": matched.get("display_total") or "",
                 },
             })
-        return jsonify({"status": 1, "error": "0", "count": len(items), "items": items})
+        return jsonify({
+            "status": 1,
+            "error": "0",
+            "count": len(items),
+            "items": items,
+            "stale": stale,
+            "warning": warning,
+        })
     except Exception as error:
         print(f"Could not load Leopards shipper advice endpoint: {error}")
         return jsonify({"status": 0, "error": str(error), "items": []}), 502

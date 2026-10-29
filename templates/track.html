@@ -1220,11 +1220,17 @@ async function loadLeopardsShipperAdvice(showFeedback = false) {
   const list = document.getElementById('leopardsAdviceList');
   try {
     const response = await fetch('/api/leopards/shipper-advice', {cache:'no-store'});
-    const payload = await response.json();
+    const responseText = await response.text();
+    let payload;
+    try {
+      payload = JSON.parse(responseText);
+    } catch (_) {
+      throw new Error('Leopards advice is temporarily unavailable. Please try again shortly.');
+    }
     if (!response.ok || String(payload.status) !== '1') throw new Error(payload.error || 'Could not load Leopards advice.');
     LEOPARDS_ADVICE_ITEMS = payload.items || [];
     renderLeopardsShipperAdvice();
-    if (showFeedback) showToast(`Loaded ${LEOPARDS_ADVICE_ITEMS.length} Leopards advice item${LEOPARDS_ADVICE_ITEMS.length === 1 ? '' : 's'}.`);
+    if (showFeedback || payload.stale) showToast(payload.warning || `Loaded ${LEOPARDS_ADVICE_ITEMS.length} Leopards advice item${LEOPARDS_ADVICE_ITEMS.length === 1 ? '' : 's'}.`);
   } catch (error) {
     if (mount && list) { mount.style.display = ''; list.innerHTML = `<div class="shipper-advice-empty">Could not load Leopards advice: ${adviceEscape(error.message || error)}</div>`; }
     if (showFeedback) showToast(error.message || 'Could not load Leopards advice');
