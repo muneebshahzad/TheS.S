@@ -647,7 +647,11 @@ async def fetch_tracking_history(session, tracking_number):
 
 async def fetch_payment_records(session, search_value=None, force=False):
     """Return non-customer DigiDokaan COD and settlement fields for the account."""
-    query = str(search_value or os.getenv("DIGIDOKAAN_TRACKING_SEARCH_PREFIX") or "223").strip()
+    configured_queries = str(os.getenv("DIGIDOKAAN_TRACKING_SEARCH_PREFIX") or "223,173")
+    queries = [str(search_value).strip()] if search_value is not None else [
+        value.strip() for value in configured_queries.split(",") if value.strip()
+    ]
+    query = ",".join(queries)
     cached = _payments_cache.get(query)
     if not force and cached and cached[1] > time.monotonic():
         return cached[0]
@@ -658,17 +662,39 @@ async def fetch_payment_records(session, search_value=None, force=False):
         token = await _access_token(session, config)
         headers = {"Accept": "application/json", "Authorization": "Bearer " + token}
         timeout = ClientTimeout(total=30)
-        async with session.post(
-            config["base_url"] + "/api/orders/search-courier-order",
-            json={"phone": config["phone"], "search_value": query, "gateway_id": config["gateway_id"]},
-            headers=headers,
-            timeout=timeout,
-            ssl=_SSL_CONTEXT,
-        ) as response:
-            body = await response.json(content_type=None)
-        rows = body.get("data") if isinstance(body, dict) else None
-        if response.status != 200 or not isinstance(rows, list):
-            return []
+        async def search(prefix, gateway_id=None):
+            payload = {"phone": config["phone"], "search_value": prefix}
+            if gateway_id:
+                payload["gateway_id"] = gateway_id
+            async with session.post(
+                config["base_url"] + "/api/orders/search-courier-order",
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+                ssl=_SSL_CONTEXT,
+            ) as response:
+                body = await response.json(content_type=None)
+            data = body.get("data") if isinstance(body, dict) else None
+            return data if response.status == 200 and isinstance(data, list) else []
+
+        searches = []
+        for prefix in queries:
+            searches.append(search(prefix, config["gateway_id"]))
+            prefix_digits = re.sub(r"\D", "", str(prefix))
+            if prefix_digits.startswith("17"):
+                searches.append(search(prefix))
+                searches.extend(search(prefix, gateway_id) for gateway_id in _tcs_gateway_candidates(config))
+        search_results = await asyncio.gather(*searches)
+        rows = []
+        seen_orders = set()
+        for result in search_results:
+            for row in result:
+                identity = str(row.get("order_id") or row.get("tracking_no") or "").strip()
+                if identity and identity in seen_orders:
+                    continue
+                if identity:
+                    seen_orders.add(identity)
+                rows.append(row)
 
         semaphore = asyncio.Semaphore(6)
 

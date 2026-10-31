@@ -477,7 +477,7 @@ def test_legacy_payment_feed_populates_alkaramat_dashboard_without_treating_fail
     assert len(dashboard["shipments"]) == 2
 
 
-def test_official_payment_dashboard_ignores_non_ledger_order_inventory():
+def test_official_payment_dashboard_reconciles_non_ledger_order_inventory():
     import main
 
     payments = {
@@ -495,11 +495,38 @@ def test_official_payment_dashboard_ignores_non_ledger_order_inventory():
     cards = {card["label"]: card for card in dashboard["cards"]}
     rows = {row["tracking_no"]: row for row in dashboard["shipments"]}
 
-    assert len(rows) == 1
-    assert cards["Gross COD"]["value"] == 1000
-    assert cards["Total shipments"]["value"] == 1
+    assert len(rows) == 2
+    assert cards["Gross COD"]["value"] == 3000
+    assert cards["Total shipments"]["value"] == 2
     assert cards["Outstanding payment"]["value"] == 950
-    assert "T2" not in rows
+    assert rows["T2"]["order_status"] == "In Transit"
+
+
+def test_official_payment_dashboard_includes_delivered_unpaid_tcs_record():
+    import main
+
+    payments = {
+        "balance": {"deliver_orders_payments": 0},
+        "ledger": {"total_balance": 0, "data": []},
+        "cheques": [],
+        "records": [{
+            "order_id": "PK3083A01",
+            "tracking_number": "173019191169",
+            "shipment_status": "Delivered",
+            "payment_status": "Pending settlement",
+            "order_amount": 35449,
+            "delivery_charges": 250,
+            "net_cod": 35199,
+            "outstanding": 35199,
+        }],
+    }
+    dashboard = main.build_digidokaan_payment_dashboard(payments)
+    cards = {card["label"]: card for card in dashboard["cards"]}
+
+    assert cards["Ready for payout"]["count"] == 1
+    assert cards["Ready for payout"]["value"] == 35199
+    assert cards["Outstanding payment"]["value"] == 35199
+    assert dashboard["shipments"][0]["tracking_no"] == "173019191169"
 
 
 def test_outstanding_is_delivered_unpaid_while_ledger_balance_includes_all_unpaid():

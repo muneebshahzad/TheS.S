@@ -7380,6 +7380,65 @@ def build_digidokaan_payment_dashboard(payments):
         })
         shipments.append(group)
 
+    # The official settlement ledger is capped and has historically omitted TCS
+    # consignments. Reconcile it with the order-level feed, keyed by tracking
+    # number, while keeping cheque/ledger payment evidence authoritative.
+    shipment_by_tracking = {
+        str(row.get("tracking_no") or "").strip().casefold(): row
+        for row in shipments if str(row.get("tracking_no") or "").strip()
+    }
+    for record in payments.get("records") or []:
+        if not isinstance(record, dict):
+            continue
+        tracking = str(record.get("tracking_number") or "").strip()
+        if not tracking:
+            continue
+        existing = shipment_by_tracking.get(tracking.casefold())
+        record_status = str(record.get("shipment_status") or "").strip()
+        if existing:
+            if record_status:
+                existing["order_status"] = record_status
+            if not existing.get("order_date"):
+                existing["order_date"] = str(record.get("created_at") or "").strip()
+            if not existing.get("deductions"):
+                record_deductions = sum(parse_money(record.get(field), 0) for field in (
+                    "delivery_charges", "other_charges", "reserve_amount"
+                ))
+                if record_deductions:
+                    existing["deductions"] = round(record_deductions, 2)
+                    existing["net"] = parse_money(
+                        record.get("outstanding"),
+                        parse_money(record.get("net_cod"), max(existing.get("cod", 0) - record_deductions, 0)),
+                    )
+            continue
+        raw_payment_status = str(record.get("payment_status") or "").strip()
+        is_paid = raw_payment_status.casefold() in {"paid", "settled", "completed"}
+        cod = parse_money(record.get("order_amount"), 0)
+        deductions = sum(parse_money(record.get(field), 0) for field in (
+            "delivery_charges", "other_charges", "reserve_amount"
+        ))
+        net = parse_money(record.get("net_cod"), max(cod - deductions, 0))
+        amount_paid = parse_money(record.get("amount_paid"), 0)
+        outstanding = parse_money(record.get("outstanding"), max(net - amount_paid, 0))
+        shipment = {
+            "order_no": str(record.get("order_id") or "").strip(),
+            "reference": str(record.get("digidokaan_order_id") or "").strip(),
+            "tracking_no": tracking,
+            "order_date": str(record.get("created_at") or "").strip(),
+            "order_status": record_status,
+            "price": cod,
+            "cod": cod,
+            "deductions": round(deductions, 2),
+            "net": round(0 if is_paid else outstanding, 2),
+            "entry_types": str(record.get("payment_mode") or "COD"),
+            "cheque_no": str(record.get("settlement_id") or "").strip(),
+            "cheque_status": raw_payment_status if record.get("settlement_id") else "",
+            "payment_status": "Paid" if is_paid else "Not paid",
+            "inventory_source": record.get("inventory_source") or "order_feed",
+        }
+        shipments.append(shipment)
+        shipment_by_tracking[tracking.casefold()] = shipment
+
     total_cod = parse_money(
         ledger.get("total_order_price"),
         parse_money(ledger.get("total_cod"), sum(row["cod"] for row in shipments)),
@@ -7404,7 +7463,7 @@ def build_digidokaan_payment_dashboard(payments):
         received = parse_money(balance.get("payment_received"), 0)
     else:
         received = round(sum(max(row["net"], 0) for row in paid_shipments), 2)
-    ledger_balance = parse_money(ledger.get("total_balance"), sum(max(row["net"], 0) for row in unpaid_shipments))
+    ledger_balance = round(sum(max(row["net"], 0) for row in unpaid_shipments), 2)
     combined_cheques = [dict(row) for row in cheque_rows]
     known_cheques = {
         _payment_identifier(row, cheque_keys).casefold()
@@ -7424,16 +7483,13 @@ def build_digidokaan_payment_dashboard(payments):
     gross_shipments = [row for row in shipments if row.get("price", 0) > 0 or row.get("cod", 0) > 0]
     gross_cod = round(sum(row.get("price", 0) or row.get("cod", 0) for row in gross_shipments), 2)
     ready_shipments = [row for row in delivered_shipments if row["payment_status"] != "Paid"]
-    outstanding = parse_money(
-        balance.get("deliver_orders_payments"),
-        sum(max(row["net"], 0) for row in ready_shipments),
-    )
+    outstanding = round(sum(max(row["net"], 0) for row in ready_shipments), 2)
     cards = [
         {"label": "Gross COD", "value": gross_cod, "count": len(gross_shipments), "note": "dispatched shipments"},
         {"label": "Total shipments", "value": len(shipments), "count": len(shipments), "note": f"PKR {gross_cod:,.2f} combined gross COD", "count_primary": True},
         {"label": "Payment received", "value": received, "count": len(paid_shipments), "note": "shipments explicitly linked to paid cheques"},
         {"label": "Outstanding payment", "value": outstanding, "count": len(ready_shipments), "note": "delivered shipments awaiting settlement"},
-        {"label": "Ready for payout", "value": parse_money(balance.get("deliver_orders_payments"), 0), "count": len(ready_shipments), "note": "delivered shipments not yet paid"},
+        {"label": "Ready for payout", "value": outstanding, "count": len(ready_shipments), "note": "delivered shipments not yet paid"},
         {"label": "Courier deductions", "value": total_deductions, "count": len(deducted_shipments), "note": "shipments with recorded deductions"},
         {"label": "Effective deduction", "value": total_deductions / gross_cod * 100 if gross_cod else 0, "count": len(deducted_shipments), "note": "percent of gross COD", "percent": True},
         {"label": "Delivered COD", "value": round(sum(row["cod"] for row in delivered_shipments), 2), "count": len(delivered_shipments), "note": "delivered shipments"},
