@@ -543,6 +543,35 @@ def prune_vendor_invoice_lines(invoice, line_keys):
         return 0
 
 
+def delete_draft_vendor_invoice_lines(line_keys, vendor="Tick Bags"):
+    """Delete known-ineligible lines without pruning unseen historical rows."""
+    keys = [str(key) for key in (line_keys or []) if str(key or "").strip()]
+    if not keys:
+        return 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                _ensure_vendor_invoices_tables(cur)
+                cur.execute(
+                    """DELETE FROM vendor_invoice_lines l
+                       USING vendor_invoices i
+                       WHERE l.invoice_id=i.id AND i.vendor=%s AND i.status='Draft'
+                         AND l.line_key = ANY(%s)
+                         AND NOT EXISTS (
+                           SELECT 1 FROM vendor_invoice_refunds r WHERE r.source_line_id=l.id
+                         )""",
+                    (vendor, keys),
+                )
+                deleted = cur.rowcount
+            conn.commit()
+        _set_last_db_error("")
+        return deleted
+    except Exception as error:
+        _set_last_db_error(str(error))
+        print(f"DB delete ineligible vendor invoice lines error: {error}")
+        return 0
+
+
 def load_vendor_invoices(vendor="Tick Bags"):
     try:
         with get_conn() as conn:

@@ -34,6 +34,7 @@ from db import (
     add_delivery_followup_contact,
     add_vendor_invoice_adjustment,
     add_vendor_invoice_refund,
+    delete_draft_vendor_invoice_lines,
     delete_order_status,
     finalize_vendor_invoice,
     get_app_setting,
@@ -149,7 +150,7 @@ PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
 TICKBAGS_VENDOR = "Tick Bags"
 TICKBAGS_LEGACY_END = datetime(2026, 10, 4).date()
 TICKBAGS_WEEKLY_SYNC_SETTING_KEY = "tickbags_last_weekly_sync_v1"
-TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY = "tickbags_dispatch_eligibility_v4"
+TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY = "tickbags_dispatch_eligibility_v5"
 PAKISTAN_TIMEZONE = ZoneInfo("Asia/Karachi")
 AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY = "aghaje_net_payment_received_v1"
 TRACKING_SUMMARY_CACHE_SETTING_KEY = "tracking_summary_cache_v1"
@@ -4986,6 +4987,11 @@ def tickbags_line_eligible_date(order, item):
     return parse_courier_event_date(lahore_date)
 
 
+def tickbags_line_key(order, item, position):
+    product_identity = item.get("variant_id") or item.get("product_id") or item.get("product_title")
+    return f"tickbags:{order.get('id') or order.get('order_id')}:{product_identity}:{position}"
+
+
 def build_tickbags_invoice_source(orders, today=None):
     today = today or datetime.now(PAKISTAN_TIMEZONE).date()
     grouped = {}
@@ -5001,12 +5007,11 @@ def build_tickbags_invoice_source(orders, today=None):
             period = tickbags_invoice_period(eligible_date)
             period_key = (period["period_start"], period["period_end"])
             grouped.setdefault(period_key, {"invoice": period, "lines": []})
-            product_identity = item.get("variant_id") or item.get("product_id") or item.get("product_title")
             quantity = active_shopify_line_item_quantity(item)
             if quantity <= 0:
                 continue
             grouped[period_key]["lines"].append({
-                "line_key": f"tickbags:{order.get('id') or order.get('order_id')}:{product_identity}:{position}",
+                "line_key": tickbags_line_key(order, item, position),
                 "shopify_order_id": str(order.get("id") or ""),
                 "order_number": str(order.get("order_id") or ""),
                 "eligible_date": eligible_date,
@@ -5031,7 +5036,20 @@ def build_tickbags_invoice_source(orders, today=None):
 
 def sync_tickbags_invoices(orders=None, today=None):
     enriched_orders = enrich_orders_with_shopify_costs(list(orders if orders is not None else order_details))
-    for batch in build_tickbags_invoice_source(enriched_orders, today=today):
+    batches = build_tickbags_invoice_source(enriched_orders, today=today)
+    eligible_keys = {
+        line["line_key"] for batch in batches for line in batch.get("lines") or []
+    }
+    observed_keys = set()
+    for order in enriched_orders:
+        tagged_beanbag = has_order_tag(order.get("tags"), "BeanBag")
+        for position, item in enumerate(order.get("line_items") or []):
+            if (tagged_beanbag or is_tickbags_product(item)) and active_shopify_line_item_quantity(item) > 0:
+                observed_keys.add(tickbags_line_key(order, item, position))
+    # Routine Shopify refreshes may contain only a recent subset of orders. Delete
+    # only rows we observed and proved ineligible; never prune unseen history.
+    delete_draft_vendor_invoice_lines(observed_keys - eligible_keys, TICKBAGS_VENDOR)
+    for batch in batches:
         if batch["invoice"]["period_end"] <= TICKBAGS_LEGACY_END:
             continue
         sync_vendor_invoice(batch["invoice"], batch["lines"])
@@ -5062,17 +5080,27 @@ def backfill_tickbags_invoice(period=None):
         tags = [tag.strip() for tag in str(getattr(order, "tags", "") or "").split(",") if tag.strip()]
         tagged_beanbag = has_order_tag(tags, "BeanBag")
         dispatch_date = parse_courier_event_date(dated_order_tag_date(tags, "Dispatched"))
-        if not dispatch_date:
-            courier_dispatch_dates = []
-            for fulfillment in (getattr(order, "fulfillments", []) or []):
-                tracking = shopify_fulfillment_tracking(fulfillment)
-                if not tracking or str(getattr(fulfillment, "status", "") or "").lower() == "cancelled":
-                    continue
-                summary = get_tracking_summary_cache_only(tracking) or {}
-                observed_dispatch = parse_courier_event_date(summary.get("dispatched_at"))
-                if observed_dispatch:
-                    courier_dispatch_dates.append(observed_dispatch)
-            dispatch_date = min(courier_dispatch_dates) if courier_dispatch_dates else None
+        courier_dispatch_dates = []
+        known_courier_statuses = []
+        for fulfillment in (getattr(order, "fulfillments", []) or []):
+            tracking = shopify_fulfillment_tracking(fulfillment)
+            if not tracking or str(getattr(fulfillment, "status", "") or "").lower() == "cancelled":
+                continue
+            summary = get_tracking_summary_cache_only(tracking) or {}
+            status_bucket = normalize_status_bucket(summary.get("status"))
+            if summary.get("status"):
+                known_courier_statuses.append(status_bucket)
+            observed_dispatch = parse_courier_event_date(summary.get("dispatched_at"))
+            if observed_dispatch and status_bucket not in {"Booked", "Un-Booked"}:
+                courier_dispatch_dates.append(observed_dispatch)
+        if courier_dispatch_dates:
+            dispatch_date = min(courier_dispatch_dates)
+        elif known_courier_statuses and all(
+            status in {"Booked", "Un-Booked"} for status in known_courier_statuses
+        ):
+            # A stale Shopify dispatch tag cannot override current courier proof
+            # that every consignment is still only booked.
+            dispatch_date = None
         lahore_date = parse_courier_event_date(dated_order_tag_date(tags, "Delivered in Lahore Approved"))
         # Older Lahore deliveries predate the dated approval tag. They were
         # recorded with the plain Shopify tag after fulfillment, so retain
@@ -5168,7 +5196,18 @@ def start_tickbags_dispatch_reconciliation():
 
     def reconcile():
         try:
-            backfill_tickbags_invoice(tickbags_invoice_period(TICKBAGS_LEGACY_END))
+            drafts = [
+                invoice for invoice in load_vendor_invoices(TICKBAGS_VENDOR)
+                if invoice.get("status") == "Draft"
+            ]
+            periods = drafts or [{**tickbags_invoice_period(TICKBAGS_LEGACY_END), "status": "Draft"}]
+            for invoice in periods:
+                backfill_tickbags_invoice({
+                    "vendor": TICKBAGS_VENDOR,
+                    "name": invoice.get("name") or tickbags_invoice_period(invoice["period_end"])["name"],
+                    "period_start": invoice["period_start"],
+                    "period_end": invoice["period_end"],
+                })
             set_app_setting(TICKBAGS_DISPATCH_RECONCILE_SETTING_KEY, "complete")
             print("Tick Bags dispatch eligibility reconciliation complete.")
         except Exception as error:
@@ -5241,6 +5280,13 @@ def present_tickbags_invoices(invoices):
     presented = []
     for invoice in invoices or []:
         lines = [refresh_tickbags_invoice_line_status(line) for line in invoice.get("lines") or []]
+        if invoice.get("status") == "Draft":
+            # Financial safety net while stale rows are being reconciled: a booked
+            # consignment must never contribute to an open invoice or its totals.
+            lines = [
+                line for line in lines
+                if normalize_status_bucket(line.get("order_status")) not in {"Booked", "Un-Booked"}
+            ]
         products_total = round(sum(parse_money(line.get("unit_cost")) * int(line.get("quantity") or 0) for line in lines), 2)
         refunds = round(sum(parse_money(row.get("amount")) for row in invoice.get("refunds") or []), 2)
         adjustments = round(sum(parse_money(row.get("amount")) for row in invoice.get("adjustments") or []), 2)
@@ -6327,6 +6373,17 @@ def finalize_tickbags_invoice(invoice_id):
         return jsonify({"success": False, "error": "Only a draft invoice can be finalized."}), 409
     if not invoice.get("lines"):
         return jsonify({"success": False, "error": "An empty invoice cannot be finalized."}), 400
+    refreshed_lines = [refresh_tickbags_invoice_line_status(line) for line in invoice.get("lines") or []]
+    blocked = [
+        line for line in refreshed_lines
+        if normalize_status_bucket(line.get("order_status")) in {"Booked", "Un-Booked"}
+    ]
+    if blocked:
+        order_numbers = ", ".join(sorted({str(line.get("order_number") or "") for line in blocked}))
+        return jsonify({
+            "success": False,
+            "error": f"Cannot finalize: booked or un-booked consignments are still present ({order_numbers}). Refresh the invoice first.",
+        }), 409
     if any(parse_money(line.get("unit_cost")) <= 0 for line in invoice.get("lines") or []):
         return jsonify({"success": False, "error": "Add every missing item cost before finalizing."}), 400
     saved = finalize_vendor_invoice(invoice_id)

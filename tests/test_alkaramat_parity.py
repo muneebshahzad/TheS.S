@@ -726,6 +726,33 @@ def test_tickbags_legacy_backfill_uses_first_courier_dispatch_date(monkeypatch):
     assert captured["lines"][0]["order_status"] == "Out for Delivery"
 
 
+def test_tickbags_backfill_rejects_booked_tracking_even_with_stale_dispatch_tag(monkeypatch):
+    order = SimpleNamespace(
+        id=10, name="PK10", tags="BeanBag, Dispatched (2026-09-25)",
+        cancelled_at=None, fulfillment_status="fulfilled",
+        created_at="2026-09-20T10:00:00+00:00",
+        fulfillments=[SimpleNamespace(tracking_number="LE123", status="success")],
+        line_items=[SimpleNamespace(
+            title="Football Seat", variant_title="Red", variant_id=44,
+            product_id=4, quantity=1,
+        )],
+    )
+    captured = {}
+    monkeypatch.setattr(main, "setup_shopify", lambda: None)
+    monkeypatch.setattr(main, "fetch_all_shopify_orders", lambda *_args: [order])
+    monkeypatch.setattr(main, "get_active_shopify_products", lambda **_kwargs: [{
+        "variant_id": 44, "product_id": 4, "product_type": "bean bag", "cost": 1500,
+    }])
+    monkeypatch.setattr(main, "get_tracking_summary_cache_only", lambda _tracking: {
+        "status": "Booked", "dispatched_at": "2026-09-25",
+    })
+    monkeypatch.setattr(main, "sync_vendor_invoice", lambda invoice, lines: captured.update(lines=lines))
+    monkeypatch.setattr(main, "prune_vendor_invoice_lines", lambda *_args: 0)
+
+    assert main.backfill_tickbags_invoice(main.tickbags_invoice_period(date(2026, 10, 4))) == 0
+    assert captured["lines"] == []
+
+
 def test_tickbags_legacy_backfill_includes_fulfilled_plain_lahore_delivery(monkeypatch):
     order = SimpleNamespace(
         id=2937, name="PK2937A01", tags="BeanBag, Delivered in Lahore",
@@ -775,6 +802,56 @@ def test_tickbags_booked_tracking_waits_for_actual_dispatch_week():
     assert len(lines) == 1
     assert lines[0]["eligible_date"] == date(2026, 10, 6)
     assert main.tickbags_invoice_period(lines[0]["eligible_date"])["period_end"] == date(2026, 10, 11)
+
+
+def test_tickbags_sync_removes_observed_booked_line_from_draft(monkeypatch):
+    booked = {
+        "id": 11, "order_id": "PK11", "tags": ["BeanBag"], "status": "Booked",
+        "line_items": [{
+            "product_title": "Custom beanbag", "tracking_number": "LE123", "quantity": 1,
+            "status": "Booked", "dispatched_at": "",
+        }],
+    }
+    deleted = []
+    monkeypatch.setattr(main, "enrich_orders_with_shopify_costs", lambda orders: orders)
+    monkeypatch.setattr(main, "delete_draft_vendor_invoice_lines", lambda keys, vendor: deleted.extend(keys))
+    monkeypatch.setattr(main, "sync_vendor_invoice", lambda *_args: None)
+    monkeypatch.setattr(main, "load_vendor_invoices", lambda *_args: [])
+
+    main.sync_tickbags_invoices([booked], today=date(2026, 10, 8))
+
+    assert deleted == ["tickbags:11:Custom beanbag:0"]
+
+
+def test_tickbags_draft_presentation_excludes_booked_lines_from_totals(monkeypatch):
+    monkeypatch.setattr(main, "get_tracking_summary_cache_only", lambda _tracking: {"status": "Booked"})
+    invoices = main.present_tickbags_invoices([{
+        "id": 1, "status": "Draft", "lines": [{
+            "tracking_number": "LE123", "order_status": "In Transit",
+            "unit_cost": 5000, "quantity": 2,
+        }], "refunds": [], "adjustments": [],
+    }])
+
+    assert invoices[0]["lines"] == []
+    assert invoices[0]["products_total"] == 0
+    assert invoices[0]["payable"] == 0
+
+
+def test_tickbags_finalize_rejects_booked_consignments(monkeypatch):
+    monkeypatch.setattr(main, "load_vendor_invoices", lambda *_args: [{
+        "id": 1, "status": "Draft", "lines": [{
+            "order_number": "PK11", "tracking_number": "LE123",
+            "order_status": "In Transit", "unit_cost": 5000,
+        }],
+    }])
+    monkeypatch.setattr(main, "get_tracking_summary_cache_only", lambda _tracking: {"status": "Booked"})
+    monkeypatch.setattr(main, "finalize_vendor_invoice", lambda _invoice_id: pytest.fail("must not finalize"))
+
+    with main.app.test_client() as client:
+        response = client.post("/tickbags-invoices/1/finalize")
+
+    assert response.status_code == 409
+    assert "PK11" in response.get_json()["error"]
 
 
 def test_shopify_fulfillment_tracking_supports_tracking_numbers_list():
