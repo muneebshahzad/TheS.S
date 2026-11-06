@@ -359,6 +359,8 @@ def test_digidokaan_shipment_prefix_is_removed_before_pending_classification():
 
     assert main.normalize_status_bucket("Shipment - Booked") == "Booked"
     assert main.normalize_status_bucket("Shipment – Booked") == "Booked"
+    assert main.normalize_courier_status_label("Shipment Delivered") == "Delivered"
+    assert main.normalize_status_bucket("Shipment Delivered") == "Delivered"
     assert main.is_pending_line_item_status("Shipment - Booked")
     assert main.aggregate_order_status([
         {"status": "Shipment - Booked", "tracking_number": "22317268166527"}

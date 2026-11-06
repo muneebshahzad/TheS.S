@@ -241,7 +241,9 @@ def normalize_scan_term(term):
 def normalize_courier_status_label(status):
     """Remove courier presentation prefixes before operational classification."""
     raw = str(status or "").strip()
-    return re.sub(r"^shipment\s*[-–—:]\s*", "", raw, flags=re.IGNORECASE).strip()
+    # DigiDokaan/TRAX can return either "Shipment - Delivered" or
+    # "Shipment Delivered". Keep the operational label consistent in every UI.
+    return re.sub(r"^shipment(?:\s*[-–—:]\s*|\s+)", "", raw, flags=re.IGNORECASE).strip()
 
 
 def is_lahore_city(city):
