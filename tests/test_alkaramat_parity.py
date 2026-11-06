@@ -340,6 +340,9 @@ def test_undelivered_ui_has_three_sections_customer_details_and_contact_workflow
         assert "Mark contacted" in html
         assert "View order" in html
         assert ">Track</a>" in html
+        assert "Tracking timeline" in html
+        assert "openOrderPreview" in html
+        assert "/tracking-summary/" in html
         assert "Lamp" in html
         assert "LE123" in html
         assert "Ali" in html
@@ -371,21 +374,22 @@ def test_delivery_followup_sections_and_days_are_classified_from_courier_statuse
         {**base, "id": 8, "order_id": "RETURN-TRANSIT", "status": "Return - In Transit", "line_items": [{"status": "Return - In Transit", "return_marked_at": "2026-09-26"}]},
         {**base, "id": 9, "order_id": "RETURN-ORIGIN", "status": "Return - Arrived at Origin", "line_items": [{"status": "Return - Arrived at Origin", "return_marked_at": "2026-09-26"}]},
         {**base, "id": 10, "order_id": "DELIVERED-SHIPPER", "status": "Return - Delivered to Shipper", "line_items": [{"status": "Return - Delivered to Shipper", "return_marked_at": "2026-09-26"}]},
+        {**base, "id": 11, "order_id": "OFD", "status": "Out for Delivery", "line_items": [{"status": "Out for Delivery", "dispatched_at": "2026-09-15"}]},
     ])
     by_id = {row["order_id"]: row for row in rows}
-    assert by_id["SIMPLE"]["followup_section"] == "to_be_contacted"
+    assert "SIMPLE" not in by_id
+    assert "OFD" not in by_id
     assert by_id["FAILED"]["followup_section"] == "to_be_contacted"
     assert by_id["FAILED"]["needs_attention"] is True
     assert by_id["CALL"]["followup_section"] == "return_missed"
     assert by_id["CALL"]["needs_attention"] is True
     assert by_id["LEOPARDS"]["followup_section"] == "return_missed"
     assert by_id["DIGIDOKAAN"]["followup_section"] == "return_missed"
-    assert by_id["COURIER-DISPATCH"]["followup_section"] == "to_be_contacted"
+    assert "COURIER-DISPATCH" not in by_id
     assert by_id["CONFIRM"]["followup_section"] == "to_be_returned"
     assert by_id["RETURN-TRANSIT"]["followup_section"] == "to_be_returned"
     assert by_id["RETURN-ORIGIN"]["followup_section"] == "to_be_returned"
     assert by_id["DELIVERED-SHIPPER"]["followup_section"] == "return_missed"
-    assert by_id["COURIER-DISPATCH"]["dispatch_date"] == "2026-09-18"
     assert by_id["CALL"]["order_age_days"] >= by_id["CALL"]["dispatch_age_days"]
     assert by_id["CALL"]["return_marked_days"] is not None
 
@@ -396,6 +400,21 @@ def test_delivery_followup_sections_and_days_are_classified_from_courier_statuse
     assert contacted_ids == set(by_id)
     assert {"CONFIRM", "RETURN-TRANSIT", "RETURN-ORIGIN"} <= returning_ids
     assert {"CALL", "LEOPARDS", "DIGIDOKAAN", "DELIVERED-SHIPPER"} <= missed_ids
+
+
+def test_delivery_followup_preview_contains_customer_products_and_tracking():
+    preview = main.build_delivery_followup_preview({
+        "order_id": "PK1", "created_at": "2026-11-01T10:00:00", "total_price": 2950,
+        "financial_status": "Pending",
+        "customer_details": {"name": "Farhad", "phone": "0300", "city": "Lakki", "address": "Pahr khal"},
+        "line_items": [{
+            "product_title": "Obsidian Walk", "image_src": "image.jpg", "quantity": 1,
+            "status": "Delivery Unsuccessful", "tracking_number": "173019554990", "courier_name": "TCS",
+        }],
+    })
+    assert preview["customer"]["address"] == "Pahr khal"
+    assert preview["items"][0]["tracking_number"] == "173019554990"
+    assert preview["items"][0]["status"] == "Delivery Unsuccessful"
 
 
 def test_return_courier_event_date_is_extracted_for_leopards_and_digidokaan():

@@ -505,9 +505,7 @@ def build_undelivered_order_view(orders):
             order["followup_section"] = "return_missed"
         elif any(status == "Being Return" for status in normalized_statuses):
             order["followup_section"] = "to_be_returned"
-        elif order["order_age_days"] >= 5:
-            order["followup_section"] = "to_be_contacted"
-        elif order["needs_attention"]:
+        elif status_contains_any(statuses, FAILED_DELIVERY_MARKERS):
             order["followup_section"] = "to_be_contacted"
         else:
             continue
@@ -541,6 +539,33 @@ def build_delivery_followup_sections(orders):
             "return_marked_count": sum(1 for order in return_missed if order.get("return_marked_date")),
         },
     ]
+
+
+def build_delivery_followup_preview(order):
+    order = order or {}
+    items = order.get("line_items") or []
+    customer = order.get("customer_details") or {}
+    first = items[0] if items else {}
+    return {
+        "order_id": order.get("order_id") or "",
+        "created_at": str(order.get("created_at") or "")[:10],
+        "total_price": parse_money(order.get("total_price"), 0),
+        "financial_status": order.get("financial_status") or "",
+        "customer": {
+            "name": first.get("name") or customer.get("name") or "Customer",
+            "phone": first.get("phone") or customer.get("phone") or "",
+            "city": first.get("city") or customer.get("city") or "",
+            "address": first.get("address") or customer.get("address") or "",
+        },
+        "items": [{
+            "title": item.get("product_title") or "Product",
+            "image": item.get("image_src") or "",
+            "quantity": int(item.get("quantity") or 0),
+            "status": item.get("status") or "Awaiting courier update",
+            "tracking_number": "" if str(item.get("tracking_number") or "").strip() in {"", "N/A"} else str(item.get("tracking_number")),
+            "courier": courier_label_for_tracking(item.get("courier_name"), item.get("tracking_number")),
+        } for item in items],
+    }
 
 
 def normalize_status_bucket(status):
@@ -6725,6 +6750,7 @@ def undelivered():
     for order in undelivered_orders:
         order["contact_history"] = contact_history.get(str(order.get("id")), [])
         order["latest_contact"] = order["contact_history"][0] if order["contact_history"] else None
+        order["preview"] = build_delivery_followup_preview(order)
     sections = build_delivery_followup_sections(undelivered_orders)
     return render_template(
         "undelivered.html",
