@@ -288,8 +288,12 @@ def has_order_tag(tags, label):
 
 
 def is_return_received_order(order):
-    # A plain/legacy "Return Received" tag is intentionally not enough.
-    return bool(dated_order_tag_date((order or {}).get("tags"), "Return Received"))
+    # Plain/legacy tags are intentionally not enough: these actions must be dated.
+    tags = (order or {}).get("tags")
+    return bool(
+        dated_order_tag_date(tags, "Return Received")
+        or dated_order_tag_date(tags, "Claim Received")
+    )
 
 
 RETURN_COURIER_MARKERS = (
@@ -5990,6 +5994,7 @@ def generate_loadsheet():
 
 @app.route("/apply_tag", methods=["POST"])
 def apply_tag():
+    global order_details
     data = request.get_json() or {}
     order_id = data.get("order_id")
     tag = (data.get("tag") or "").strip()
@@ -5997,7 +6002,7 @@ def apply_tag():
         return jsonify({"success": False, "error": "order_id and tag are required."}), 400
     try:
         order = shopify.Order.find(order_id)
-        if tag.lower() == "returned":
+        if tag.lower() in {"returned", "return received", "claim received"}:
             try:
                 order.cancel()
             except Exception:
@@ -6008,6 +6013,8 @@ def apply_tag():
             except Exception:
                 pass
         if apply_shopify_order_tag(order_id, tag, include_date=True):
+            if tag.lower() in {"returned", "return received", "claim received"}:
+                order_details = [cached for cached in order_details if str(cached.get("id")) != str(order_id)]
             return jsonify({"success": True, "message": "Tag applied successfully."})
         return jsonify({"success": False, "error": "Failed to save order changes."}), 500
     except Exception as error:

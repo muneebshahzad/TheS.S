@@ -309,6 +309,9 @@ def test_undelivered_uses_dispatch_and_dated_return_received_tags():
     returned = {**dispatched, "tags": dispatched["tags"] + ["Return Received (2026-09-28)"]}
     assert main.is_return_received_order(returned) is True
     assert main.build_undelivered_order_view([returned]) == []
+    claimed = {**dispatched, "tags": dispatched["tags"] + ["Claim Received (2026-09-28)"]}
+    assert main.is_return_received_order(claimed) is True
+    assert main.build_undelivered_order_view([claimed]) == []
 
     assert main.is_dispatched_not_delivered_order({**dispatched, "tags": []}) is True
     assert main.is_dispatched_not_delivered_order({**dispatched, "tags": [], "status": "Booked"}) is False
@@ -339,6 +342,8 @@ def test_undelivered_ui_has_three_sections_customer_details_and_contact_workflow
         assert "To Be Returned" in html
         assert "Return Missed" in html
         assert "Mark contacted" in html
+        assert "Mark Return Received" not in html
+        assert "Mark Claim Received" not in html
         assert "View order" in html
         assert ">Track</a>" in html
         assert "Tracking timeline" in html
@@ -355,6 +360,42 @@ def test_undelivered_ui_has_three_sections_customer_details_and_contact_workflow
         assert 'data-section="to_be_returned"' in html
         assert 'data-section="return_missed"' in html
         assert 'data-section="return_missed" open' not in html
+
+
+def test_return_missed_ui_exposes_return_and_claim_resolution_actions(monkeypatch):
+    order = {
+        "id": 8, "order_id": "PK8", "created_at": "2026-09-20T10:00:00",
+        "status": "Return To Sender - STAFF", "tags": ["Dispatched (2026-09-21)"],
+        "customer_details": {}, "total_price": 1000,
+        "line_items": [{"product_title": "Chair", "tracking_number": "LE8", "status": "Return To Sender - STAFF"}],
+    }
+    monkeypatch.setattr(main, "order_details", [order])
+    monkeypatch.setattr(main, "load_delivery_followup_contacts", lambda _ids: {})
+    html = main.app.test_client().get("/undelivered").get_data(as_text=True)
+    assert "Mark Return Received" in html
+    assert "Mark Claim Received" in html
+    assert "resolveReturnedOrder" in html
+
+
+def test_apply_tag_cancels_return_and_claim_received_orders(monkeypatch):
+    class Order:
+        def __init__(self):
+            self.cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    for tag in ("Return Received", "Claim Received"):
+        order = Order()
+        monkeypatch.setattr(main.shopify.Order, "find", lambda _order_id, current=order: current)
+        saved = []
+        monkeypatch.setattr(main, "apply_shopify_order_tag", lambda order_id, value, include_date=False: saved.append((order_id, value, include_date)) or True)
+        monkeypatch.setattr(main, "order_details", [{"id": 88}, {"id": 99}])
+        response = main.app.test_client().post("/apply_tag", json={"order_id": 88, "tag": tag})
+        assert response.status_code == 200
+        assert order.cancelled is True
+        assert saved == [(88, tag, True)]
+        assert main.order_details == [{"id": 99}]
 
 
 def test_delivery_followup_sections_and_days_are_classified_from_courier_statuses():
