@@ -568,6 +568,23 @@ def build_delivery_followup_preview(order):
     }
 
 
+def get_delivery_followup_summary(orders=None):
+    """Return homepage counts for actionable delivery follow-up orders."""
+    rows = build_undelivered_order_view(order_details if orders is None else orders)
+    try:
+        contact_history = load_delivery_followup_contacts([order.get("id") for order in rows])
+    except Exception as error:
+        print(f"Could not load delivery follow-up contacts for homepage: {error}")
+        contact_history = {}
+    return {
+        "needs_attention": len(rows),
+        "needs_contact": sum(
+            1 for order in rows
+            if not contact_history.get(str(order.get("id")))
+        ),
+    }
+
+
 def normalize_status_bucket(status):
     raw = normalize_courier_status_label(status) or "Un-Booked"
     upper = raw.upper()
@@ -6018,6 +6035,7 @@ def tracking():
         darazOrders=daraz_orders_cache,
         employee_approvals=build_employee_approval_items(),
         abandoned_summary=get_abandoned_summary_safe(),
+        delivery_followup_summary=get_delivery_followup_summary(),
         shipper_advice_orders=shipper_advice_orders,
     )
 

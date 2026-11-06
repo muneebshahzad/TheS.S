@@ -206,6 +206,7 @@ def test_tracking_homepage_never_waits_for_leopards_advice(monkeypatch):
     monkeypatch.setattr(main, "load_shipper_advice_sync", lambda **kwargs: captured.update(kwargs) or [])
     monkeypatch.setattr(main, "build_employee_approval_items", lambda: [])
     monkeypatch.setattr(main, "get_abandoned_summary_safe", lambda: {})
+    monkeypatch.setattr(main, "get_delivery_followup_summary", lambda: {"needs_attention": 3, "needs_contact": 2})
     monkeypatch.setattr(main, "render_template", lambda template, **context: {"template": template, **context})
 
     response = main.app.test_client().get("/")
@@ -415,6 +416,24 @@ def test_delivery_followup_preview_contains_customer_products_and_tracking():
     assert preview["customer"]["address"] == "Pahr khal"
     assert preview["items"][0]["tracking_number"] == "173019554990"
     assert preview["items"][0]["status"] == "Delivery Unsuccessful"
+
+
+def test_delivery_followup_summary_separates_attention_from_uncontacted(monkeypatch):
+    orders = [
+        {"id": 1, "order_id": "PK1", "created_at": "2026-11-01", "tags": ["Dispatched"], "status": "Delivery Unsuccessful", "line_items": []},
+        {"id": 2, "order_id": "PK2", "created_at": "2026-11-01", "tags": ["Dispatched"], "status": "Return - In Transit", "line_items": []},
+    ]
+    monkeypatch.setattr(main, "load_delivery_followup_contacts", lambda _ids: {"1": [{"outcome": "Called"}]})
+
+    assert main.get_delivery_followup_summary(orders) == {"needs_attention": 2, "needs_contact": 1}
+
+
+def test_delivery_followup_template_renders_all_thumbnails_and_compact_single_preview():
+    source = (Path(__file__).resolve().parents[1] / "templates" / "undelivered.html").read_text()
+    assert "{% for item in items %}" in source
+    assert "class=\"ud-thumbs" in source
+    assert "products.classList.toggle('single'" in source
+    assert ".order-preview-products.single" in source
 
 
 def test_return_courier_event_date_is_extracted_for_leopards_and_digidokaan():

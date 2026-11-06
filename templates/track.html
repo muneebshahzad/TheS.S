@@ -40,6 +40,10 @@
   .abandoned-count { display: flex; flex-direction: column; gap: 1px; align-items: flex-end; min-width: 70px; }
   .abandoned-count strong { font-family: 'DM Mono', monospace; font-size: 16px; color: #d4a800; line-height: 1; }
   .abandoned-count span { color: #8a8b96; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; }
+  .delivery-followup-card { background: #fff5f4; border-color: #efaaa4; }
+  .delivery-followup-card:hover { border-color: #d74c45; box-shadow: 0 4px 18px rgba(215,76,69,0.15); }
+  .delivery-followup-card .abandoned-icon { background: #fde3e0; color: #b8322c; }
+  .delivery-followup-card .abandoned-count strong { color: #d74c45; }
 
   /* ── Employee approvals ── */
   .approval-card { background: #fff7ec; border: 1px solid #f2d1a6; border-radius: 12px; overflow: hidden; }
@@ -271,6 +275,24 @@
         <div class="abandoned-count">
           <strong>{{ (abandoned_summary.not_viewed if abandoned_summary else 0)|format_number }}</strong>
           <span>Not viewed</span>
+        </div>
+      </div>
+    </a>
+
+    <a class="abandoned-link-card delivery-followup-card" href="/undelivered" target="_top">
+      <div class="abandoned-icon">⚠️</div>
+      <div>
+        <div class="abandoned-title">Delivery follow-up</div>
+        <div class="abandoned-meta"><strong>{{ (delivery_followup_summary.needs_attention if delivery_followup_summary else 0)|format_number }}</strong> orders need attention · <strong>{{ (delivery_followup_summary.needs_contact if delivery_followup_summary else 0)|format_number }}</strong> need to be contacted.</div>
+      </div>
+      <div class="abandoned-counts">
+        <div class="abandoned-count">
+          <strong>{{ (delivery_followup_summary.needs_attention if delivery_followup_summary else 0)|format_number }}</strong>
+          <span>Attention</span>
+        </div>
+        <div class="abandoned-count">
+          <strong>{{ (delivery_followup_summary.needs_contact if delivery_followup_summary else 0)|format_number }}</strong>
+          <span>Contact</span>
         </div>
       </div>
     </a>
