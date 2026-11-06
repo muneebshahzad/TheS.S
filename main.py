@@ -300,8 +300,12 @@ RETURN_COURIER_MARKERS = (
     "RETURN TO SENDER",
     "RETURNED TO SENDER",
     "RETURN TO ORIGIN",
+    "RETURN - CONFIRM",
+    "RETURN CONFIRM",
     "RETURN - IN TRANSIT",
     "RETURN - ARRIVED AT ORIGIN",
+    "RETURN - DELIVERED TO SHIPPER",
+    "RETURN DELIVERED TO SHIPPER",
     "OUT FOR RETURN",
     "BEING RETURN",
     "ASSIGNED TO COURIER FOR RETURN",
@@ -309,6 +313,17 @@ RETURN_COURIER_MARKERS = (
     "RETURN DELIVERED",
     "RTO COMPLETED",
     "RTO DELIVERED",
+)
+
+COMPLETED_RETURN_COURIER_MARKERS = (
+    "RETURN SUBMITTED",
+    "RETURN SUBMISSION",
+    "RETURN TO SHIPPER",
+    "RETURNED TO SHIPPER",
+    "RETURN TO SENDER",
+    "RETURNED TO SENDER",
+    "RETURN - DELIVERED TO SHIPPER",
+    "RETURN DELIVERED TO SHIPPER",
 )
 
 DISPATCH_COURIER_MARKERS = (
@@ -484,13 +499,16 @@ def build_undelivered_order_view(orders):
         return_marked_on = min(return_dates) if return_dates else None
         order["return_marked_date"] = return_marked_on.isoformat() if return_marked_on else ""
         order["return_marked_days"] = max((today - return_marked_on).days, 0) if return_marked_on else None
+        normalized_statuses = [normalize_status_bucket(status) for status in statuses if status]
         order["needs_attention"] = status_contains_any(statuses, FAILED_DELIVERY_MARKERS + RETURN_COURIER_MARKERS)
-        if status_contains_any(statuses, RETURN_COURIER_MARKERS):
+        if any(status == "RETURNED TO SHIPPER" for status in normalized_statuses):
             order["followup_section"] = "return_missed"
+        elif any(status == "Being Return" for status in normalized_statuses):
+            order["followup_section"] = "to_be_returned"
         elif order["order_age_days"] >= 5:
-            order["followup_section"] = "undelivered"
+            order["followup_section"] = "to_be_contacted"
         elif order["needs_attention"]:
-            order["followup_section"] = "undelivered"
+            order["followup_section"] = "to_be_contacted"
         else:
             continue
         rows.append(order)
@@ -507,14 +525,7 @@ def normalize_status_bucket(status):
     # Final/merchant-actioned return states belong in the Returned to Shipper
     # queue. Check these before the broader return matcher below so the two
     # dashboard filters remain mutually exclusive.
-    if any(marker in upper for marker in (
-        "RETURNED TO SHIPPER",
-        "RETURN TO SHIPPER",
-        "RETURNED TO SENDER",
-        "RETURN TO SENDER",
-        "RETURN SUBMITTED",
-        "RETURN SUBMISSION",
-    )):
+    if any(marker in upper for marker in COMPLETED_RETURN_COURIER_MARKERS):
         return "RETURNED TO SHIPPER"
     # Every other courier return journey is still in progress. This covers
     # provider-specific labels such as Return - In Transit, Return to Origin,
@@ -5639,7 +5650,7 @@ def build_admin_mobile_sections():
         {"id": "abandoned", "label": "Abandoned", "icon": "🛒", "src": "/abandoned?embedded=1"},
         {"id": "product-costs", "label": "Product Costs", "icon": "💰", "src": "/product-costs?embedded=1"},
         {"id": "tickbags-invoices", "label": "Tick Bags", "icon": "🧺", "src": "/tickbags-invoices?embedded=1"},
-        {"id": "undelivered", "label": "Undelivered", "icon": "🚚", "src": "/undelivered?embedded=1"},
+        {"id": "undelivered", "label": "Delivery Follow-up", "icon": "🚚", "src": "/undelivered?embedded=1"},
     ]
 
 
@@ -6689,15 +6700,21 @@ def undelivered():
     return_orders = [order for order in undelivered_orders if order.get("followup_section") == "return_missed"]
     sections = [
         {
-            "key": "undelivered",
-            "title": "Undelivered",
-            "description": "Dispatched orders still awaiting delivery; failed attempts are highlighted red.",
-            "orders": [order for order in undelivered_orders if order.get("followup_section") == "undelivered"],
+            "key": "to_be_contacted",
+            "title": "To Be Contacted",
+            "description": "Dispatched orders delayed or awaiting customer follow-up.",
+            "orders": [order for order in undelivered_orders if order.get("followup_section") == "to_be_contacted"],
+        },
+        {
+            "key": "to_be_returned",
+            "title": "To Be Returned",
+            "description": "Returns confirmed or currently moving back through the courier network.",
+            "orders": [order for order in undelivered_orders if order.get("followup_section") == "to_be_returned"],
         },
         {
             "key": "return_missed",
             "title": "Return Missed",
-            "description": "Courier return activity without a dated Return Received tag.",
+            "description": "Completed courier returns without a dated Return Received tag.",
             "orders": return_orders,
             "return_marked_count": sum(1 for order in return_orders if order.get("return_marked_date")),
         },

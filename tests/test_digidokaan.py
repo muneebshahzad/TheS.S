@@ -377,6 +377,7 @@ def test_return_statuses_are_split_into_mutually_exclusive_dashboard_buckets():
         "Returned to Sender",
         "Return to Shipper",
         "Returned to Shipper",
+        "Return - Delivered to Shipper",
     )
     being_return = (
         "Out for Return",

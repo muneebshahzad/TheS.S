@@ -316,14 +316,14 @@ def test_undelivered_uses_dispatch_and_dated_return_received_tags():
     assert main.is_dispatched_not_delivered_order({**dispatched, "cancelled_at": "2026-09-29T10:00:00"}) is False
 
 
-def test_undelivered_ui_has_two_sections_contact_workflow_and_folded_returns(monkeypatch):
+def test_undelivered_ui_has_three_sections_customer_details_and_contact_workflow(monkeypatch):
     order = {
         "id": 1,
         "order_id": "PK1",
         "created_at": "2026-09-20T10:00:00",
         "status": "Delivery Unsuccessful",
         "tags": ["Dispatched (2026-09-21)"],
-        "customer_details": {},
+        "customer_details": {"name": "Ali", "phone": "03001234567", "address": "House 10, Model Town", "city": "Lahore"},
         "line_items": [{"product_title": "Lamp", "tracking_number": "LE123", "status": "Delivery Unsuccessful", "image_src": "https://example.com/lamp.jpg"}],
         "total_price": 1000,
     }
@@ -334,16 +334,21 @@ def test_undelivered_ui_has_two_sections_contact_workflow_and_folded_returns(mon
         html = client.get(url).get_data(as_text=True)
         assert "Delivery follow-up" in html
         assert 'id="hideReturns"' not in html
-        assert "Undelivered" in html
+        assert "To Be Contacted" in html
+        assert "To Be Returned" in html
         assert "Return Missed" in html
-        assert "Contacted" in html
-        assert ">View</a>" in html
+        assert "Mark contacted" in html
+        assert "View order" in html
+        assert ">Track</a>" in html
         assert "Lamp" in html
         assert "LE123" in html
+        assert "Ali" in html
+        assert "House 10, Model Town" in html
         assert 'id="udSort"' in html
         assert "Latest first" in html
         assert "Oldest first" in html
         assert "sortUndeliveredCards" in html
+        assert 'data-section="to_be_returned"' in html
         assert 'data-section="return_missed"' in html
         assert 'data-section="return_missed" open' not in html
 
@@ -362,16 +367,24 @@ def test_delivery_followup_sections_and_days_are_classified_from_courier_statuse
         {**base, "id": 4, "order_id": "LEOPARDS", "status": "Return To Sender", "line_items": [{"status": "Return To Sender", "return_marked_at": "2026-09-24"}]},
         {**base, "id": 5, "order_id": "DIGIDOKAAN", "status": "Returned to Shipper", "line_items": [{"status": "Returned to Shipper", "return_marked_at": "2026-09-23"}]},
         {**base, "id": 6, "order_id": "COURIER-DISPATCH", "status": "Dispatched to ISLAMABAD", "tags": [], "line_items": [{"status": "Dispatched to ISLAMABAD", "dispatched_at": "2026-09-18"}]},
+        {**base, "id": 7, "order_id": "CONFIRM", "status": "Return - Confirm", "line_items": [{"status": "Return - Confirm", "return_marked_at": "2026-09-26"}]},
+        {**base, "id": 8, "order_id": "RETURN-TRANSIT", "status": "Return - In Transit", "line_items": [{"status": "Return - In Transit", "return_marked_at": "2026-09-26"}]},
+        {**base, "id": 9, "order_id": "RETURN-ORIGIN", "status": "Return - Arrived at Origin", "line_items": [{"status": "Return - Arrived at Origin", "return_marked_at": "2026-09-26"}]},
+        {**base, "id": 10, "order_id": "DELIVERED-SHIPPER", "status": "Return - Delivered to Shipper", "line_items": [{"status": "Return - Delivered to Shipper", "return_marked_at": "2026-09-26"}]},
     ])
     by_id = {row["order_id"]: row for row in rows}
-    assert by_id["SIMPLE"]["followup_section"] == "undelivered"
-    assert by_id["FAILED"]["followup_section"] == "undelivered"
+    assert by_id["SIMPLE"]["followup_section"] == "to_be_contacted"
+    assert by_id["FAILED"]["followup_section"] == "to_be_contacted"
     assert by_id["FAILED"]["needs_attention"] is True
     assert by_id["CALL"]["followup_section"] == "return_missed"
     assert by_id["CALL"]["needs_attention"] is True
     assert by_id["LEOPARDS"]["followup_section"] == "return_missed"
     assert by_id["DIGIDOKAAN"]["followup_section"] == "return_missed"
-    assert by_id["COURIER-DISPATCH"]["followup_section"] == "undelivered"
+    assert by_id["COURIER-DISPATCH"]["followup_section"] == "to_be_contacted"
+    assert by_id["CONFIRM"]["followup_section"] == "to_be_returned"
+    assert by_id["RETURN-TRANSIT"]["followup_section"] == "to_be_returned"
+    assert by_id["RETURN-ORIGIN"]["followup_section"] == "to_be_returned"
+    assert by_id["DELIVERED-SHIPPER"]["followup_section"] == "return_missed"
     assert by_id["COURIER-DISPATCH"]["dispatch_date"] == "2026-09-18"
     assert by_id["CALL"]["order_age_days"] >= by_id["CALL"]["dispatch_age_days"]
     assert by_id["CALL"]["return_marked_days"] is not None
