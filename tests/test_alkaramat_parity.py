@@ -372,9 +372,12 @@ def test_return_missed_ui_exposes_return_and_claim_resolution_actions(monkeypatc
     monkeypatch.setattr(main, "order_details", [order])
     monkeypatch.setattr(main, "load_delivery_followup_contacts", lambda _ids: {})
     html = main.app.test_client().get("/undelivered").get_data(as_text=True)
-    assert "Mark Return Received" in html
-    assert "Mark Claim Received" in html
+    assert html.count("Mark Return Received") == 1
+    assert html.count("Mark Claim Received") == 1
     assert "resolveReturnedOrder" in html
+    return_missed = html.split('data-section="return_missed"', 1)[1]
+    assert "Mark Return Received" in return_missed
+    assert "Mark Claim Received" in return_missed
 
 
 def test_apply_tag_cancels_return_and_claim_received_orders(monkeypatch):
