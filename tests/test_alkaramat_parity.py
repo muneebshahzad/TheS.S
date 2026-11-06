@@ -478,6 +478,8 @@ def test_delivery_followup_template_renders_all_thumbnails_and_compact_single_pr
     assert "class=\"ud-thumbs" in source
     assert "products.classList.toggle('single'" in source
     assert ".order-preview-products.single" in source
+    assert ".order-preview-image img{display:block;width:100%;height:auto" in source
+    assert ".order-preview-products.single .order-preview-image{height:" not in source
 
 
 def test_return_courier_event_date_is_extracted_for_leopards_and_digidokaan():
