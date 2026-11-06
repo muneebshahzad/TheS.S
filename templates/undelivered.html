@@ -52,14 +52,14 @@
               <div class="ud-order-copy">
                 <a class="ud-order-link" href="{{ order.order_link or '#' }}" target="_blank">#{{ order.order_id }}</a>
                 <div class="ud-product">{{ item0.get('product_title') or 'Product unavailable' }}{% if items|length > 1 %}<span class="ud-product-more"> +{{ items|length - 1 }} more</span>{% endif %}</div>
-                <div class="ud-statuses">{% for item in items %}{% set item_status = item.get('status') or 'Awaiting courier update' %}<span class="ud-status-chip{% if section.key == 'to_be_returned' %} returning{% elif section.key == 'return_missed' %} returned{% endif %}">{{ item_status }}{% if item.get('quantity',1)|int > 1 %} ×{{ item.get('quantity') }}{% endif %}</span>{% endfor %}</div>
+                <div class="ud-statuses">{% for item in items %}{% set item_status = item.get('status') or 'Awaiting courier update' %}<span class="ud-status-chip{% if order.followup_section == 'to_be_returned' %} returning{% elif order.followup_section == 'return_missed' %} returned{% endif %}">{{ item_status }}{% if item.get('quantity',1)|int > 1 %} ×{{ item.get('quantity') }}{% endif %}</span>{% endfor %}</div>
                 {% set tracking_numbers = namespace(seen=[]) %}<div class="ud-tracking">{% for item in items %}{% set number = item.get('tracking_number') %}{% if number and number != 'N/A' and number not in tracking_numbers.seen %}<span>{{ number }}</span>{% set tracking_numbers.seen = tracking_numbers.seen + [number] %}{% endif %}{% endfor %}</div>
               </div>
             </div>
             <div class="ud-timers">
               <div class="ud-timer"><span>Order since</span><strong>{{ order.order_age_days }}d</strong></div>
               <div class="ud-timer"><span>Dispatched since</span><strong>{{ order.dispatch_age_days }}d</strong></div>
-              {% if section.key in ['to_be_returned','return_missed'] %}<div class="ud-timer return"><span>Return activity</span><strong>{% if order.return_marked_days is not none %}{{ order.return_marked_days }}d{% else %}—{% endif %}</strong></div>{% endif %}
+              {% if order.followup_section in ['to_be_returned','return_missed'] %}<div class="ud-timer return"><span>Return activity</span><strong>{% if order.return_marked_days is not none %}{{ order.return_marked_days }}d{% else %}—{% endif %}</strong></div>{% endif %}
             </div>
             {% set address = item0.get('address') or customer.get('address','') %}<div class="ud-person"><strong>{{ name }}</strong><span>{% if phone %}{{ phone }} · {% endif %}{{ city or 'City unavailable' }}</span><span class="ud-address">{{ address or 'Address unavailable' }}</span>{% if order.latest_contact %}<div class="ud-contact-last"><b>Contacted:</b> {{ order.latest_contact.outcome }} · {{ order.latest_contact.created_at.strftime('%d %b, %I:%M %p') if order.latest_contact.created_at.strftime is defined else order.latest_contact.created_at }}</div>{% endif %}</div>
             <div class="ud-side"><div class="ud-value">PKR {{ order.total_price|float|int|format_number }}<span class="ud-value-label">ORDER VALUE</span></div><div class="ud-actions">

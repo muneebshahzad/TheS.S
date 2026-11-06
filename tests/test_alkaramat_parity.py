@@ -389,6 +389,14 @@ def test_delivery_followup_sections_and_days_are_classified_from_courier_statuse
     assert by_id["CALL"]["order_age_days"] >= by_id["CALL"]["dispatch_age_days"]
     assert by_id["CALL"]["return_marked_days"] is not None
 
+    sections = {section["key"]: section for section in main.build_delivery_followup_sections(rows)}
+    contacted_ids = {order["order_id"] for order in sections["to_be_contacted"]["orders"]}
+    returning_ids = {order["order_id"] for order in sections["to_be_returned"]["orders"]}
+    missed_ids = {order["order_id"] for order in sections["return_missed"]["orders"]}
+    assert contacted_ids == set(by_id)
+    assert {"CONFIRM", "RETURN-TRANSIT", "RETURN-ORIGIN"} <= returning_ids
+    assert {"CALL", "LEOPARDS", "DIGIDOKAAN", "DELIVERED-SHIPPER"} <= missed_ids
+
 
 def test_return_courier_event_date_is_extracted_for_leopards_and_digidokaan():
     leopards = {"packet_list": [{"Tracking Detail": [

@@ -515,6 +515,34 @@ def build_undelivered_order_view(orders):
     return sort_orders_newest_first(rows)
 
 
+def build_delivery_followup_sections(orders):
+    """Build overlapping work queues; every return still requires contact follow-up."""
+    orders = list(orders or [])
+    to_be_returned = [order for order in orders if order.get("followup_section") == "to_be_returned"]
+    return_missed = [order for order in orders if order.get("followup_section") == "return_missed"]
+    return [
+        {
+            "key": "to_be_contacted",
+            "title": "To Be Contacted",
+            "description": "All delayed, failed and returning orders requiring customer follow-up.",
+            "orders": orders,
+        },
+        {
+            "key": "to_be_returned",
+            "title": "To Be Returned",
+            "description": "Returns confirmed or currently moving back through the courier network.",
+            "orders": to_be_returned,
+        },
+        {
+            "key": "return_missed",
+            "title": "Return Missed",
+            "description": "Completed courier returns without a dated Return Received tag.",
+            "orders": return_missed,
+            "return_marked_count": sum(1 for order in return_missed if order.get("return_marked_date")),
+        },
+    ]
+
+
 def normalize_status_bucket(status):
     raw = normalize_courier_status_label(status) or "Un-Booked"
     upper = raw.upper()
@@ -6697,28 +6725,7 @@ def undelivered():
     for order in undelivered_orders:
         order["contact_history"] = contact_history.get(str(order.get("id")), [])
         order["latest_contact"] = order["contact_history"][0] if order["contact_history"] else None
-    return_orders = [order for order in undelivered_orders if order.get("followup_section") == "return_missed"]
-    sections = [
-        {
-            "key": "to_be_contacted",
-            "title": "To Be Contacted",
-            "description": "Dispatched orders delayed or awaiting customer follow-up.",
-            "orders": [order for order in undelivered_orders if order.get("followup_section") == "to_be_contacted"],
-        },
-        {
-            "key": "to_be_returned",
-            "title": "To Be Returned",
-            "description": "Returns confirmed or currently moving back through the courier network.",
-            "orders": [order for order in undelivered_orders if order.get("followup_section") == "to_be_returned"],
-        },
-        {
-            "key": "return_missed",
-            "title": "Return Missed",
-            "description": "Completed courier returns without a dated Return Received tag.",
-            "orders": return_orders,
-            "return_marked_count": sum(1 for order in return_orders if order.get("return_marked_date")),
-        },
-    ]
+    sections = build_delivery_followup_sections(undelivered_orders)
     return render_template(
         "undelivered.html",
         order_details=undelivered_orders,
