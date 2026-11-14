@@ -185,6 +185,8 @@ def _ensure_vendor_invoices_tables(cur):
         )
         """
     )
+    cur.execute("ALTER TABLE vendor_invoice_refunds ADD COLUMN IF NOT EXISTS restored_invoice_id BIGINT REFERENCES vendor_invoices(id) ON DELETE SET NULL")
+    cur.execute("ALTER TABLE vendor_invoice_refunds ADD COLUMN IF NOT EXISTS restored_at TIMESTAMPTZ")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS vendor_invoice_adjustments (
@@ -582,7 +584,9 @@ def load_vendor_invoices(vendor="Tick Bags"):
                 for invoice in invoices:
                     cur.execute(
                         """SELECT l.*, COALESCE(r.amount, 0) AS refunded_amount,
-                                  r.invoice_id AS refund_invoice_id
+                                  r.invoice_id AS refund_invoice_id,
+                                  r.restored_invoice_id AS refund_restored_invoice_id,
+                                  r.restored_at AS refund_restored_at
                            FROM vendor_invoice_lines l
                            LEFT JOIN vendor_invoice_refunds r ON r.source_line_id=l.id
                            WHERE l.invoice_id=%s ORDER BY l.eligible_date, l.order_number, l.id""",
@@ -596,6 +600,13 @@ def load_vendor_invoices(vendor="Tick Bags"):
                         (invoice["id"],),
                     )
                     invoice["refunds"] = [dict(row) for row in cur.fetchall()]
+                    cur.execute(
+                        """SELECT r.*, l.order_number, l.product_name, l.image_url
+                           FROM vendor_invoice_refunds r JOIN vendor_invoice_lines l ON l.id=r.source_line_id
+                           WHERE r.restored_invoice_id=%s ORDER BY r.restored_at, r.id""",
+                        (invoice["id"],),
+                    )
+                    invoice["refund_restorations"] = [dict(row) for row in cur.fetchall()]
                     cur.execute("SELECT * FROM vendor_invoice_adjustments WHERE invoice_id=%s ORDER BY created_at, id", (invoice["id"],))
                     invoice["adjustments"] = [dict(row) for row in cur.fetchall()]
         _set_last_db_error("")
@@ -740,6 +751,27 @@ def add_vendor_invoice_refund(invoice_id, source_line_id):
                 row = cur.fetchone()
             conn.commit()
         return dict(row) if row else {"already_reversed": True}
+    except Exception as error:
+        _set_last_db_error(str(error))
+        return None
+
+
+def restore_vendor_invoice_refund(invoice_id, source_line_id):
+    """Restore one previously credited charge in the current invoice without deleting history."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                _ensure_vendor_invoices_tables(cur)
+                cur.execute(
+                    """UPDATE vendor_invoice_refunds r
+                       SET restored_invoice_id=%s, restored_at=NOW()
+                       WHERE r.source_line_id=%s AND r.restored_invoice_id IS NULL
+                       RETURNING r.*""",
+                    (int(invoice_id), int(source_line_id)),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return dict(row) if row else None
     except Exception as error:
         _set_last_db_error(str(error))
         return None

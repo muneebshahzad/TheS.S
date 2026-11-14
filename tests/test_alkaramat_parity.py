@@ -740,6 +740,28 @@ def test_tickbags_unreversed_returns_excludes_already_credited_lines():
     assert rows[0]["source_invoice_name"] == "Old"
 
 
+def test_tickbags_reversed_returns_show_active_and_restored_credits():
+    invoices = [{"name": "Old", "lines": [
+        {"id": 1, "refund_invoice_id": 9, "refund_restored_invoice_id": None, "refunded_amount": 500, "eligible_date": "2026-10-01"},
+        {"id": 2, "refund_invoice_id": 9, "refund_restored_invoice_id": 12, "refunded_amount": 700, "eligible_date": "2026-10-02"},
+        {"id": 3, "refund_invoice_id": None, "eligible_date": "2026-10-03"},
+    ]}]
+    rows = main.build_tickbags_reversed_returns(invoices)
+    assert [row["id"] for row in rows] == [2, 1]
+    assert rows[0]["re_reversed"] is True
+    assert rows[1]["re_reversed"] is False
+
+
+def test_tickbags_refund_restoration_adds_charge_back_to_balance():
+    invoice = main.present_tickbags_invoices([{
+        "id": 1, "status": "Draft", "lines": [], "refunds": [{"amount": 500}],
+        "refund_restorations": [{"amount": 500}], "adjustments": [],
+    }])[0]
+    assert invoice["refunds_total"] == 500
+    assert invoice["refund_restorations_total"] == 500
+    assert invoice["net_balance"] == 0
+
+
 def test_tickbags_unreversed_returns_recognizes_historical_status_text():
     invoices = [{"name": "Old", "lines": [
         {"id": 1, "is_returned": False, "order_status": "Return To Sender - STAFF", "unit_cost": 500, "quantity": 1},
@@ -788,6 +810,19 @@ def test_tickbags_can_reverse_multiple_cached_returns(monkeypatch):
     assert first.status_code == 200
     assert second.status_code == 200
     assert saved == [(20, 1), (20, 2)]
+
+
+def test_tickbags_can_re_reverse_an_active_refund(monkeypatch):
+    invoices = [
+        {"id": 20, "status": "Draft", "lines": []},
+        {"id": 10, "status": "Final", "lines": [{"id": 1, "refund_invoice_id": 10, "refund_restored_invoice_id": None}]},
+    ]
+    saved = []
+    monkeypatch.setattr(main, "load_vendor_invoices", lambda _vendor: invoices)
+    monkeypatch.setattr(main, "restore_vendor_invoice_refund", lambda invoice_id, line_id: saved.append((invoice_id, line_id)) or {"source_line_id": line_id})
+    response = main.app.test_client().post("/tickbags-invoices/refund/restore", json={"line_id": 1})
+    assert response.status_code == 200
+    assert saved == [(20, 1)]
 
 
 def test_tickbags_invoice_template_renders_pending_lahore_items():

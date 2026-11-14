@@ -51,6 +51,7 @@ from db import (
     save_employee_passkey,
     mark_vendor_invoice_paid,
     prune_vendor_invoice_lines,
+    restore_vendor_invoice_refund,
     set_app_setting,
     sync_vendor_invoice,
     update_vendor_invoice_line_cost,
@@ -5376,6 +5377,7 @@ def present_tickbags_invoices(invoices):
             ]
         products_total = round(sum(parse_money(line.get("unit_cost")) * int(line.get("quantity") or 0) for line in lines), 2)
         refunds = round(sum(parse_money(row.get("amount")) for row in invoice.get("refunds") or []), 2)
+        refund_restorations = round(sum(parse_money(row.get("amount")) for row in invoice.get("refund_restorations") or []), 2)
         adjustments = round(sum(parse_money(row.get("amount")) for row in invoice.get("adjustments") or []), 2)
         missing_costs = sum(1 for line in lines if parse_money(line.get("unit_cost")) <= 0)
         summary = {}
@@ -5389,10 +5391,11 @@ def present_tickbags_invoices(invoices):
             row["total"] = round(row["unit_cost"] * row["quantity"], 2)
         payload = dict(invoice)
         payload["lines"] = lines
-        net_balance = round(products_total - refunds - adjustments, 2)
+        net_balance = round(products_total - refunds + refund_restorations - adjustments, 2)
         payload.update({
             "summary": list(summary.values()), "products_total": products_total,
             "refunds_total": refunds, "adjustments_total": adjustments,
+            "refund_restorations_total": refund_restorations,
             "net_balance": net_balance,
             "payable": max(net_balance, 0),
             "receivable": max(-net_balance, 0),
@@ -5475,6 +5478,21 @@ def build_tickbags_unreversed_returns(invoices):
             row["is_returned"] = True
             row["source_invoice_name"] = invoice.get("name") or ""
             row["amount"] = round(parse_money(line.get("unit_cost")) * int(line.get("quantity") or 0), 2)
+            rows.append(row)
+    return sorted(rows, key=lambda row: (parse_courier_event_date(row.get("eligible_date")) or datetime.min.date(), int(row.get("id") or 0)), reverse=True)
+
+
+def build_tickbags_reversed_returns(invoices):
+    """Show every credited return and whether its credit was restored later."""
+    rows = []
+    for invoice in invoices or []:
+        for line in invoice.get("lines") or []:
+            if not line.get("refund_invoice_id"):
+                continue
+            row = dict(line)
+            row["source_invoice_name"] = invoice.get("name") or ""
+            row["amount"] = round(parse_money(line.get("refunded_amount"), parse_money(line.get("unit_cost")) * int(line.get("quantity") or 0)), 2)
+            row["re_reversed"] = bool(line.get("refund_restored_invoice_id"))
             rows.append(row)
     return sorted(rows, key=lambda row: (parse_courier_event_date(row.get("eligible_date")) or datetime.min.date(), int(row.get("id") or 0)), reverse=True)
 
@@ -6438,6 +6456,7 @@ def tickbags_invoices():
         # Build the return queue from the presented rows so it uses the same
         # latest cached courier status shown in the invoice detail table.
         unreversed_returns=build_tickbags_unreversed_returns(invoices),
+        reversed_returns=build_tickbags_reversed_returns(invoices),
         pending_lahore_orders=build_tickbags_pending_lahore_orders(),
     )
 
@@ -6505,6 +6524,31 @@ def refund_tickbags_invoice_line():
     if not saved:
         return jsonify({"success": False, "error": "Charge could not be reversed."}), 500
     return jsonify({"success": True, "refund": saved, "invoice_id": current["id"]})
+
+
+@app.route("/tickbags-invoices/refund/restore", methods=["POST"])
+def restore_tickbags_invoice_line_refund():
+    data = request.get_json(silent=True) or {}
+    try:
+        source_line_id = int(data.get("line_id"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Invoice line is required."}), 400
+    invoices = load_vendor_invoices(TICKBAGS_VENDOR)
+    current = next((invoice for invoice in invoices if invoice.get("status") == "Draft"), None)
+    source = next(
+        (line for invoice in invoices for line in invoice.get("lines") or [] if int(line.get("id") or 0) == source_line_id),
+        None,
+    )
+    if not current:
+        return jsonify({"success": False, "error": "No current draft invoice is available."}), 409
+    if not source or not source.get("refund_invoice_id"):
+        return jsonify({"success": False, "error": "This order charge has not been reversed."}), 400
+    if source.get("refund_restored_invoice_id"):
+        return jsonify({"success": False, "error": "This reversed charge was already restored."}), 409
+    saved = restore_vendor_invoice_refund(current["id"], source_line_id)
+    if not saved:
+        return jsonify({"success": False, "error": "The reversed charge could not be restored."}), 409
+    return jsonify({"success": True, "restoration": saved, "invoice_id": current["id"]})
 
 
 @app.route("/tickbags-invoices/line-cost", methods=["POST"])
