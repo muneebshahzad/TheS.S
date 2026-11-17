@@ -1176,6 +1176,7 @@ def get_aghaje_net_payment_received_entries():
                     {
                         "amount": amount,
                         "created_at": entry.get("created_at") or "",
+                        "remarks": str(entry.get("remarks") or "").strip(),
                     }
                 )
             return entries
@@ -1185,10 +1186,10 @@ def get_aghaje_net_payment_received_entries():
     legacy_amount = parse_money(raw)
     if legacy_amount == 0:
         return []
-    return [{"amount": legacy_amount, "created_at": "Legacy saved amount"}]
+    return [{"amount": legacy_amount, "created_at": "Legacy saved amount", "remarks": ""}]
 
 
-def add_aghaje_net_payment_received_entry(value):
+def add_aghaje_net_payment_received_entry(value, remarks=""):
     amount = parse_money(value)
     if amount == 0:
         raise ValueError("Amount received must not be zero.")
@@ -1197,6 +1198,7 @@ def add_aghaje_net_payment_received_entry(value):
         {
             "amount": amount,
             "created_at": datetime.now().isoformat(timespec="seconds"),
+            "remarks": str(remarks or "").strip()[:500],
         }
     )
     return set_app_setting(AGHAJE_NET_PAYMENT_RECEIVED_SETTING_KEY, json.dumps(entries))
@@ -1287,7 +1289,7 @@ def build_aghaje_daily_balance_ledger(orders, cash_entries):
                 "cod": 0.0,
                 "cost": 0.0,
                 "cash_paid": round(amount, 2),
-                "note": "Manual cash payment entry.",
+                "note": str(entry.get("remarks") or "").strip() or "Manual cash payment entry — no remarks.",
             }
         )
 
@@ -6739,7 +6741,8 @@ def update_aghaje_orders_summary():
     data = request.get_json() or {}
     try:
         amount_received = parse_money(data.get("amount_received", 0))
-        if not add_aghaje_net_payment_received_entry(amount_received):
+        remarks = str(data.get("remarks") or "").strip()[:500]
+        if not add_aghaje_net_payment_received_entry(amount_received, remarks):
             raise RuntimeError("Could not save Aghaje received amount.")
         entries = get_aghaje_net_payment_received_entries()
         total_received = round(sum(parse_money(entry.get("amount", 0)) for entry in entries), 2)

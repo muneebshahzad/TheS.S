@@ -76,8 +76,8 @@
   .agh-postex-note { font-size:10px; color:#858796; margin-top:5px; max-width:130px; line-height:1.35; }
   .agh-postex-muted { color:#858796; opacity:.7; }
   .agh-summary-input { width:100%; max-width:170px; margin-top:6px; font-size:14px; font-weight:700; }
-  .agh-summary-total { font-size:20px; font-weight:800; color:#2d2e36; margin-top:4px; cursor:pointer; }
-  .agh-summary-add-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .agh-summary-total { font-size:20px; font-weight:800; color:#2d2e36; margin-top:4px; }
+  .agh-summary-add-row { display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap; }
   .agh-summary-add-row .agh-summary-input { margin-top:0; }
   .agh-plus-btn { min-width:42px; height:38px; padding:0; font-size:20px; line-height:1; }
   .agh-actions { display:flex; gap:8px; align-items:center; }
@@ -87,13 +87,17 @@
   .agh-banner { padding:12px 14px; border-radius:10px; background:#fef3f2; border:1px solid #f4c7c3; color:#a33a2e; font-size:12px; }
   .agh-modal-backdrop { position:fixed; inset:0; background:rgba(20,33,61,.36); display:none; align-items:center; justify-content:center; z-index:1000; padding:18px; }
   .agh-modal-backdrop.open { display:flex; }
-  .agh-modal { width:min(420px, 100%); max-height:80vh; overflow:auto; background:#fff; border-radius:14px; border:1px solid #e3e6f0; box-shadow:0 18px 50px rgba(20,33,61,.22); }
+  .agh-modal { width:min(560px, 100%); max-height:88vh; overflow:auto; background:#fff; border-radius:14px; border:1px solid #e3e6f0; box-shadow:0 18px 50px rgba(20,33,61,.22); }
   .agh-modal-head { padding:16px 18px; border-bottom:1px solid #eef0f6; display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .agh-modal-title { font-size:15px; font-weight:800; color:#2d2e36; }
   .agh-entry-list { padding:10px 18px 18px; display:flex; flex-direction:column; gap:8px; }
-  .agh-entry-row { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid #f0f2f7; font-size:13px; }
+  .agh-entry-form { margin:14px 18px 4px; padding:14px; border:1px solid #dce5ff; border-radius:11px; background:#f8faff; display:grid; grid-template-columns:150px minmax(0,1fr) auto; gap:10px; align-items:end; }
+  .agh-entry-field label { display:block; margin-bottom:5px; color:#6f7280; font-size:9px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; }
+  .agh-entry-field input { width:100%; min-height:38px; border:1px solid #dce2ee; border-radius:8px; padding:8px 10px; font:12px 'DM Sans',sans-serif; background:#fff; }
+  .agh-entry-row { display:flex; justify-content:space-between; gap:12px; padding:12px; border:1px solid #edf0f6; border-radius:9px; background:#fff; font-size:13px; }
   .agh-entry-row:last-child { border-bottom:0; }
   .agh-entry-date { color:#858796; font-size:11px; }
+  .agh-entry-remarks { margin-top:5px; color:#4d5566; font-size:11px; line-height:1.4; white-space:pre-wrap; overflow-wrap:anywhere; }
   .agh-daily-card { margin-top:16px; }
   .agh-daily-wrap { overflow:auto; }
   .agh-daily-table { width:100%; border-collapse:collapse; min-width:980px; }
@@ -115,6 +119,7 @@
     .agh-stats { grid-template-columns:1fr; }
 	    .agh-tabs { grid-template-columns:1fr 1fr; }
 	    .agh-bulk-edit { grid-template-columns:1fr 1fr; width:100%; }
+	    .agh-entry-form { grid-template-columns:1fr; }
 	  }
 </style>
 
@@ -201,24 +206,18 @@
           </div>
         </div>
       </div>
-      <div class="agh-card" data-received-ledger-open>
+      <div class="agh-card">
         <div class="agh-stat-row" style="align-items:flex-start;">
           <div class="agh-stat-icon" style="background:rgba(54,185,204,0.12)">💳</div>
           <div style="min-width:0; flex:1;">
             <div class="agh-stat-label">Total Amount Paid in Cash</div>
             <div class="agh-summary-total">PKR <span data-summary-received-total>{{ summary.total_cash_paid|format_number }}</span></div>
-            <div class="agh-summary-add-row" onclick="event.stopPropagation()">
-            <input
-              class="agh-input agh-summary-input"
-              data-summary-amount-received
-              type="number"
-              step="1"
-              placeholder="Add amount"
-            >
-              <button class="agh-btn primary agh-plus-btn" type="button" onclick="saveAghajeSummaryReceived()" aria-label="Add amount">+</button>
+            <div class="agh-summary-add-row">
+              <button class="agh-btn primary" type="button" data-received-ledger-add>Add cash entry</button>
+              <button class="agh-btn" type="button" data-received-ledger-open>View entries</button>
             </div>
             <div class="agh-detail" style="margin-top:4px; max-width:none;">
-              Click card to view cash payment entries.
+              Record each payment with an optional reference or remark.
             </div>
           </div>
         </div>
@@ -303,15 +302,21 @@
 	    <div class="agh-modal-backdrop" data-received-ledger-modal>
       <div class="agh-modal" role="dialog" aria-modal="true" aria-labelledby="received-ledger-title">
         <div class="agh-modal-head">
-          <div class="agh-modal-title" id="received-ledger-title">Net Payment Received Entries</div>
+          <div class="agh-modal-title" id="received-ledger-title">Cash payment entries</div>
           <button class="agh-btn" type="button" data-received-ledger-close>Close</button>
         </div>
+        <form class="agh-entry-form" onsubmit="saveAghajeSummaryReceived(this.querySelector('[data-summary-save]'));return false">
+          <div class="agh-entry-field"><label for="agh-cash-amount">Amount</label><input id="agh-cash-amount" data-summary-amount-received type="number" step="1" placeholder="e.g. 50000"></div>
+          <div class="agh-entry-field"><label for="agh-cash-remarks">Remarks / reference</label><input id="agh-cash-remarks" data-summary-received-remarks maxlength="500" placeholder="Bank transfer, person or reference"></div>
+          <button class="agh-btn primary" type="submit" data-summary-save>Save entry</button>
+        </form>
         <div class="agh-entry-list" data-received-ledger-list>
           {% for entry in summary.net_payment_received_entries %}
           <div class="agh-entry-row">
             <div>
               <strong>PKR {{ entry.amount|format_number }}</strong>
               <div class="agh-entry-date">{{ entry.created_at or 'Saved entry' }}</div>
+              <div class="agh-entry-remarks">{{ entry.remarks or 'No remarks' }}</div>
             </div>
           </div>
           {% else %}
@@ -862,7 +867,7 @@ async function saveAghajeRow(index, options = {}) {
       body: JSON.stringify(payload),
     });
     const result = await response.json();
-    if (!result.success) {
+    if (!response.ok || !result.success) {
       showToast(result.error || 'Could not save order');
       saveBtn.disabled = false;
       saveBtn.textContent = oldLabel;
@@ -890,8 +895,9 @@ async function saveAghajeRow(index, options = {}) {
   }
 }
 
-async function saveAghajeSummaryReceived() {
+async function saveAghajeSummaryReceived(button) {
   const input = document.querySelector('[data-summary-amount-received]');
+  const remarksInput = document.querySelector('[data-summary-received-remarks]');
   if (!input) return;
   const value = Number(input.value || 0);
   if (!Number.isFinite(value) || value === 0) {
@@ -899,11 +905,13 @@ async function saveAghajeSummaryReceived() {
     return;
   }
   input.disabled = true;
+  if (remarksInput) remarksInput.disabled = true;
+  if (button) { button.disabled = true; button.textContent = 'Saving…'; }
   try {
     const response = await fetch('/aghaje-orders/update-summary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount_received: value }),
+      body: JSON.stringify({ amount_received: value, remarks: remarksInput?.value.trim() || '' }),
     });
     const result = await response.json();
     if (!result.success) {
@@ -911,15 +919,18 @@ async function saveAghajeSummaryReceived() {
       return;
     }
     input.value = '';
+    if (remarksInput) remarksInput.value = '';
     const totalEl = document.querySelector('[data-summary-received-total]');
     if (totalEl) totalEl.textContent = aghajeMoney(result.total_received || 0).replace('PKR ', '');
     renderReceivedLedgerEntries(result.entries || []);
-    showToast('Received amount added');
-    setTimeout(() => window.location.reload(), 500);
+    showToast('Cash entry saved');
+    setTimeout(() => window.location.reload(), 350);
   } catch (error) {
     showToast('Could not add received amount');
   } finally {
     input.disabled = false;
+    if (remarksInput) remarksInput.disabled = false;
+    if (button) { button.disabled = false; button.textContent = 'Save entry'; }
   }
 }
 
@@ -960,10 +971,15 @@ function renderReceivedLedgerEntries(entries) {
     <div class="agh-entry-row">
       <div>
         <strong>${aghajeMoney(entry.amount || 0)}</strong>
-        <div class="agh-entry-date">${entry.created_at || 'Saved entry'}</div>
+        <div class="agh-entry-date">${escapeAghajeHtml(entry.created_at || 'Saved entry')}</div>
+        <div class="agh-entry-remarks">${escapeAghajeHtml(entry.remarks || 'No remarks')}</div>
       </div>
     </div>
   `).join('');
+}
+
+function escapeAghajeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (character) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
 }
 
 function getActiveMissingFilters() {
@@ -1240,9 +1256,16 @@ function getSelectedVisibleRows() {
 document.addEventListener('DOMContentLoaded', () => {
   const ledgerModal = document.querySelector('[data-received-ledger-modal]');
   document.querySelector('[data-received-ledger-open]')?.addEventListener('click', () => ledgerModal?.classList.add('open'));
+  document.querySelector('[data-received-ledger-add]')?.addEventListener('click', () => {
+    ledgerModal?.classList.add('open');
+    setTimeout(() => document.querySelector('[data-summary-amount-received]')?.focus(), 0);
+  });
   document.querySelector('[data-received-ledger-close]')?.addEventListener('click', () => ledgerModal?.classList.remove('open'));
   ledgerModal?.addEventListener('click', (event) => {
     if (event.target === ledgerModal) ledgerModal.classList.remove('open');
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') ledgerModal?.classList.remove('open');
   });
   document.querySelectorAll('[data-row-index]').forEach((row) => {
     recalculateAghajeRow(row);

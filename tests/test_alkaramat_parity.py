@@ -825,6 +825,36 @@ def test_tickbags_can_re_reverse_an_active_refund(monkeypatch):
     assert saved == [(20, 1)]
 
 
+def test_aghaje_cash_entries_preserve_optional_remarks(monkeypatch):
+    stored = json.dumps([
+        {"amount": 5000, "created_at": "2026-11-17T10:00:00", "remarks": "Paid via bank"},
+        {"amount": 2000, "created_at": "2026-11-16T10:00:00"},
+    ])
+    monkeypatch.setattr(main, "get_app_setting", lambda *_args: stored)
+    entries = main.get_aghaje_net_payment_received_entries()
+    assert entries[0]["remarks"] == "Paid via bank"
+    assert entries[1]["remarks"] == ""
+    ledger = main.build_aghaje_daily_balance_ledger([], entries)
+    assert ledger[0]["details"][0]["note"] == "Paid via bank"
+
+
+def test_aghaje_cash_entry_endpoint_saves_remarks(monkeypatch):
+    saved = []
+    monkeypatch.setattr(main, "add_aghaje_net_payment_received_entry", lambda amount, remarks="": saved.append((amount, remarks)) or True)
+    monkeypatch.setattr(main, "get_aghaje_net_payment_received_entries", lambda: [{"amount": 5000, "remarks": "Invoice 10"}])
+    response = main.app.test_client().post("/aghaje-orders/update-summary", json={"amount_received": 5000, "remarks": "Invoice 10"})
+    assert response.status_code == 200
+    assert saved == [(5000, "Invoice 10")]
+
+
+def test_aghaje_cash_entry_ui_uses_explicit_modal_form():
+    source = (Path(__file__).resolve().parents[1] / "templates" / "aghaje_orders.html").read_text()
+    assert "Add cash entry" in source
+    assert "Remarks / reference" in source
+    assert "data-summary-received-remarks" in source
+    assert "Click card to view cash payment entries" not in source
+
+
 def test_tickbags_invoice_template_renders_pending_lahore_items():
     with main.app.test_request_context("/tickbags-invoices"):
         rendered = main.app.jinja_env.get_template("tickbags_invoices.html").render(
