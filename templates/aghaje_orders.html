@@ -201,7 +201,7 @@
           <div class="agh-stat-icon" style="background:rgba(246,194,62,0.14)">⚖️</div>
           <div>
             <div class="agh-stat-label">Balance</div>
-            <div class="agh-stat-value {{ 'agh-positive' if summary.balance >= 0 else 'agh-negative' }}">PKR {{ summary.balance|format_number }}</div>
+            <div class="agh-stat-value {{ 'agh-positive' if summary.balance >= 0 else 'agh-negative' }}" data-summary-balance data-balance-value="{{ summary.balance }}">PKR {{ summary.balance|format_number }}</div>
             <div class="agh-detail" style="max-width:none;">COD + cash paid - cost.</div>
           </div>
         </div>
@@ -922,9 +922,17 @@ async function saveAghajeSummaryReceived(button) {
     if (remarksInput) remarksInput.value = '';
     const totalEl = document.querySelector('[data-summary-received-total]');
     if (totalEl) totalEl.textContent = aghajeMoney(result.total_received || 0).replace('PKR ', '');
+    const balanceEl = document.querySelector('[data-summary-balance]');
+    if (balanceEl) {
+      const updatedBalance = Number(balanceEl.dataset.balanceValue || 0) + value;
+      balanceEl.dataset.balanceValue = String(updatedBalance);
+      balanceEl.textContent = aghajeMoney(updatedBalance);
+      balanceEl.classList.toggle('agh-positive', updatedBalance >= 0);
+      balanceEl.classList.toggle('agh-negative', updatedBalance < 0);
+    }
     renderReceivedLedgerEntries(result.entries || []);
     showToast('Cash entry saved');
-    setTimeout(() => window.location.reload(), 350);
+    input.focus();
   } catch (error) {
     showToast('Could not add received amount');
   } finally {

@@ -853,6 +853,9 @@ def test_aghaje_cash_entry_ui_uses_explicit_modal_form():
     assert "Remarks / reference" in source
     assert "data-summary-received-remarks" in source
     assert "Click card to view cash payment entries" not in source
+    assert "data-summary-balance" in source
+    cash_save_function = source.split("async function saveAghajeSummaryReceived", 1)[1].split("async function refreshAghajeTrackingStatuses", 1)[0]
+    assert "window.location.reload()" not in cash_save_function
 
 
 def test_tickbags_invoice_template_renders_pending_lahore_items():
